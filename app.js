@@ -1,0 +1,3257 @@
+/* =========================================================================
+   CENTRAL DE REPOSIÇÃO — app.js
+   Módulos: Loader | Processor | CurrentTeam | Filters | Production |
+            Projection | Feedback | Attendance | Audit | Commission |
+            Missions | Charts | Export | UI
+   ========================================================================= */
+
+/* ---------------------------------------------------------------------- */
+/* CONFIG                                                                  */
+/* ---------------------------------------------------------------------- */
+const REQUIRED_SHEETS = ["AUDITORIA REP","FEEDBACK REP","QUADRO REP","8271","8460"];
+const OPTIONAL_SHEETS = ["MISSÕES"]; // carregada se existir, não causa erro se faltar
+
+const REQUIRED_COLUMNS = {
+  "AUDITORIA REP": ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"],
+  "FEEDBACK REP": ["Data","Cod","Nome","Resumo Assunto","Avaliação Pessoal","Avaliação Gestor","Desempenho","Classificação"],
+  "QUADRO REP": ["DATA","CODIGO","NOME","STATUS"],
+  "8271": ["DATA","RUA","TIPOOS","NUMOS"],
+  "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTINICIOOS"],
+  "MISSÕES": ["DATA","HORA INICIO","HORA FIM","CODIGO","NOME","TIPO"]
+};
+
+const AUDIT_CRITERIA = [
+  "PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?",
+  "PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"
+];
+
+const MESES_PT = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+const MESES_PT_FULL = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+const DIAS_SEMANA_PT = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
+
+const DEFAULT_COMMISSION_CONFIG = {
+  bands: [
+    { min:0,   max:399, value:0.40, active:true },
+    { min:400, max:499, value:0.50, active:true },
+    { min:500, max:599, value:0.60, active:true },
+    { min:600, max:699, value:0.70, active:true },
+    { min:700, max:999999, value:0.80, active:true }
+  ],
+  exceptions: [],
+  missions: [
+    { name:"Separação de Múltiplos", qty:1, osEquiv:6, valuePerOs:0.50 }
+  ]
+};
+
+/* ---------------------------------------------------------------------- */
+/* HELPERS                                                                 */
+/* ---------------------------------------------------------------------- */
+const $ = (sel, ctx) => (ctx||document).querySelector(sel);
+const $all = (sel, ctx) => Array.from((ctx||document).querySelectorAll(sel));
+
+function toast(msg, type){
+  const el = $("#toast");
+  el.textContent = msg;
+  el.className = "show" + (type ? " "+type : "");
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(()=>{ el.classList.remove("show"); }, 3800);
+}
+
+function normStr(s){
+  if(s===null||s===undefined) return "";
+  return String(s).trim().toUpperCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+}
+function trimStr(s){ return (s===null||s===undefined) ? "" : String(s).trim(); }
+
+function toDate(v){
+  if(v===null||v===undefined||v==="") return null;
+  if(v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if(typeof v === "number"){
+    // excel serial fallback
+    const d = XLSX.SSF.parse_date_code(v);
+    if(!d) return null;
+    return new Date(d.y, d.m-1, d.d, d.H||0, d.M||0, d.S||0);
+  }
+  const parsed = new Date(v);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+function dateOnly(d){ return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()) : null; }
+function fmtDateBR(d){
+  if(!d) return "-";
+  const dd = String(d.getDate()).padStart(2,"0");
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+function fmtMonthYear(y,m){ return `${MESES_PT[m]}/${y}`; }
+function ymKey(d){ return d.getFullYear()*100 + (d.getMonth()+1); }
+function ymdKey(d){ return d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate(); }
+function addDays(d, n){ const r = new Date(d); r.setDate(r.getDate()+n); return r; }
+function addMonths(d, n){ const r = new Date(d); r.setMonth(r.getMonth()+n); return r; }
+function daysBetween(a,b){ return Math.round((dateOnly(b) - dateOnly(a)) / 86400000); }
+function fmtNum(n, dec){ 
+  if(n===null||n===undefined||isNaN(n)) return "-";
+  return n.toLocaleString("pt-BR", {minimumFractionDigits:dec||0, maximumFractionDigits:dec||0});
+}
+function fmtPct(n, dec){
+  if(n===null||n===undefined||isNaN(n) || !isFinite(n)) return "-";
+  const s = n.toLocaleString("pt-BR", {minimumFractionDigits:dec||1, maximumFractionDigits:dec||1});
+  return (n>0?"+":"") + s + "%";
+}
+function fmtBRL(n){
+  if(n===null||n===undefined||isNaN(n)) return "-";
+  return n.toLocaleString("pt-BR", {style:"currency", currency:"BRL"});
+}
+function pctVariation(atual, anterior){
+  if(anterior===0 || anterior===null || anterior===undefined) return null;
+  return ((atual-anterior)/anterior)*100;
+}
+function variationTag(v){
+  if(v===null||v===undefined||!isFinite(v)) return `<span class="tag-neutral">s/ base</span>`;
+  if(v>0.001) return `<span class="tag-pos">${fmtPct(v,1)}</span>`;
+  if(v<-0.001) return `<span class="tag-neg">${fmtPct(v,1)}</span>`;
+  return `<span class="tag-neutral">0.0%</span>`;
+}
+function cardClassForVar(v){
+  if(v===null||v===undefined||!isFinite(v)) return "";
+  if(v>0.001) return "pos";
+  if(v<-0.001) return "neg";
+  return "";
+}
+function weekOfYearMonday(d){
+  // ISO-ish week number, week starts Monday
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(),0,4));
+  const weekNum = 1 + Math.round(((date - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay()+6)%7)) / 7);
+  return { year: date.getUTCFullYear(), week: weekNum };
+}
+function startOfWeekMonday(d){
+  const day = (d.getDay()+6)%7; // 0=monday
+  return dateOnly(addDays(d, -day));
+}
+function escapeHtml(s){
+  return String(s===null||s===undefined?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function uniq(arr){ return Array.from(new Set(arr)); }
+function sum(arr){ return arr.reduce((a,b)=>a+b,0); }
+function avg(arr){ return arr.length ? sum(arr)/arr.length : 0; }
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Excel Loader                                                    */
+/* ---------------------------------------------------------------------- */
+const ExcelLoader = {
+  // verifica se as bibliotecas externas (CDN) carregaram corretamente
+  checkLibraries(){
+    const missing = [];
+    if(typeof XLSX === "undefined") missing.push("SheetJS (leitura de Excel)");
+    if(typeof Chart === "undefined") missing.push("Chart.js (gráficos)");
+    if(typeof html2canvas === "undefined") missing.push("html2canvas (exportação PNG)");
+    if(typeof window.jspdf === "undefined") missing.push("jsPDF (exportação PDF)");
+    if(missing.length){
+      throw new Error(
+        "Não foi possível carregar a(s) biblioteca(s): " + missing.join(", ") + ".\n" +
+        "Isso normalmente acontece por falta de conexão com a internet no momento em que a página abriu, " +
+        "ou por um bloqueador de anúncios/extensão do navegador bloqueando o CDN (cdnjs.cloudflare.com).\n" +
+        "Verifique sua conexão, desative temporariamente bloqueadores de conteúdo para esta página e recarregue-a."
+      );
+    }
+  },
+
+  // encontra o nome real da aba tolerando espaços extras e maiúsculas/minúsculas
+  resolveSheetName(wb, wanted){
+    if(wb.SheetNames.includes(wanted)) return wanted;
+    const wantedNorm = normStr(wanted);
+    return wb.SheetNames.find(n => normStr(n) === wantedNorm) || null;
+  },
+
+  async load(file){
+    this.checkLibraries();
+
+    let buf;
+    try{
+      buf = await file.arrayBuffer();
+    }catch(e){
+      throw new Error("Não foi possível ler o arquivo selecionado: " + e.message);
+    }
+
+    let wb;
+    try{
+      wb = XLSX.read(buf, { type:"array", cellDates:true });
+    }catch(e){
+      throw new Error(
+        "O arquivo não pôde ser interpretado como uma planilha Excel válida (.xlsx). " +
+        "Detalhe técnico: " + e.message
+      );
+    }
+
+    if(!wb.SheetNames || !wb.SheetNames.length){
+      throw new Error("O arquivo foi lido, mas não contém nenhuma aba/planilha.");
+    }
+
+    // resolve nomes reais das abas (tolerando espaços/maiúsculas diferentes)
+    const sheetNameMap = {};
+    const missingSheets = [];
+    REQUIRED_SHEETS.forEach(s=>{
+      const real = this.resolveSheetName(wb, s);
+      if(real) sheetNameMap[s] = real;
+      else missingSheets.push(s);
+    });
+
+    if(missingSheets.length){
+      throw new Error("As seguintes abas não foram encontradas no arquivo: " + missingSheets.join(", ") +
+        ". Abas encontradas no arquivo: " + wb.SheetNames.join(", ") + ". " +
+        "Verifique se o arquivo carregado é o NUCLEO REPOSIÇÃO.xlsx correto e se os nomes das abas não foram alterados.");
+    }
+
+    const raw = {};
+    const colIssues = [];
+
+    REQUIRED_SHEETS.forEach(sheetName=>{
+      const ws = wb.Sheets[sheetNameMap[sheetName]];
+      let json, headerRow;
+      try{
+        json = XLSX.utils.sheet_to_json(ws, { defval:null, raw:true });
+        // lê a linha de cabeçalho diretamente (funciona mesmo se a aba não tiver linhas de dados)
+        headerRow = XLSX.utils.sheet_to_json(ws, { header:1, range:0 })[0] || [];
+      }catch(e){
+        throw new Error(`Falha ao ler a aba "${sheetName}": ${e.message}`);
+      }
+      raw[sheetName] = json;
+
+      const foundCols = headerRow.filter(c=>c!==null && c!==undefined && String(c).trim()!=="");
+      const foundNorm = foundCols.map(c=>normStr(c));
+      const missingCols = (REQUIRED_COLUMNS[sheetName]||[]).filter(rc=>{
+        return !foundNorm.includes(normStr(rc));
+      });
+      if(missingCols.length){
+        colIssues.push(`Aba "${sheetName}": coluna(s) não encontrada(s): ${missingCols.join(", ")}. ` +
+          `Colunas encontradas nesta aba: ${foundCols.join(", ") || "(nenhuma)"}.`);
+      }
+    });
+
+    // carrega sheets opcionais se existirem (não gera erro se faltar)
+    OPTIONAL_SHEETS.forEach(sheetName=>{
+      const real = this.resolveSheetName(wb, sheetName);
+      if(real){
+        try{
+          raw[sheetName] = XLSX.utils.sheet_to_json(wb.Sheets[real], { defval:null, raw:true });
+        }catch(e){ raw[sheetName] = []; }
+      } else {
+        raw[sheetName] = null; // null = aba não existe
+      }
+    });
+
+    if(colIssues.length){
+      throw new Error("Foram encontradas divergências de colunas no arquivo:\n" + colIssues.join("\n"));
+    }
+
+    return raw;
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Data Processor                                                  */
+/* ---------------------------------------------------------------------- */
+const DataProcessor = {
+  process(raw){
+    const out = {};
+
+    // ---- AUDITORIA REP ----
+    out.auditoria = raw["AUDITORIA REP"].map((r,idx)=>{
+      const data = toDate(r["DATA"]);
+      const cod = r["COD"]!==null && r["COD"]!==undefined && r["COD"]!=="" ? String(r["COD"]).trim() : null;
+      const nome = trimStr(r["NOME"]);
+      const criteria = {};
+      let simCount = 0, invalid = 0;
+      AUDIT_CRITERIA.forEach(c=>{
+        let v = r[c];
+        v = v===null||v===undefined ? "" : String(v).trim().toUpperCase();
+        if(v==="SIM"){ criteria[c]="SIM"; simCount++; }
+        else if(v==="NÃO" || v==="NAO"){ criteria[c]="NÃO"; }
+        else { criteria[c]="INVALIDO"; invalid++; }
+      });
+      return {
+        _row: idx, data, rua: r["RUA"], cod, nome,
+        codKey: cod ? normStr(cod) : (nome ? "NOME::"+normStr(nome) : null),
+        criteria, simCount, invalid,
+        qualidade: invalid>0 ? null : (simCount/7*100)
+      };
+    }).filter(r=>r.data);
+
+    // ---- FEEDBACK REP ----
+    out.feedback = raw["FEEDBACK REP"].map((r,idx)=>{
+      const data = toDate(r["Data"]);
+      const cod = r["Cod"]!==null && r["Cod"]!==undefined && r["Cod"]!=="" ? String(r["Cod"]).trim() : null;
+      const nome = trimStr(r["Nome"]);
+      const avPessoal = Number(r["Avaliação Pessoal"]);
+      const avGestor = Number(r["Avaliação Gestor"]);
+      return {
+        _row: idx, data, cod, nome,
+        codKey: cod ? normStr(cod) : (nome ? "NOME::"+normStr(nome) : null),
+        resumo: trimStr(r["Resumo Assunto"]),
+        avPessoal: isNaN(avPessoal)?null:avPessoal,
+        avGestor: isNaN(avGestor)?null:avGestor,
+        desempenho: trimStr(r["Desempenho"]),
+        classificacao: trimStr(r["Classificação"]),
+        isAdvertencia: /ADVERT/i.test(trimStr(r["Resumo Assunto"])+" "+trimStr(r["Classificação"])+" "+trimStr(r["Desempenho"]))
+      };
+    }).filter(r=>r.data || r.nome);
+
+    // ---- QUADRO REP ----
+    out.quadro = raw["QUADRO REP"].map((r,idx)=>{
+      const data = toDate(r["DATA"]);
+      const codigo = r["CODIGO"]!==null && r["CODIGO"]!==undefined && r["CODIGO"]!=="" ? String(r["CODIGO"]).trim() : null;
+      const nome = trimStr(r["NOME"]);
+      const statusRaw = trimStr(r["STATUS"]);
+      const statusNorm = normStr(statusRaw);
+      let bucket = "OUTRO";
+      if(statusNorm==="PRESENTE") bucket = "PRESENTE";
+      else if(statusNorm==="FALTA") bucket = "FALTA";
+      else if(statusNorm==="FOLGA") bucket = "FOLGA";
+      else if(statusNorm==="FERIAS") bucket = "FERIAS";
+      else if(statusNorm==="ATESTADO") bucket = "ATESTADO";
+      else if(statusRaw!=="") bucket = "SEGUNDO_TURNO"; // ex: 10HRS, SEG TURNO etc — variações tratadas como turno extra
+      return {
+        _row: idx, data, codigo, nome,
+        codKey: codigo ? normStr(codigo) : (nome ? "NOME::"+normStr(nome) : null),
+        statusRaw, bucket
+      };
+    }).filter(r=>r.data && r.codKey);
+
+    // ---- 8271 ----
+    out.p8271 = raw["8271"].map((r,idx)=>{
+      const data = toDate(r["DATA"]);
+      const tipoos = r["TIPOOS"]!==null && r["TIPOOS"]!==undefined ? Number(r["TIPOOS"]) : null;
+      return {
+        _row: idx, data, rua: r["RUA"]!==null&&r["RUA"]!==undefined ? Number(r["RUA"]) : null,
+        tipoos, numos: r["NUMOS"], codendereco: r["CODENDERECO"], descricao: trimStr(r["DESCRICAO"])
+      };
+    }).filter(r=>r.data);
+
+    // ---- 8460 ----
+    out.p8460 = raw["8460"].map((r,idx)=>{
+      const dtinicio = toDate(r["DTINICIOOS"]);
+      const cod = r["CODFUNCOS"]!==null && r["CODFUNCOS"]!==undefined && r["CODFUNCOS"]!=="" ? String(r["CODFUNCOS"]).trim() : null;
+      const nome = trimStr(r["NOME"]);
+      const tipoos = r["TIPOOS"]!==null && r["TIPOOS"]!==undefined ? Number(r["TIPOOS"]) : null;
+      return {
+        _row: idx, dtinicio, cod, nome,
+        codKey: cod ? normStr(cod) : (nome ? "NOME::"+normStr(nome) : null),
+        tipoos, numos: r["NUMOS"]
+      };
+    }).filter(r=>r.dtinicio);
+
+    // ---- MISSÕES (opcional) ----
+    const missaoRaw = raw["MISSÕES"];
+    out.missoes = missaoRaw ? missaoRaw.map((r,idx)=>{
+      const data = toDate(r["DATA"]);
+      const cod = r["CODIGO"]!==null && r["CODIGO"]!==undefined && r["CODIGO"]!=="" ? String(r["CODIGO"]).trim() : null;
+      const nome = trimStr(r["NOME"]);
+      return {
+        _row: idx, data,
+        horaInicio: trimStr(r["HORA INICIO"]),
+        horaFim: trimStr(r["HORA FIM"]),
+        cod, nome,
+        codKey: cod ? normStr(cod) : (nome ? "NOME::"+normStr(nome) : null),
+        tipo: trimStr(r["TIPO"])
+      };
+    }).filter(r=>r.data) : [];
+    out.missoesDispo = missaoRaw !== null; // true = aba existe, false = não existe
+
+    return out;
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Current Team                                                    */
+/* ---------------------------------------------------------------------- */
+const CurrentTeam = {
+  compute(processed){
+    const quadro = processed.quadro;
+    if(!quadro.length) return { date:null, codes:new Set(), members:[] };
+    let maxTime = Math.max(...quadro.map(r=>r.data.getTime()));
+    const maxDate = new Date(maxTime);
+    const rowsAtMax = quadro.filter(r=>r.data.getTime()===maxTime);
+    const map = new Map();
+    rowsAtMax.forEach(r=>{ map.set(r.codKey, r); });
+    return {
+      date: maxDate,
+      codes: new Set(map.keys()),
+      members: Array.from(map.values())
+    };
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* NAME / CODE registry (para exibição consistente em toda a aplicação)    */
+/* ---------------------------------------------------------------------- */
+function buildNameRegistry(processed){
+  const registry = new Map(); // codKey -> display name
+  const feed = [processed.quadro, processed.p8460, processed.auditoria, processed.feedback];
+  feed.forEach(arr=>{
+    arr.forEach(r=>{
+      if(r.codKey && r.nome && !registry.has(r.codKey)){
+        registry.set(r.codKey, r.nome);
+      }
+    });
+  });
+  return registry;
+}
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Production (fonte: 8460, TIPOOS = 58, data = DTINICIOOS)        */
+/* ---------------------------------------------------------------------- */
+const Production = {
+  state: {
+    mode: "mes",              // dia | semana | mes
+    dataInicial: null,
+    dataFinal: null,
+    employees: [],            // codKeys selecionados (vazio = todos)
+    quadroAtual: "SIM",
+    weekCompareMode: "anterior", // anterior | mesCorrespondente
+    mesmaPeriodicidade: "SIM",
+    projectionBase: 3
+  },
+
+  getBaseRows(){
+    const processed = window.APP_STATE.processed;
+    let rows = processed.p8460.filter(r=>r.tipoos===58);
+    if(this.state.quadroAtual==="SIM"){
+      const codes = window.APP_STATE.currentTeam.codes;
+      rows = rows.filter(r=>codes.has(r.codKey));
+    }
+    if(this.state.employees.length){
+      const set = new Set(this.state.employees);
+      rows = rows.filter(r=>set.has(r.codKey));
+    }
+    return rows;
+  },
+
+  // aplica filtro de intervalo de datas (para tabelas/gráficos filtráveis)
+  getFilteredRows(){
+    let rows = this.getBaseRows();
+    if(this.state.dataInicial){
+      const di = dateOnly(this.state.dataInicial);
+      rows = rows.filter(r=>dateOnly(r.dtinicio) >= di);
+    }
+    if(this.state.dataFinal){
+      const df = dateOnly(this.state.dataFinal);
+      rows = rows.filter(r=>dateOnly(r.dtinicio) <= df);
+    }
+    return rows;
+  },
+
+  countByDay(rows){
+    const map = new Map();
+    rows.forEach(r=>{
+      const k = ymdKey(r.dtinicio);
+      map.set(k, (map.get(k)||0)+1);
+    });
+    return map;
+  },
+  countByMonth(rows){
+    const map = new Map();
+    rows.forEach(r=>{
+      const k = ymKey(r.dtinicio);
+      map.set(k, (map.get(k)||0)+1);
+    });
+    return map;
+  },
+
+  availableMonths(){
+    const rows = this.getBaseRows();
+    const set = new Set(rows.map(r=>ymKey(r.dtinicio)));
+    return Array.from(set).sort();
+  },
+  availableYears(){
+    const rows = this.getBaseRows();
+    return uniq(rows.map(r=>r.dtinicio.getFullYear())).sort();
+  },
+  maxDataDate(){
+    const rows = this.getBaseRows();
+    if(!rows.length) return null;
+    return new Date(Math.max(...rows.map(r=>r.dtinicio.getTime())));
+  },
+
+  // ----- Visão executiva automática (independe de filtros de data) -----
+  executiveSummary(){
+    const rows = this.getBaseRows();
+    if(!rows.length) return null;
+    const maxDate = this.maxDataDate();
+    const refYear = maxDate.getFullYear(), refMonth = maxDate.getMonth();
+
+    const curMonthRows = rows.filter(r=> r.dtinicio.getFullYear()===refYear && r.dtinicio.getMonth()===refMonth);
+    const prevMonthDate = addMonths(new Date(refYear, refMonth, 1), -1);
+    const prevMonthRows = rows.filter(r=> r.dtinicio.getFullYear()===prevMonthDate.getFullYear() && r.dtinicio.getMonth()===prevMonthDate.getMonth());
+
+    const totalAtual = curMonthRows.length;
+    const totalAnterior = prevMonthRows.length;
+    const variacao = pctVariation(totalAtual, totalAnterior);
+
+    const diasComDados = uniq(curMonthRows.map(r=>ymdKey(r.dtinicio))).length || 1;
+    const mediaDiaria = totalAtual / diasComDados;
+
+    const totalDiasMes = new Date(refYear, refMonth+1, 0).getDate();
+    const diaAtualDoMes = maxDate.getDate();
+
+    // projeção UNIFICADA: usa a mesma lógica/base de Production.projection()
+    // (média dos N meses anteriores, conforme filtro "Base" selecionado pelo usuário)
+    const proj = this.projection();
+    const projecao = proj ? proj.projecao : mediaDiaria * totalDiasMes;
+    const projecaoBaseLabel = proj ? proj.baseMeses.join(", ") : null;
+    const projecaoMaior = proj ? proj.projecaoMaior : null;
+
+    // variação anual: mesmo mês ano anterior
+    const prevYearRows = rows.filter(r=> r.dtinicio.getFullYear()===refYear-1 && r.dtinicio.getMonth()===refMonth);
+    const totalAnoAnterior = prevYearRows.length;
+    const variacaoAnual = pctVariation(totalAtual, totalAnoAnterior);
+
+    return {
+      refYear, refMonth, maxDate,
+      totalAtual, totalAnterior, variacao,
+      mediaDiaria, diasComDados, totalDiasMes, diaAtualDoMes,
+      projecao, projecaoBaseLabel, projecaoMaior,
+      totalAnoAnterior, variacaoAnual
+    };
+  },
+
+  monthlyEvolution(){
+    return this.monthlyEvolutionWithPeriod(null);
+  },
+
+  // Se refDate fornecido: cada mês é cortado no mesmo dia do mês (mesma periodicidade)
+  monthlyEvolutionWithPeriod(refDate){
+    const rows = this.getBaseRows();
+    // quais meses existem?
+    const allKeys = Array.from(new Set(rows.map(r=>ymKey(r.dtinicio)))).sort();
+    return allKeys.map((k,i)=>{
+      const y = Math.floor(k/100), m = (k%100)-1;
+      // corta no dia refDate.getDate() se mesma periodicidade e este é o mês atual
+      let rowsForMonth;
+      if(refDate && y===refDate.getFullYear() && m===refDate.getMonth()){
+        const cutoff = dateOnly(refDate);
+        rowsForMonth = rows.filter(r=> ymKey(r.dtinicio)===k && dateOnly(r.dtinicio)<=cutoff);
+      } else if(refDate){
+        // meses anteriores: cortar no mesmo dia do mês para comparação justa
+        const diaCorte = refDate.getDate();
+        const ultimoDiaMes = new Date(y,m+1,0).getDate();
+        const dia = Math.min(diaCorte, ultimoDiaMes);
+        const cutoff = new Date(y,m,dia);
+        rowsForMonth = rows.filter(r=> ymKey(r.dtinicio)===k && dateOnly(r.dtinicio)<=cutoff);
+      } else {
+        rowsForMonth = rows.filter(r=> ymKey(r.dtinicio)===k);
+      }
+      const total = rowsForMonth.length;
+      const prevKey = i>0 ? allKeys[i-1] : null;
+      let prevTotal = null;
+      if(prevKey!==null){
+        const py = Math.floor(prevKey/100), pm=(prevKey%100)-1;
+        let prevRows;
+        if(refDate){
+          const diaCorte = refDate.getDate();
+          const ultimoDia = new Date(py,pm+1,0).getDate();
+          const dia = Math.min(diaCorte, ultimoDia);
+          prevRows = rows.filter(r=> ymKey(r.dtinicio)===prevKey && dateOnly(r.dtinicio)<=new Date(py,pm,dia));
+        } else {
+          prevRows = rows.filter(r=> ymKey(r.dtinicio)===prevKey);
+        }
+        prevTotal = prevRows.length;
+      }
+      const diasNoMes = uniq(rowsForMonth.map(r=>ymdKey(r.dtinicio))).length || 1;
+      return {
+        year:y, month:m, label: fmtMonthYear(y,m), total,
+        prevTotal, diff: prevTotal!==null ? total-prevTotal : null,
+        variacao: prevTotal!==null ? pctVariation(total, prevTotal) : null,
+        mediaDiaria: total/diasNoMes,
+        periodoLabel: refDate ? `até dia ${Math.min(refDate.getDate(), new Date(y,m+1,0).getDate())}` : null
+      };
+    });
+  },
+
+  monthlyComparisonTable(){
+    return this.monthlyEvolution();
+  },
+
+  yearComparison(years){
+    const rows = this.getBaseRows();
+    const allYears = this.availableYears();
+    const sel = (years && years.length) ? years : allYears.slice(-2);
+    const byYearMonth = new Map();
+    rows.forEach(r=>{
+      const y = r.dtinicio.getFullYear(), m = r.dtinicio.getMonth();
+      const k = y+"_"+m;
+      byYearMonth.set(k, (byYearMonth.get(k)||0)+1);
+    });
+    const table = [];
+    for(let m=0;m<12;m++){
+      const row = { month:m, label: MESES_PT[m], values:{} };
+      sel.forEach(y=>{ row.values[y] = byYearMonth.get(y+"_"+m) || 0; });
+      table.push(row);
+    }
+    return { years: sel, allYears, table };
+  },
+
+  ytd(){
+    const rows = this.getBaseRows();
+    const maxDate = this.maxDataDate();
+    if(!maxDate) return null;
+    const y = maxDate.getFullYear();
+    const start = new Date(y,0,1);
+    const end = maxDate;
+    const startPrev = new Date(y-1,0,1);
+    const endPrev = new Date(y-1, maxDate.getMonth(), maxDate.getDate());
+
+    const atual = rows.filter(r=> r.dtinicio>=start && dateOnly(r.dtinicio)<=dateOnly(end)).length;
+    const anterior = rows.filter(r=> r.dtinicio>=startPrev && dateOnly(r.dtinicio)<=dateOnly(endPrev)).length;
+    return {
+      ano: y, anoAnterior: y-1,
+      periodoAtual: `${fmtDateBR(start)} — ${fmtDateBR(end)}`,
+      periodoAnterior: `${fmtDateBR(startPrev)} — ${fmtDateBR(endPrev)}`,
+      atual, anterior, diff: atual-anterior, variacao: pctVariation(atual, anterior)
+    };
+  },
+
+  dailySeries(){
+    const rows = this.getFilteredRows();
+    const byDay = this.countByDay(rows);
+    const keys = Array.from(byDay.keys()).sort();
+    const vals = keys.map(k=>byDay.get(k));
+    const media = avg(vals);
+    return keys.map(k=>{
+      const y = Math.floor(k/10000), m = Math.floor((k%10000)/100)-1, d = k%100;
+      return { date:new Date(y,m,d), total: byDay.get(k), media };
+    });
+  },
+
+  weeklyTable(){
+    const rows = this.getBaseRows();
+    const byWeek = new Map();
+    rows.forEach(r=>{
+      const wow = weekOfYearMonday(r.dtinicio);
+      const k = wow.year*100+wow.week;
+      if(!byWeek.has(k)) byWeek.set(k, { year:wow.year, week:wow.week, weekKey:k, start:startOfWeekMonday(r.dtinicio), count:0 });
+      byWeek.get(k).count++;
+    });
+    const keys = Array.from(byWeek.keys()).sort();
+    return keys.map((k,i)=>{
+      const cur = byWeek.get(k);
+      const prev = i>0 ? byWeek.get(keys[i-1]) : null;
+      return {
+        weekKey: k,
+        label: `Sem ${cur.week}/${cur.year} (${fmtDateBR(cur.start)})`,
+        start: cur.start,
+        total: cur.count,
+        anterior: prev ? prev.count : null,
+        anteriorStart: prev ? prev.start : null,
+        anteriorWeekKey: prev ? prev.weekKey : null,
+        diff: prev ? cur.count-prev.count : null,
+        variacao: prev ? pctVariation(cur.count, prev.count) : null
+      };
+    });
+  },
+
+  // Retorna breakdown dia a dia (Seg-Sex) de uma semana vs semana anterior
+  weeklyDayBreakdown(weekKey, anteriorWeekKey){
+    const rows = this.getBaseRows();
+    const DIAS = ["Segunda","Terça","Quarta","Quinta","Sexta","Sábado","Domingo"];
+    // encontra a segunda-feira da semana pelo weekKey
+    function getWeekStart(wk){
+      const y = Math.floor(wk/100);
+      // busca qualquer row dessa semana para pegar a data de início
+      const r = rows.find(r=>{ const wow=weekOfYearMonday(r.dtinicio); return wow.year*100+wow.week===wk; });
+      return r ? startOfWeekMonday(r.dtinicio) : null;
+    }
+    const start  = getWeekStart(weekKey);
+    const startP = anteriorWeekKey ? getWeekStart(anteriorWeekKey) : null;
+    if(!start) return [];
+
+    // conta OS por dia da semana para a semana atual e anterior
+    const countByDate = new Map();
+    rows.forEach(r=>{
+      const d = dateOnly(r.dtinicio);
+      const t = d.getTime();
+      countByDate.set(t, (countByDate.get(t)||0)+1);
+    });
+
+    const result = [];
+    for(let offset=0; offset<7; offset++){
+      const dataCur  = addDays(start,  offset);
+      const dataPrev = startP ? addDays(startP, offset) : null;
+      const dow = dataCur.getDay(); // 0=dom, 1=seg … 6=sab
+      const diaNome = DIAS[(dow+6)%7]; // converte: seg=0…dom=6
+      if(dow===0) continue; // pula domingo
+      result.push({
+        diaNome,
+        dataCur,  totalCur:  countByDate.get(dataCur.getTime())  || 0,
+        dataPrev, totalPrev: dataPrev ? (countByDate.get(dataPrev.getTime()) || 0) : null
+      });
+    }
+    return result;
+  },
+
+  topPeriods(n){
+    n = n||3;
+    const daily = this.dailySeries().filter(d=>d.total>0);
+    const sorted = [...daily].sort((a,b)=>b.total-a.total);
+    const top = sorted.slice(0,n);
+    const bottom = [...daily].sort((a,b)=>a.total-b.total).slice(0,n);
+    return { top, bottom };
+  },
+
+  // ----- Comparações do modo de filtro (Dia/Semana/Mês) -----
+  modeComparison(){
+    const rows = this.getBaseRows();
+    const mode = this.state.mode;
+    const refDate = this.state.dataFinal ? dateOnly(this.state.dataFinal) : dateOnly(this.maxDataDate());
+    if(!refDate) return null;
+
+    if(mode==="dia"){
+      const target = this.state.dataInicial ? dateOnly(this.state.dataInicial) : refDate;
+      const prevWeekSameDay = addDays(target, -7);
+      const cAtual = rows.filter(r=> dateOnly(r.dtinicio).getTime()===target.getTime()).length;
+      const cAnterior = rows.filter(r=> dateOnly(r.dtinicio).getTime()===prevWeekSameDay.getTime()).length;
+      return {
+        mode,
+        labelAtual: `${DIAS_SEMANA_PT[target.getDay()]}, ${fmtDateBR(target)}`,
+        labelAnterior: `${DIAS_SEMANA_PT[prevWeekSameDay.getDay()]}, ${fmtDateBR(prevWeekSameDay)}`,
+        atual:cAtual, anterior:cAnterior, variacao: pctVariation(cAtual,cAnterior)
+      };
+    }
+    if(mode==="semana"){
+      const startCur = startOfWeekMonday(refDate);
+      const endCur = addDays(startCur,6);
+      let startCmp, endCmp, labelCmp;
+      if(this.state.weekCompareMode==="mesCorrespondente"){
+        startCmp = addMonths(startCur,-1); endCmp = addDays(startCmp,6);
+        labelCmp = `Semana correspondente do mês anterior (${fmtDateBR(startCmp)} - ${fmtDateBR(endCmp)})`;
+      } else {
+        startCmp = addDays(startCur,-7); endCmp = addDays(startCmp,6);
+        labelCmp = `Semana anterior (${fmtDateBR(startCmp)} - ${fmtDateBR(endCmp)})`;
+      }
+      const cAtual = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startCur && d<=endCur; }).length;
+      const cAnterior = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startCmp && d<=endCmp; }).length;
+      return {
+        mode,
+        labelAtual: `Semana atual (${fmtDateBR(startCur)} - ${fmtDateBR(endCur)})`,
+        labelAnterior: labelCmp,
+        atual:cAtual, anterior:cAnterior, variacao: pctVariation(cAtual,cAnterior)
+      };
+    }
+    // mes
+    const y = refDate.getFullYear(), m = refDate.getMonth();
+    let startCur, endCur, startCmp, endCmp;
+    if(this.state.mesmaPeriodicidade==="SIM"){
+      startCur = new Date(y,m,1); endCur = refDate;
+      const pm = addMonths(new Date(y,m,1),-1);
+      startCmp = new Date(pm.getFullYear(), pm.getMonth(), 1);
+      endCmp = new Date(pm.getFullYear(), pm.getMonth(), Math.min(refDate.getDate(), new Date(pm.getFullYear(),pm.getMonth()+1,0).getDate()));
+    } else {
+      startCur = new Date(y,m,1); endCur = new Date(y,m+1,0);
+      const pm = addMonths(new Date(y,m,1),-1);
+      startCmp = new Date(pm.getFullYear(), pm.getMonth(), 1);
+      endCmp = new Date(pm.getFullYear(), pm.getMonth()+1, 0);
+    }
+    const cAtual = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startCur && d<=endCur; }).length;
+    const cAnterior = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startCmp && d<=endCmp; }).length;
+    return {
+      mode,
+      labelAtual: `${fmtMonthYear(y,m)} (${fmtDateBR(startCur)} - ${fmtDateBR(endCur)})`,
+      labelAnterior: `${fmtMonthYear(startCmp.getFullYear(), startCmp.getMonth())} (${fmtDateBR(startCmp)} - ${fmtDateBR(endCmp)})`,
+      atual:cAtual, anterior:cAnterior, variacao: pctVariation(cAtual,cAnterior)
+    };
+  },
+
+  // projeção baseada em média de N meses anteriores — retorna dados completos para gráfico
+  projection(){
+    const evo = this.monthlyEvolutionWithPeriod(null); // usa meses completos como base
+    if(!evo.length) return null;
+    const n = this.state.projectionBase;
+
+    // mês atual = último da série
+    const last = evo[evo.length-1];
+    // meses de base = os N meses imediatamente anteriores ao atual
+    const base = evo.slice(Math.max(0, evo.length-1-n), evo.length-1);
+    const mediaBase = base.length ? avg(base.map(b=>b.mediaDiaria)) : last.mediaDiaria;
+    const totalDiasMes = new Date(last.year, last.month+1, 0).getDate();
+    const projecao = mediaBase * totalDiasMes;
+    const mediaDiariaAtual = last.mediaDiaria;
+    // Verde quando o ritmo atual >= média base histórica (mês atual está igual ou melhor que a referência)
+    const projecaoMaior = mediaDiariaAtual >= mediaBase;
+
+    // serie diária do mês atual (dados reais)
+    const rows = this.getBaseRows();
+    const y = last.year, m = last.month;
+    const diasReais = [];
+    for(let d=1; d<=totalDiasMes; d++){
+      const dt = new Date(y,m,d);
+      const cnt = rows.filter(r=> r.dtinicio.getFullYear()===y && r.dtinicio.getMonth()===m && r.dtinicio.getDate()===d).length;
+      diasReais.push({ dia:d, date:dt, real: cnt>0||d<=last.total/last.mediaDiaria ? cnt : null });
+    }
+    // acumulado real
+    let acum = 0;
+    diasReais.forEach(d=>{ if(d.real!==null){ acum+=d.real; d.acumReal=acum; } else { d.acumReal=null; } });
+    // projeção acumulada dia a dia
+    diasReais.forEach(d=>{
+      d.acumProj = +(mediaBase * d.dia).toFixed(0);
+    });
+    // último dia real conhecido
+    const ultimoDiaReal = last.total; // total acumulado real do mês atual
+    const ultimoDia = (() => {
+      const realRows = rows.filter(r=>r.dtinicio.getFullYear()===y && r.dtinicio.getMonth()===m);
+      if(!realRows.length) return 0;
+      return Math.max(...realRows.map(r=>r.dtinicio.getDate()));
+    })();
+
+    // projeção por funcionário no mês atual
+    const empMap = new Map();
+    rows.filter(r=>r.dtinicio.getFullYear()===y && r.dtinicio.getMonth()===m).forEach(r=>{
+      if(!empMap.has(r.codKey)) empMap.set(r.codKey, { codKey:r.codKey, nome: window.APP_STATE.nameRegistry.get(r.codKey)||r.nome, totalAtual:0 });
+      empMap.get(r.codKey).totalAtual++;
+    });
+    const empProj = Array.from(empMap.values()).map(e=>{
+      const diasTrabalhados = ultimoDia || 1;
+      const mediaDiariaEmp = e.totalAtual / diasTrabalhados;
+      return { ...e, mediaDiariaEmp, projecaoFechamento: +(mediaDiariaEmp * totalDiasMes).toFixed(0) };
+    }).sort((a,b)=>b.projecaoFechamento-a.projecaoFechamento);
+
+    return {
+      baseMeses: base.map(b=>b.label),
+      mesesDisponiveisBase: base.length,
+      mesesSolicitados: n,
+      mediaBase, projecao, mediaDiariaAtual, totalDiasMes,
+      mesAtual: last.label, projecaoMaior,
+      ultimoDia, ultimoDiaReal,
+      diasReais, empProj,
+      avisoHistoricoInsuficiente: base.length < n
+        ? `Foram utilizados apenas ${base.length} mês(es) de histórico (solicitado: ${n}). Carregue arquivos com mais histórico para usar ${n} meses como base.`
+        : null
+    };
+  },
+
+  employeeRanking(){
+    const rows = this.getBaseRows();
+    const registry = window.APP_STATE.nameRegistry;
+    const map = new Map();
+    rows.forEach(r=>{
+      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, nome: registry.get(r.codKey)||r.nome, total:0 });
+      map.get(r.codKey).total++;
+    });
+    return Array.from(map.values()).sort((a,b)=>b.total-a.total);
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Projection (fonte: 8271)                                        */
+/* ---------------------------------------------------------------------- */
+const Projection = {
+  state: { dataInicial:null, dataFinal:null },
+
+  getRows(){
+    const processed = window.APP_STATE.processed;
+    let rows = processed.p8271;
+    if(this.state.dataInicial){
+      const di = dateOnly(this.state.dataInicial);
+      rows = rows.filter(r=>dateOnly(r.data) >= di);
+    }
+    if(this.state.dataFinal){
+      const df = dateOnly(this.state.dataFinal);
+      rows = rows.filter(r=>dateOnly(r.data) <= df);
+    }
+    return rows;
+  },
+
+  // ---- TIPOOS 61 por rua ----
+  ruas61(){
+    const rows = this.getRows().filter(r=>r.tipoos===61 && r.rua!==null && !isNaN(r.rua));
+    const allRuas = uniq(this.getRows().filter(r=>r.rua!==null && !isNaN(r.rua)).map(r=>r.rua)).sort((a,b)=>a-b);
+    const map = new Map();
+    allRuas.forEach(ru=>map.set(ru,0));
+    rows.forEach(r=>{ map.set(r.rua, (map.get(r.rua)||0)+1); });
+    const arr = Array.from(map.entries()).map(([rua,count])=>({rua,count}));
+    return arr.sort((a,b)=>a.rua-b.rua);
+  },
+  cards61(){
+    const data = this.ruas61();
+    const total = sum(data.map(d=>d.count));
+    const comOcorrencia = data.filter(d=>d.count>0);
+    const maior = data.reduce((m,d)=> d.count>(m?m.count:-1) ? d : m, null);
+    return {
+      total,
+      ruasCom61: comOcorrencia.length,
+      mediaPorRua: comOcorrencia.length ? total/comOcorrencia.length : 0,
+      maiorDemanda: maior
+    };
+  },
+
+  // ---- TIPOOS 58 ----
+  os58Groups(){
+    // agrupa por NUMOS para encontrar a data mais antiga de cada OS
+    const rows = this.getRows().filter(r=>r.tipoos===58);
+    const map = new Map();
+    rows.forEach(r=>{
+      const key = r.numos;
+      if(!map.has(key)) map.set(key, { numos:key, firstDate:r.data, rua:r.rua, rows:[] });
+      const g = map.get(key);
+      if(r.data < g.firstDate) g.firstDate = r.data;
+      g.rows.push(r);
+    });
+    return Array.from(map.values());
+  },
+  cards58(){
+    const groups = this.os58Groups();
+    const maxDate = this.maxDataDate();
+    const hoje = maxDate ? dateOnly(maxDate) : null;
+    const ontem = hoje ? addDays(hoje,-1) : null;
+
+    // 58 com 2+ dias = OS cujo PRIMEIRO registro é ANTERIOR ao dia anterior
+    // (ou seja: ficou na fila sem ser finalizada na 8460 por pelo menos 2 dias)
+    const doisOuMaisDias = ontem
+      ? groups.filter(g=> dateOnly(g.firstDate) < ontem)
+      : [];
+
+    // contagem por dia
+    const allRows = groups.flatMap(g=>g.rows);
+    const doDiaHoje  = hoje  ? allRows.filter(r=>dateOnly(r.data).getTime()===hoje.getTime()).length  : 0;
+    const doDiaAnterior = ontem ? allRows.filter(r=>dateOnly(r.data).getTime()===ontem.getTime()).length : 0;
+
+    return {
+      total: allRows.length,
+      doisOuMaisDias: doisOuMaisDias.length,
+      doisOuMaisDiasDetalhe: doisOuMaisDias.slice(0,10), // para eventual detalhe
+      doDiaAnterior, doDiaHoje, hoje, ontem
+    };
+  },
+  os58PorRua(){
+    const rows = this.getRows().filter(r=>r.tipoos===58 && r.rua!==null && !isNaN(r.rua));
+    const map = new Map();
+    rows.forEach(r=>{ map.set(r.rua, (map.get(r.rua)||0)+1); });
+    return Array.from(map.entries()).map(([rua,count])=>({rua,count})).sort((a,b)=>a.rua-b.rua);
+  },
+  maxDataDate(){
+    const rows = this.getRows();
+    if(!rows.length) return null;
+    return new Date(Math.max(...rows.map(r=>r.data.getTime())));
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Feedback (fonte: FEEDBACK REP)                                  */
+/* ---------------------------------------------------------------------- */
+const Feedback = {
+  classify(nota){
+    if(nota===null||nota===undefined) return null;
+    if(nota<=4) return { label:"Desempenho insatisfatório", cls:"neg" };
+    if(nota<=7) return { label:"Regular — margem para melhoria", cls:"warn" };
+    return { label:"Bom desempenho", cls:"pos" };
+  },
+  byEmployee(){
+    const processed = window.APP_STATE.processed;
+    const registry = window.APP_STATE.nameRegistry;
+    const map = new Map();
+    processed.feedback.forEach(r=>{
+      const key = r.codKey || "SEMCOD::"+r.nome;
+      if(!map.has(key)) map.set(key, {
+        codKey:key, nome: registry.get(r.codKey)||r.nome, feedbacks:0, advertencias:0,
+        somaPessoal:0, nPessoal:0, somaGestor:0, nGestor:0, registros:[]
+      });
+      const e = map.get(key);
+      e.feedbacks++;
+      if(r.isAdvertencia) e.advertencias++;
+      if(r.avPessoal!==null){ e.somaPessoal+=r.avPessoal; e.nPessoal++; }
+      if(r.avGestor!==null){ e.somaGestor+=r.avGestor; e.nGestor++; }
+      e.registros.push(r);
+    });
+    return Array.from(map.values()).map(e=>{
+      const mediaPessoal = e.nPessoal ? e.somaPessoal/e.nPessoal : null;
+      const mediaGestor = e.nGestor ? e.somaGestor/e.nGestor : null;
+      const mediaGeral = (mediaPessoal!==null && mediaGestor!==null) ? (mediaPessoal+mediaGestor)/2 :
+                          (mediaGestor!==null ? mediaGestor : mediaPessoal);
+      return { ...e, mediaPessoal, mediaGestor, mediaGeral, classificacao: this.classify(mediaGeral) };
+    }).sort((a,b)=>b.feedbacks-a.feedbacks);
+  },
+  cards(){
+    const processed = window.APP_STATE.processed;
+    const rows = processed.feedback;
+    const pessoal = rows.filter(r=>r.avPessoal!==null).map(r=>r.avPessoal);
+    const gestor = rows.filter(r=>r.avGestor!==null).map(r=>r.avGestor);
+    return {
+      mediaGestor: avg(gestor),
+      mediaPessoal: avg(pessoal),
+      totalFeedbacks: rows.length,
+      totalAdvertencias: rows.filter(r=>r.isAdvertencia).length,
+      funcionariosAvaliados: uniq(rows.map(r=>r.codKey||r.nome)).length
+    };
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Attendance / Chamada (fonte: QUADRO REP)                        */
+/* ---------------------------------------------------------------------- */
+const Attendance = {
+  state: { dataInicial:null, dataFinal:null },
+
+  getRows(){
+    const processed = window.APP_STATE.processed;
+    let rows = processed.quadro;
+    if(this.state.dataInicial){
+      const di = dateOnly(this.state.dataInicial);
+      rows = rows.filter(r=>dateOnly(r.data) >= di);
+    }
+    if(this.state.dataFinal){
+      const df = dateOnly(this.state.dataFinal);
+      rows = rows.filter(r=>dateOnly(r.data) <= df);
+    }
+    return rows;
+  },
+
+  summary(){
+    const rows = this.getRows();
+    const counts = { PRESENTE:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0, SEGUNDO_TURNO:0 };
+    rows.forEach(r=>{ counts[r.bucket] = (counts[r.bucket]||0)+1; });
+    const presencaBase = counts.PRESENTE + counts.SEGUNDO_TURNO;
+    const denom = presencaBase + counts.FALTA;
+    const presencaPct = denom>0 ? (presencaBase/denom*100) : null;
+    const absenteismo = denom>0 ? (counts.FALTA/denom*100) : null;
+    return { counts, presencaPct, absenteismo, totalRegistros: rows.length };
+  },
+
+  byDay(){
+    const rows = this.getRows();
+    const map = new Map();
+    rows.forEach(r=>{
+      const k = ymdKey(r.data);
+      if(!map.has(k)) map.set(k, { date:r.data, PRESENTE:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0, SEGUNDO_TURNO:0 });
+      map.get(k)[r.bucket] = (map.get(k)[r.bucket]||0)+1;
+    });
+    const keys = Array.from(map.keys()).sort();
+    return keys.map(k=>{
+      const d = map.get(k);
+      const base = d.PRESENTE + d.SEGUNDO_TURNO;
+      const denom = base + d.FALTA;
+      return { ...d, presencaPct: denom>0 ? base/denom*100 : null };
+    });
+  },
+
+  faltantes(){
+    const rows = this.getRows().filter(r=>r.bucket==="FALTA");
+    const registry = window.APP_STATE.nameRegistry;
+    const map = new Map();
+    rows.forEach(r=>{
+      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, nome: registry.get(r.codKey)||r.nome, faltas:0, datas:[] });
+      const e = map.get(r.codKey);
+      e.faltas++; e.datas.push(r.data);
+    });
+    return Array.from(map.values()).sort((a,b)=>b.faltas-a.faltas);
+  },
+
+  individualHistory(codKey){
+    const rows = window.APP_STATE.processed.quadro.filter(r=>r.codKey===codKey);
+    const counts = { PRESENTE:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0, SEGUNDO_TURNO:0 };
+    rows.forEach(r=> counts[r.bucket] = (counts[r.bucket]||0)+1 );
+    const base = counts.PRESENTE + counts.SEGUNDO_TURNO;
+    const denom = base + counts.FALTA;
+    return { counts, presencaPct: denom>0 ? base/denom*100 : null, registros: rows };
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Audit (fonte: AUDITORIA REP)                                    */
+/* ---------------------------------------------------------------------- */
+const Audit = {
+  state: { dataInicial:null, dataFinal:null, rua:null, repositor:null },
+
+  getRows(){
+    const processed = window.APP_STATE.processed;
+    let rows = processed.auditoria;
+    if(this.state.dataInicial){
+      const di = dateOnly(this.state.dataInicial);
+      rows = rows.filter(r=>dateOnly(r.data) >= di);
+    }
+    if(this.state.dataFinal){
+      const df = dateOnly(this.state.dataFinal);
+      rows = rows.filter(r=>dateOnly(r.data) <= df);
+    }
+    if(this.state.rua){
+      rows = rows.filter(r=>String(r.rua)===String(this.state.rua));
+    }
+    if(this.state.repositor){
+      rows = rows.filter(r=>r.codKey===this.state.repositor);
+    }
+    return rows;
+  },
+
+  cards(){
+    const rows = this.getRows();
+    const valid = rows.filter(r=>r.qualidade!==null);
+    const totalSim = sum(valid.map(r=>r.simCount));
+    const totalNao = valid.length*7 - totalSim;
+    const qualidadeMedia = valid.length ? avg(valid.map(r=>r.qualidade)) : null;
+
+    const criterioNao = {};
+    AUDIT_CRITERIA.forEach(c=>criterioNao[c]=0);
+    valid.forEach(r=>{ AUDIT_CRITERIA.forEach(c=>{ if(r.criteria[c]==="NÃO") criterioNao[c]++; }); });
+    let piorCriterio = null, piorVal = -1;
+    Object.entries(criterioNao).forEach(([c,v])=>{ if(v>piorVal){ piorVal=v; piorCriterio=c; } });
+
+    return {
+      auditoriasRealizadas: rows.length,
+      qualidadeMedia, totalSim, totalNao,
+      criterioPior: piorCriterio, criterioPiorVal: piorVal,
+      repositoresAuditados: uniq(rows.filter(r=>r.codKey).map(r=>r.codKey)).length,
+      ruasAuditadas: uniq(rows.map(r=>r.rua)).length,
+      invalidos: rows.filter(r=>r.invalid>0).length
+    };
+  },
+
+  byRepositor(){
+    const rows = this.getRows().filter(r=>r.codKey);
+    const registry = window.APP_STATE.nameRegistry;
+    const map = new Map();
+    rows.forEach(r=>{
+      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, cod:r.cod, nome: registry.get(r.codKey)||r.nome, auditorias:0, sim:0, nao:0, qualidades:[] });
+      const e = map.get(r.codKey);
+      e.auditorias++;
+      if(r.qualidade!==null){
+        e.sim += r.simCount; e.nao += (7-r.simCount);
+        e.qualidades.push(r.qualidade);
+      }
+    });
+    return Array.from(map.values()).map(e=>({ ...e, qualidadeMedia: e.qualidades.length ? avg(e.qualidades) : null }))
+      .sort((a,b)=> (b.qualidadeMedia||0)-(a.qualidadeMedia||0));
+  },
+
+  byRua(){
+    const rows = this.getRows();
+    const map = new Map();
+    rows.forEach(r=>{
+      if(!map.has(r.rua)) map.set(r.rua, { rua:r.rua, auditorias:0, qualidades:[] });
+      const e = map.get(r.rua);
+      e.auditorias++;
+      if(r.qualidade!==null) e.qualidades.push(r.qualidade);
+    });
+    return Array.from(map.values()).map(e=>({ ...e, qualidadeMedia: e.qualidades.length ? avg(e.qualidades) : null }))
+      .sort((a,b)=>Number(a.rua)-Number(b.rua));
+  },
+
+  evolucao(){
+    const rows = this.getRows().filter(r=>r.qualidade!==null);
+    const map = new Map();
+    rows.forEach(r=>{
+      const k = ymdKey(r.data);
+      if(!map.has(k)) map.set(k, { date:r.data, qualidades:[] });
+      map.get(k).qualidades.push(r.qualidade);
+    });
+    const keys = Array.from(map.keys()).sort();
+    return keys.map(k=>{
+      const e = map.get(k);
+      return { date:e.date, qualidadeMedia: avg(e.qualidades) };
+    });
+  },
+
+  simNaoPorCriterio(){
+    const rows = this.getRows().filter(r=>r.invalid===0);
+    return AUDIT_CRITERIA.map(c=>{
+      const sim = rows.filter(r=>r.criteria[c]==="SIM").length;
+      const nao = rows.filter(r=>r.criteria[c]==="NÃO").length;
+      return { criterio:c, sim, nao };
+    });
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Missions                                                        */
+/* ---------------------------------------------------------------------- */
+const Missions = {
+  totalValue(cfg){
+    return sum((cfg.missions||[]).map(m=> (m.qty||0) * (m.osEquiv||0) * (m.valuePerOs||0) ));
+  },
+  totalOsEquiv(cfg){
+    return sum((cfg.missions||[]).map(m=> (m.qty||0) * (m.osEquiv||0) ));
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Commission (fonte: produção 8460 + config editável)             */
+/* ---------------------------------------------------------------------- */
+const Commission = {
+  findBand(points, bands){
+    const active = (bands||[]).filter(b=>b.active!==false);
+    return active.find(b=> points>=b.min && points<=b.max) || null;
+  },
+  findException(codKey, cod, exceptions){
+    return (exceptions||[]).find(e=> e.active!==false && e.codigo && normStr(e.codigo)===normStr(cod||"") );
+  },
+  computeAll(dataInicial, dataFinal){
+    const cfg = window.APP_STATE.commissionConfig;
+    const registry = window.APP_STATE.nameRegistry;
+    let prodRows = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58);
+    if(dataInicial){ const di = dateOnly(dataInicial); prodRows = prodRows.filter(r=>dateOnly(r.dtinicio) >= di); }
+    if(dataFinal){ const df = dateOnly(dataFinal); prodRows = prodRows.filter(r=>dateOnly(r.dtinicio) <= df); }
+
+    const map = new Map();
+    prodRows.forEach(r=>{
+      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, cod:r.cod, nome: registry.get(r.codKey)||r.nome, producao:0 });
+      map.get(r.codKey).producao++;
+    });
+    const missionsTotal = Missions.totalValue(cfg);
+    const missionsOs = Missions.totalOsEquiv(cfg);
+
+    return Array.from(map.values()).map(e=>{
+      const pontos = e.producao; // pontuação = produção (1 O.S. = 1 ponto), base do sistema modular
+      const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
+      let valorPonto, regra, band;
+      if(exc){
+        valorPonto = exc.valuePerPoint; regra = "Exceção Individual";
+      } else {
+        band = this.findBand(pontos, cfg.bands);
+        valorPonto = band ? band.value : 0;
+        regra = band ? "Regra Normal" : "Sem faixa aplicável";
+      }
+      const comissaoProducao = pontos * valorPonto;
+      const comissaoTotal = comissaoProducao + missionsTotal;
+      return {
+        ...e, pontos, valorPonto, regra, band,
+        comissaoProducao, missionsTotal, missionsOs,
+        comissaoTotal
+      };
+    }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Charts (Chart.js wrappers)                                      */
+/* ---------------------------------------------------------------------- */
+const Charts = {
+  instances: {},
+  colors: {
+    blue:"#2f6fce", blueDark:"#123a6b", green:"#1a9c62", red:"#d64545",
+    orange:"#e08a1f", gray:"#7a8798", blueLight:"#cfe3fb"
+  },
+  destroy(id){
+    if(this.instances[id]){ this.instances[id].destroy(); delete this.instances[id]; }
+  },
+  make(id, config){
+    this.destroy(id);
+    const el = document.getElementById(id);
+    if(!el) return;
+    this.instances[id] = new Chart(el.getContext("2d"), config);
+    return this.instances[id];
+  },
+  baseOptions(extra){
+    return Object.assign({
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{ font:{ size:11 }, color:"#4a5568" } }, tooltip:{ backgroundColor:"#123a6b", padding:10, titleFont:{size:12}, bodyFont:{size:12} } },
+      scales:{
+        x:{ grid:{ display:false }, ticks:{ color:"#7a8798", font:{size:11} } },
+        y:{ grid:{ color:"#eaeef3" }, ticks:{ color:"#7a8798", font:{size:11} }, beginAtZero:true }
+      }
+    }, extra||{});
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Export                                                          */
+/* ---------------------------------------------------------------------- */
+const Export = {
+  currentArea(){
+    const active = $(".view.active .pane.active") || $(".view.active");
+    return active;
+  },
+  async toPNG(){
+    const target = this.currentArea();
+    if(!target){ toast("Nada para exportar.","error"); return; }
+    toast("Gerando imagem PNG...");
+    try{
+      const canvas = await html2canvas(target, { backgroundColor:"#f4f6f9", scale:2, useCORS:true });
+      const link = document.createElement("a");
+      link.download = `central-reposicao-${Date.now()}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast("PNG exportado com sucesso.","success");
+    }catch(err){
+      console.error(err);
+      toast("Falha ao exportar PNG: "+err.message,"error");
+    }
+  },
+  async toPDF(){
+    const target = this.currentArea();
+    if(!target){ toast("Nada para exportar.","error"); return; }
+    toast("Gerando PDF...");
+    try{
+      const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale:2, useCORS:true });
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const imgW = pageW - 16;
+      const imgH = canvas.height * imgW / canvas.width;
+      let heightLeft = imgH;
+      let position = 8;
+      const imgData = canvas.toDataURL("image/png");
+      pdf.addImage(imgData, "PNG", 8, position, imgW, imgH);
+      heightLeft -= (pageH - 16);
+      while(heightLeft > 0){
+        pdf.addPage();
+        position = heightLeft - imgH + 8;
+        pdf.addImage(imgData, "PNG", 8, position, imgW, imgH);
+        heightLeft -= (pageH - 16);
+      }
+      pdf.save(`central-reposicao-${Date.now()}.pdf`);
+      toast("PDF exportado com sucesso.","success");
+    }catch(err){
+      console.error(err);
+      toast("Falha ao exportar PDF: "+err.message,"error");
+    }
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* TABLE SORT — ativa ordenação clicável em qualquer .data-table           */
+/* ---------------------------------------------------------------------- */
+function makeSortable(table){
+  if(!table || table.dataset.sortable) return;
+  table.dataset.sortable = "1";
+
+  const thead = table.querySelector("thead");
+  const tbody = table.querySelector("tbody");
+  if(!thead || !tbody) return;
+
+  const headers = Array.from(thead.querySelectorAll("th"));
+  let lastCol = -1, lastDir = 0; // 0=none, 1=asc, -1=desc
+
+  headers.forEach((th, colIdx)=>{
+    th.addEventListener("click", ()=>{
+      // determina direção
+      if(lastCol === colIdx){
+        lastDir = lastDir === 1 ? -1 : 1;
+      } else {
+        lastDir = 1;
+        lastCol = colIdx;
+      }
+
+      // remove indicadores anteriores
+      headers.forEach(h=>{ h.classList.remove("sort-asc","sort-desc"); });
+      th.classList.add(lastDir===1 ? "sort-asc" : "sort-desc");
+
+      // coleta linhas excluindo linhas de totais/rodapé (com colspan > 1)
+      const rows = Array.from(tbody.querySelectorAll("tr")).filter(r=>{
+        const cells = r.querySelectorAll("td");
+        if(!cells.length) return false;
+        // pula linhas com colspan (totais)
+        return !Array.from(cells).some(td=>parseInt(td.getAttribute("colspan")||1)>1);
+      });
+
+      rows.sort((a,b)=>{
+        const cellA = a.querySelectorAll("td")[colIdx];
+        const cellB = b.querySelectorAll("td")[colIdx];
+        if(!cellA || !cellB) return 0;
+
+        // pega texto limpo (remove tags filhas como spans)
+        const rawA = (cellA.textContent||"").trim();
+        const rawB = (cellB.textContent||"").trim();
+
+        // tenta parsear como número (aceita vírgula decimal BR, R$, %, +/-)
+        const parseNum = s=>{
+          const cleaned = s.replace(/[R$\s%+]/g,"").replace(/\./g,"").replace(",",".");
+          const n = parseFloat(cleaned);
+          return isNaN(n) ? null : n;
+        };
+        const numA = parseNum(rawA);
+        const numB = parseNum(rawB);
+
+        let cmp;
+        if(numA !== null && numB !== null){
+          cmp = numA - numB;
+        } else {
+          // string: normaliza para comparação sem acento
+          const strA = rawA.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+          const strB = rawB.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+          cmp = strA < strB ? -1 : strA > strB ? 1 : 0;
+        }
+        return cmp * lastDir;
+      });
+
+      // reinsere linhas ordenadas (mantém linhas de total no lugar)
+      const allRows = Array.from(tbody.querySelectorAll("tr"));
+      const totalRows = allRows.filter(r=>{
+        const cells = r.querySelectorAll("td");
+        return Array.from(cells).some(td=>parseInt(td.getAttribute("colspan")||1)>1);
+      });
+
+      // remove todas as linhas normais do tbody
+      rows.forEach(r=>r.remove());
+      // reinsere na ordem certa (antes das linhas de total se existirem)
+      if(totalRows.length){
+        totalRows[0].before(...rows);
+      } else {
+        tbody.append(...rows);
+      }
+    });
+  });
+}
+
+// Activa automaticamente em todas as .data-table do documento (MutationObserver)
+function activateSortableAll(){
+  document.querySelectorAll("table.data-table").forEach(makeSortable);
+}
+// Observa mudanças no DOM para ativar em tabelas criadas dinamicamente
+const _sortObs = new MutationObserver(()=> activateSortableAll());
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: UI                                                              */
+/* ---------------------------------------------------------------------- */
+const UI = {
+  subnavConfig: {
+    indicadores: [
+      { id:"producao", label:"Produção" },
+      { id:"projecao", label:"Projeção" }
+    ],
+    gestao: [
+      { id:"feedbacks", label:"Feedbacks" },
+      { id:"quadro", label:"Quadro" },
+      { id:"chamada", label:"Chamada" },
+      { id:"auditoria", label:"Auditoria" },
+      { id:"comissao", label:"Comissão" }
+    ]
+  },
+  currentView: "indicadores",
+  currentPane: "producao",
+
+  init(){
+    // ativa ordenação em tabelas existentes e futuras
+    _sortObs.observe(document.body, { childList:true, subtree:true });
+    activateSortableAll();
+
+    $all(".nav-btn").forEach(btn=>{
+      btn.addEventListener("click", ()=>this.switchView(btn.dataset.view));
+    });
+    $("#btn-reload").addEventListener("click", ()=> $("#file-input").click());
+    $("#btn-empty-upload").addEventListener("click", ()=> $("#file-input").click());
+    $("#file-input").addEventListener("change", (e)=>{
+      if(e.target.files[0]) this.handleFile(e.target.files[0]);
+    });
+    $("#btn-export-png").addEventListener("click", ()=>Export.toPNG());
+    $("#btn-export-pdf").addEventListener("click", ()=>Export.toPDF());
+    $("#modal-overlay").addEventListener("click", (e)=>{ if(e.target.id==="modal-overlay") this.closeModal(); });
+    this.buildSubnav();
+  },
+
+  async handleFile(file){
+    $("#empty-error").innerHTML = "";
+    toast("Lendo arquivo "+file.name+"...");
+    let stage = "leitura do arquivo (Excel Loader)";
+    try{
+      const raw = await ExcelLoader.load(file);
+
+      stage = "processamento dos dados (Data Processor)";
+      const processed = DataProcessor.process(raw);
+
+      stage = "identificação do quadro atual (Current Team)";
+      const currentTeam = CurrentTeam.compute(processed);
+
+      stage = "montagem do cadastro de nomes";
+      const nameRegistry = buildNameRegistry(processed);
+
+      window.APP_STATE.raw = raw;
+      window.APP_STATE.processed = processed;
+      window.APP_STATE.currentTeam = currentTeam;
+      window.APP_STATE.nameRegistry = nameRegistry;
+      window.APP_STATE.commissionConfig = JSON.parse(JSON.stringify(DEFAULT_COMMISSION_CONFIG));
+      window.APP_STATE.ready = true;
+
+      $("#quadro-badge").textContent = "Quadro atual: " + (currentTeam.date ? fmtDateBR(currentTeam.date) : "-") +
+        "  •  " + currentTeam.codes.size + " repositores";
+      $("#empty-state").style.display = "none";
+      $("#main-content").style.display = "block";
+      $("#btn-export-png").disabled = false;
+      $("#btn-export-pdf").disabled = false;
+
+      toast("Arquivo carregado com sucesso.","success");
+
+      stage = "renderização do painel (UI)";
+      this.switchView("indicadores", true);
+    }catch(err){
+      console.error("[Central de Reposição] Erro na etapa:", stage, err);
+      const msg = (err && err.message) ? err.message : String(err);
+      const stackHint = (err && err.stack) ? "\n\nDetalhe técnico (stack):\n" + err.stack.split("\n").slice(0,4).join("\n") : "";
+      $("#empty-error").innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;white-space:pre-line;">` +
+        `<strong>Falha na etapa: ${escapeHtml(stage)}</strong>\n\n${escapeHtml(msg)}${escapeHtml(stackHint)}` +
+        `</div>`;
+      toast("Erro ao carregar arquivo.","error");
+      // garante que a interface não fica "meio carregada"
+      window.APP_STATE.ready = false;
+    }
+    $("#file-input").value = "";
+  },
+
+  buildSubnav(){
+    const nav = $("#sub-nav");
+    nav.innerHTML = "";
+    const items = this.subnavConfig[this.currentView];
+    if(!items){ nav.classList.remove("show"); return; }
+    nav.classList.add("show");
+    items.forEach(it=>{
+      const btn = document.createElement("button");
+      btn.className = "subnav-btn" + (it.id===this.currentPane ? " active" : "");
+      btn.textContent = it.label;
+      btn.addEventListener("click", ()=>this.switchPane(it.id));
+      nav.appendChild(btn);
+    });
+  },
+
+  switchView(view, force){
+    if(view===this.currentView && !force) return;
+    this.currentView = view;
+    $all(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===view));
+    $all(".view").forEach(v=>v.classList.remove("active"));
+    $("#view-"+view).classList.add("active");
+    const items = this.subnavConfig[view];
+    this.currentPane = items[0].id;
+    this.buildSubnav();
+    this.renderPane(this.currentPane);
+  },
+
+  switchPane(pane){
+    this.currentPane = pane;
+    $all(".subnav-btn").forEach((b,i)=>{
+      const items = this.subnavConfig[this.currentView];
+      b.classList.toggle("active", items[i].id===pane);
+    });
+    $all(".pane").forEach(p=>p.classList.remove("active"));
+    $("#pane-"+pane).classList.add("active");
+    this.renderPane(pane);
+  },
+
+  renderPane(pane){
+    if(!window.APP_STATE.ready) return;
+    const fns = {
+      producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
+      quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao
+    };
+    if(fns[pane]) fns[pane]();
+  },
+
+  openModal(html){
+    $("#modal-box").innerHTML = `<button class="modal-close" onclick="UI.closeModal()">&times;</button>` + html;
+    $("#modal-overlay").classList.add("show");
+  },
+  closeModal(){ $("#modal-overlay").classList.remove("show"); }
+};
+
+document.addEventListener("libsLoaded", () => UI.init());
+
+document.addEventListener("libsError", (e) => {
+  // mostra erro de CDN antes mesmo de clicar em carregar arquivo
+  const box = document.getElementById("empty-error");
+  if(box){
+    box.innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;">
+      <strong>Não foi possível carregar uma ou mais bibliotecas necessárias.</strong><br><br>
+      Detalhe: ${escapeHtml(e.detail || "erro desconhecido")}<br><br>
+      Verifique sua conexão com a internet e recarregue a página (F5).<br>
+      Se o problema persistir, tente em outro navegador ou desative extensões de bloqueio de anúncios.
+    </div>`;
+  }
+});
+
+/* ---------------------------------------------------------------------- */
+/* RENDER: Produção                                                        */
+/* ---------------------------------------------------------------------- */
+function allEmployeesForProduction(){
+  const processed = window.APP_STATE.processed;
+  const registry = window.APP_STATE.nameRegistry;
+  const codes = uniq(processed.p8460.filter(r=>r.tipoos===58).map(r=>r.codKey));
+  return codes.map(c=>({ codKey:c, nome: registry.get(c)||c })).sort((a,b)=>a.nome.localeCompare(b.nome));
+}
+
+function renderProducao(){
+  const pane = $("#pane-producao");
+  const st = Production.state;
+  const employees = allEmployeesForProduction();
+
+  pane.innerHTML = `
+    <div class="toolbar">
+      <div class="filter-group">
+        <label>Modo</label>
+        <div class="toggle-group" id="prod-mode-toggle">
+          <button data-v="dia" class="${st.mode==='dia'?'active':''}">Dia</button>
+          <button data-v="semana" class="${st.mode==='semana'?'active':''}">Semana</button>
+          <button data-v="mes" class="${st.mode==='mes'?'active':''}">Mês</button>
+        </div>
+      </div>
+      <div class="filter-group">
+        <label>Data Inicial</label>
+        <input type="date" id="prod-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}">
+      </div>
+      <div class="filter-group">
+        <label>Data Final</label>
+        <input type="date" id="prod-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}">
+      </div>
+      <div class="filter-group" style="min-width:200px;">
+        <label>Funcionário</label>
+        <select id="prod-employees">
+          <option value="">Todos</option>
+          ${employees.map(e=>`<option value="${e.codKey}" ${st.employees[0]===e.codKey?'selected':''}>${escapeHtml(e.nome)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Quadro Atual?</label>
+        <div class="toggle-group" id="prod-quadro-toggle">
+          <button data-v="SIM" class="${st.quadroAtual==='SIM'?'active':''}">Sim</button>
+          <button data-v="NAO" class="${st.quadroAtual==='NAO'?'active':''}">Não</button>
+        </div>
+      </div>
+      ${st.mode==="semana" ? `
+      <div class="filter-group">
+        <label>Comparar semana com</label>
+        <div class="toggle-group" id="prod-week-compare">
+          <button data-v="anterior" class="${st.weekCompareMode==='anterior'?'active':''}">Semana anterior</button>
+          <button data-v="mesCorrespondente" class="${st.weekCompareMode==='mesCorrespondente'?'active':''}">Mês anterior</button>
+        </div>
+      </div>` : ``}
+      ${st.mode==="mes" ? `
+      <div class="filter-group">
+        <label>Mesma periodicidade?</label>
+        <div class="toggle-group" id="prod-periodicidade">
+          <button data-v="SIM" class="${st.mesmaPeriodicidade==='SIM'?'active':''}">Sim</button>
+          <button data-v="NAO" class="${st.mesmaPeriodicidade==='NAO'?'active':''}">Não</button>
+        </div>
+      </div>` : ``}
+      <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm" id="prod-clear">Limpar filtros</button>
+    </div>
+
+    <div id="prod-empty-msg"></div>
+    <div id="prod-content"></div>
+  `;
+
+  $("#prod-mode-toggle").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    st.mode = b.dataset.v; renderProducao();
+  });
+  $("#prod-quadro-toggle").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    st.quadroAtual = b.dataset.v; renderProducao();
+  });
+  const wc = $("#prod-week-compare"); if(wc) wc.addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    st.weekCompareMode = b.dataset.v; renderProducao();
+  });
+  const pd = $("#prod-periodicidade"); if(pd) pd.addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    st.mesmaPeriodicidade = b.dataset.v; renderProducao();
+  });
+  $("#prod-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderProducao(); });
+  $("#prod-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderProducao(); });
+  $("#prod-employees").addEventListener("change", e=>{
+    st.employees = e.target.value ? [e.target.value] : []; renderProducao();
+  });
+  $("#prod-clear").addEventListener("click", ()=>{
+    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"SIM", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:3 };
+    renderProducao();
+  });
+
+  const rows = Production.getBaseRows();
+  if(!rows.length){
+    $("#prod-empty-msg").innerHTML = `<div class="warn-box">Nenhum registro de produção (TIPOOS = 58) encontrado para os filtros selecionados na sheet 8460.</div>`;
+    $("#prod-content").innerHTML = "";
+    return;
+  }
+
+  renderProducaoContent();
+}
+
+function toInputDate(d){
+  const dd = String(d.getDate()).padStart(2,"0"), mm = String(d.getMonth()+1).padStart(2,"0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+function renderProducaoContent(){
+  const exec = Production.executiveSummary();
+  const cmp = Production.modeComparison();
+  const yearCmp = Production.yearComparison();
+  const ytd = Production.ytd();
+  const daily = Production.dailySeries();
+  const weekly = Production.weeklyTable();
+  const proj = Production.projection();
+
+  // Respeita mesma periodicidade no gráfico/tabela mensal
+  const mp = Production.state.mesmaPeriodicidade === "SIM";
+  const maxDate = Production.maxDataDate();
+  const evo = Production.monthlyEvolutionWithPeriod(mp ? maxDate : null);
+
+  // badge intervalo de dados filtrados
+  const filtRows = Production.getFilteredRows();
+  const filtDates = filtRows.map(r=>r.dtinicio).filter(Boolean);
+  const filtMin = filtDates.length ? new Date(Math.min(...filtDates.map(d=>d.getTime()))) : null;
+  const filtMax = filtDates.length ? new Date(Math.max(...filtDates.map(d=>d.getTime()))) : null;
+  const intervaloBadge = (filtMin && filtMax && (Production.state.dataInicial || Production.state.dataFinal || Production.state.employees.length))
+    ? `<div class="hint-box">📅 Filtro ativo: <strong>${fmtDateBR(filtMin)}</strong> até <strong>${fmtDateBR(filtMax)}</strong> — ${filtRows.length} O.S. 58${Production.state.employees.length?' · '+Production.state.employees.length+' funcionário(s)':''}</div>`
+    : `<div class="hint-box">📅 Período: <strong>${filtMin?fmtDateBR(filtMin):'-'}</strong> até <strong>${filtMax?fmtDateBR(filtMax):'-'}</strong> — ${filtRows.length} O.S. 58 ${mp?'<strong>(Mesma periodicidade ativa: corte no dia '+exec.diaAtualDoMes+')</strong>':''}</div>`;
+
+  const html = intervaloBadge + `
+    <div class="cards-grid">
+      <div class="card"><div class="card-label">O.S. 58 — Mês Atual</div><div class="card-value">${fmtNum(exec.totalAtual)}</div><div class="card-sub">${fmtMonthYear(exec.refYear,exec.refMonth)} (até ${exec.diaAtualDoMes}/${exec.totalDiasMes})</div></div>
+      <div class="card"><div class="card-label">Mês Anterior</div><div class="card-value">${fmtNum(exec.totalAnterior)}</div><div class="card-sub">${fmtMonthYear.apply(null, addMonthsYM(exec.refYear,exec.refMonth,-1))}</div></div>
+      <div class="card ${cardClassForVar(exec.variacao)}"><div class="card-label">Variação Mês × Mês</div><div class="card-value ${cardClassForVar(exec.variacao)}">${fmtPct(exec.variacao,1)}</div><div class="card-sub">vs. mês anterior</div></div>
+      <div class="card"><div class="card-label">Média Diária</div><div class="card-value">${fmtNum(exec.mediaDiaria,1)}</div><div class="card-sub">${exec.diasComDados} dia(s) com produção</div></div>
+      <div class="card ${exec.projecaoMaior===true?'pos':exec.projecaoMaior===false?'neg':''}"><div class="card-label">Projeção de Fechamento</div><div class="card-value ${exec.projecaoMaior===true?'pos':exec.projecaoMaior===false?'neg':''}">${fmtNum(exec.projecao,0)}</div><div class="card-sub">base: ${exec.projecaoBaseLabel||'mês atual'} (ajuste no filtro abaixo)</div></div>
+      <div class="card ${cardClassForVar(exec.variacaoAnual)}"><div class="card-label">Variação Anual</div><div class="card-value ${cardClassForVar(exec.variacaoAnual)}">${fmtPct(exec.variacaoAnual,1)}</div><div class="card-sub">vs. ${fmtMonthYear(exec.refYear-1,exec.refMonth)} (${fmtNum(exec.totalAnoAnterior)})</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Comparação — Modo ${Production.state.mode==='dia'?'Dia':Production.state.mode==='semana'?'Semana':'Mês'}</h3></div>
+      <div class="grid-3">
+        <div class="card"><div class="card-label">${escapeHtml(cmp.labelAtual)}</div><div class="card-value">${fmtNum(cmp.atual)}</div></div>
+        <div class="card"><div class="card-label">${escapeHtml(cmp.labelAnterior)}</div><div class="card-value">${fmtNum(cmp.anterior)}</div></div>
+        <div class="card ${cardClassForVar(cmp.variacao)}"><div class="card-label">Variação</div><div class="card-value ${cardClassForVar(cmp.variacao)}">${fmtPct(cmp.variacao,1)}</div></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><h3>Evolução Mensal — O.S. 58</h3><span class="panel-note">Fonte: 8460 · DTINICIOOS</span></div>
+        <div class="chart-wrap"><canvas id="chart-evo-mensal"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3>Mês Atual × Mês Anterior</h3></div>
+        <div class="chart-wrap"><canvas id="chart-mes-mes"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Tabela de Comparação Mensal</h3></div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Mês</th><th>O.S. 58</th><th>Mês Anterior</th><th>Diferença</th><th>Variação %</th><th>Média Diária</th></tr></thead>
+        <tbody>
+          ${evo.map(m=>`<tr>
+            <td>${m.label}</td><td>${fmtNum(m.total)}</td><td>${m.prevTotal===null?'-':fmtNum(m.prevTotal)}</td>
+            <td class="${m.diff>0?'cell-pos':m.diff<0?'cell-neg':'cell-neutral'}">${m.diff===null?'-':(m.diff>0?'+':'')+fmtNum(m.diff)}</td>
+            <td>${variationTag(m.variacao)}</td><td>${fmtNum(m.mediaDiaria,1)}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header">
+          <h3>Comparativo Anual</h3>
+          <div class="panel-actions">
+            <select id="year-cmp-select-1"></select> <span class="small-muted">×</span> <select id="year-cmp-select-2"></select>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="year-cmp-table"></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3>Gráfico Ano × Ano</h3></div>
+        <div class="chart-wrap"><canvas id="chart-ano-ano"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Acumulado do Ano (YTD)</h3></div>
+      ${ytd ? `
+      <div class="grid-3">
+        <div class="card"><div class="card-label">${ytd.periodoAtual}</div><div class="card-value">${fmtNum(ytd.atual)}</div></div>
+        <div class="card"><div class="card-label">${ytd.periodoAnterior}</div><div class="card-value">${fmtNum(ytd.anterior)}</div></div>
+        <div class="card ${cardClassForVar(ytd.variacao)}"><div class="card-label">Diferença / Variação</div><div class="card-value ${cardClassForVar(ytd.variacao)}">${ytd.diff>0?'+':''}${fmtNum(ytd.diff)}</div><div class="card-sub">${variationTag(ytd.variacao)}</div></div>
+      </div>` : `<div class="small-muted">Dados insuficientes para acumulado anual.</div>`}
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><h3>Produção Diária</h3></div>
+        ${daily.length ? `
+        <div class="card" style="margin-bottom:10px;display:inline-flex;align-items:center;gap:14px;padding:10px 16px;border-left:4px solid var(--orange);">
+          <div><div class="card-label">Média Diária</div><div style="font-size:22px;font-weight:800;color:var(--orange);">${fmtNum(daily[0]?daily[0].media:0,1)}</div></div>
+          <div class="small-muted">O.S. 58 / dia</div>
+        </div>` : ''}
+        <div class="chart-wrap tall"><canvas id="chart-diario"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3>Produção Semanal</h3><span class="panel-note">Clique em uma semana para ver o detalhe dia a dia</span></div>
+        <div class="table-wrap" style="max-height:420px;overflow-y:auto;"><table class="data-table" id="weekly-main-table">
+          <thead><tr><th>Semana</th><th>O.S. 58</th><th>Semana Anterior</th><th>Diferença</th><th>Variação %</th></tr></thead>
+          <tbody>
+            ${weekly.map((w,i)=>`<tr class="clickable" data-wi="${i}" onclick="showWeekDrilldown(${w.weekKey},${w.anteriorWeekKey||'null'},'${escapeHtml(w.label)}',${w.anterior||'null'})">
+              <td>📅 ${w.label}</td><td>${fmtNum(w.total)}</td><td>${w.anterior===null?'-':fmtNum(w.anterior)}</td>
+              <td class="${w.diff>0?'cell-pos':w.diff<0?'cell-neg':'cell-neutral'}">${w.diff===null?'-':(w.diff>0?'+':'')+fmtNum(w.diff)}</td>
+              <td>${variationTag(w.variacao)}</td></tr>`).join("")}
+          </tbody>
+        </table></div>
+
+        <!-- Detalhe dia a dia (aparece ao clicar) -->
+        <div id="week-drilldown" style="display:none;margin-top:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <span id="week-drilldown-title" style="font-size:13px;font-weight:700;color:var(--blue-dark);"></span>
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('week-drilldown').style.display='none';document.getElementById('weekly-main-table').querySelectorAll('tr.selected-week').forEach(r=>r.classList.remove('selected-week'))">✕ Fechar</button>
+          </div>
+          <div id="week-drilldown-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>🏆 Ranking de Repositores — O.S. 58</h3></div>
+      <div id="ranking-section"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📈 Projeção de Fechamento do Mês</h3>
+        <div class="panel-actions">
+          <label class="small-muted">Base:</label>
+          <select id="proj-base-select">
+            <option value="1" ${Production.state.projectionBase===1?'selected':''}>Último mês</option>
+            <option value="2" ${Production.state.projectionBase===2?'selected':''}>Últimos 2 meses</option>
+            <option value="3" ${Production.state.projectionBase===3?'selected':''}>Últimos 3 meses</option>
+          </select>
+        </div>
+      </div>
+      <div id="proj-expanded-content"></div>
+    </div>
+
+  `;
+  $("#prod-content").innerHTML = html;
+
+  // renderizar ranking (precisa do DOM)
+  renderRankingSection("mes-atual");
+
+  // charts
+  Charts.make("chart-evo-mensal", {
+    type:"line",
+    data:{ labels: evo.map(m=>m.label), datasets:[{
+      label:"O.S. 58", data: evo.map(m=>m.total), borderColor:Charts.colors.blue,
+      backgroundColor:"rgba(47,111,206,0.12)", fill:true, tension:.3, pointRadius:3
+    }]},
+    options: Charts.baseOptions({
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(ctx)=>{
+        const d = evo[ctx.dataIndex];
+        return [`O.S. 58: ${fmtNum(d.total)}`, `Média diária: ${fmtNum(d.mediaDiaria,1)}`,
+          d.diff!==null?`Diferença: ${d.diff>0?'+':''}${fmtNum(d.diff)}`:null,
+          d.variacao!==null?`Variação: ${fmtPct(d.variacao,1)}`:null].filter(Boolean);
+      }}}}
+    })
+  });
+
+  // mês×mês respeitando mesma periodicidade
+  const mesAtualLabel = mp
+    ? `${fmtMonthYear(exec.refYear,exec.refMonth)} (até dia ${exec.diaAtualDoMes})`
+    : fmtMonthYear(exec.refYear,exec.refMonth);
+  const mesAntLabel = mp
+    ? `${fmtMonthYear.apply(null, addMonthsYM(exec.refYear,exec.refMonth,-1))} (até dia ${exec.diaAtualDoMes})`
+    : fmtMonthYear.apply(null, addMonthsYM(exec.refYear,exec.refMonth,-1));
+  Charts.make("chart-mes-mes", {
+    type:"bar",
+    data:{ labels:[mesAntLabel, mesAtualLabel],
+      datasets:[{ label:"O.S. 58", data:[exec.totalAnterior, exec.totalAtual],
+        backgroundColor:[Charts.colors.gray, Charts.colors.blue], borderRadius:6 }] },
+    options: Charts.baseOptions({ plugins:{ legend:{display:false} } })
+  });
+
+  Charts.make("chart-diario", {
+    type:"bar",
+    data:{ labels: daily.map(d=>fmtDateBR(d.date)), datasets:[
+      { type:"bar", label:"O.S. 58", data: daily.map(d=>d.total), backgroundColor:Charts.colors.blueLight, borderRadius:4 },
+      { type:"line", label:"Média", data: daily.map(d=>d.media), borderColor:Charts.colors.orange, borderWidth:2, pointRadius:0, tension:0 }
+    ]},
+    options: Charts.baseOptions({ plugins:{ tooltip:{ callbacks:{ label:(ctx)=>{
+      const d = daily[ctx.dataIndex];
+      if(ctx.dataset.label==="Média") return `Média: ${fmtNum(d.media,1)}`;
+      return `Quantidade: ${fmtNum(d.total)} (dif. média: ${fmtNum(d.total-d.media,1)})`;
+    }}}}})
+  });
+
+  // gráfico anual com barra do mês atual destacada
+  const sel1 = $("#year-cmp-select-1"), sel2 = $("#year-cmp-select-2");
+  const allYears = yearCmp.allYears;
+  sel1.innerHTML = allYears.map(y=>`<option value="${y}" ${y===yearCmp.years[0]?'selected':''}>${y}</option>`).join("");
+  sel2.innerHTML = allYears.map(y=>`<option value="${y}" ${y===yearCmp.years[1]?'selected':''}>${y}</option>`).join("");
+  function renderYearTable(){
+    const y1 = Number(sel1.value), y2 = Number(sel2.value);
+    const data = Production.yearComparison([y1,y2]);
+    const table = $("#year-cmp-table");
+    table.innerHTML = `<thead><tr><th>Mês</th><th>${y1}</th><th>${y2}</th><th>Diferença</th><th>Variação %</th></tr></thead>
+      <tbody>${data.table.map(r=>{
+        const v1=r.values[y1]||0, v2=r.values[y2]||0, diff=v2-v1, varr=pctVariation(v2,v1);
+        return `<tr><td>${r.label}</td><td>${fmtNum(v1)}</td><td>${fmtNum(v2)}</td>
+          <td class="${diff>0?'cell-pos':diff<0?'cell-neg':'cell-neutral'}">${diff>0?'+':''}${fmtNum(diff)}</td><td>${variationTag(varr)}</td></tr>`;
+      }).join("")}</tbody>`;
+    // destaque para o mês atual
+    const mesAtualIdx = exec.refMonth;
+    const bgY2 = data.table.map((_,i)=> i===mesAtualIdx ? Charts.colors.orange : Charts.colors.blue);
+    Charts.make("chart-ano-ano", {
+      type:"bar",
+      data:{ labels: data.table.map(r=>r.label), datasets:[
+        { label:String(y1), data: data.table.map(r=>r.values[y1]||0), backgroundColor:Charts.colors.gray, borderRadius:4 },
+        { label:String(y2)+" (atual)", data: data.table.map(r=>r.values[y2]||0), backgroundColor:bgY2, borderRadius:4 }
+      ]},
+      options: Charts.baseOptions({ plugins:{ tooltip:{ callbacks:{ footer:(items)=>{ if(items[0].dataIndex===mesAtualIdx) return 'Mês atual (destaque)'; }}}} })
+    });
+  }
+  sel1.addEventListener("change", renderYearTable);
+  sel2.addEventListener("change", renderYearTable);
+  renderYearTable();
+
+  const pbase = $("#proj-base-select");
+  if(pbase) pbase.addEventListener("change", e=>{ Production.state.projectionBase = Number(e.target.value); renderProjecaoExpandida(Production.projection()); });
+  renderProjecaoExpandida(proj);
+}
+
+function renderProjecaoExpandida(proj){
+  const el = document.getElementById("proj-expanded-content");
+  if(!el) return;
+  if(!proj){ el.innerHTML = `<div class="small-muted">Dados insuficientes para projeção.</div>`; return; }
+
+  const corProj = proj.projecaoMaior ? Charts.colors.green : Charts.colors.red;
+  const tagProj = proj.projecaoMaior
+    ? `<span class="tag-pos">▲ Ritmo atual acima da base (${fmtNum(proj.mediaDiariaAtual,1)} vs ${fmtNum(proj.mediaBase,1)} O.S./dia)</span>`
+    : `<span class="tag-neg">▼ Ritmo atual abaixo da base (${fmtNum(proj.mediaDiariaAtual,1)} vs ${fmtNum(proj.mediaBase,1)} O.S./dia)</span>`;
+
+  el.innerHTML = `
+    ${proj.avisoHistoricoInsuficiente ? `<div class="warn-box">${escapeHtml(proj.avisoHistoricoInsuficiente)}</div>` : ''}
+    <div class="cards-grid" style="margin-bottom:14px;">
+      <div class="card"><div class="card-label">Mês de referência</div><div class="card-value">${proj.mesAtual}</div></div>
+      <div class="card"><div class="card-label">Base utilizada</div><div class="card-value" style="font-size:15px;">${proj.baseMeses.join(", ")||'Mês atual'}</div><div class="card-sub">${proj.mesesDisponiveisBase}/${proj.mesesSolicitados} mese(s) disponíveis</div></div>
+      <div class="card"><div class="card-label">Média diária base</div><div class="card-value">${fmtNum(proj.mediaBase,1)}</div></div>
+      <div class="card"><div class="card-label">Média diária atual</div><div class="card-value">${fmtNum(proj.mediaDiariaAtual,1)}</div></div>
+      <div class="card ${proj.projecaoMaior?'pos':'neg'}">
+        <div class="card-label">Projeção de fechamento ${tagProj}</div>
+        <div class="card-value ${proj.projecaoMaior?'pos':'neg'}">${fmtNum(proj.projecao,0)}</div>
+        <div class="card-sub">${proj.totalDiasMes} dias × ${fmtNum(proj.mediaBase,1)} O.S./dia</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--blue-dark);margin-bottom:8px;">Evolução Real + Projeção (${proj.mesAtual})</div>
+        <div class="chart-wrap tall"><canvas id="chart-proj-dia"></canvas></div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--blue-dark);margin-bottom:8px;">Ano Atual — Mês a Mês com Projeção</div>
+        <div class="chart-wrap tall"><canvas id="chart-proj-ano-mensal"></canvas></div>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <div style="font-size:13px;font-weight:700;color:var(--blue-dark);margin-bottom:8px;">Projeção por Funcionário — ${proj.mesAtual}</div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>#</th><th>Funcionário</th><th>O.S. até dia ${proj.ultimoDia}</th><th>Média Diária</th><th>Projeção Fechamento</th></tr></thead>
+        <tbody>
+          ${proj.empProj.map((e,i)=>`<tr>
+            <td>${i+1}</td><td>${escapeHtml(e.nome)}</td><td>${fmtNum(e.totalAtual)}</td>
+            <td>${fmtNum(e.mediaDiariaEmp,1)}</td>
+            <td><strong>${fmtNum(e.projecaoFechamento)}</strong></td>
+          </tr>`).join("") || '<tr><td colspan="5" class="small-muted">Sem dados no mês atual.</td></tr>'}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+
+  // --- Gráfico 1: real dia a dia + linha de projeção tracejada ---
+  const dr = proj.diasReais;
+  const diasLabels = dr.map(d=>`Dia ${d.dia}`);
+  // pontos reais (null nos dias sem dado)
+  const realData = dr.map(d=>d.acumReal);
+  // projeção completa para todos os dias
+  const projData = dr.map(d=>d.acumProj);
+
+  Charts.make("chart-proj-dia", {
+    type:"line",
+    data:{ labels: diasLabels, datasets:[
+      {
+        label:"Real acumulado", data: realData,
+        borderColor:Charts.colors.blue, backgroundColor:"rgba(47,111,206,0.1)",
+        fill:true, tension:.3, pointRadius:3, spanGaps:false
+      },
+      {
+        label:`Projeção (${proj.mesesSolicitados === 1 ? '1 mês' : proj.mesesSolicitados+' meses'})`,
+        data: projData,
+        borderColor: corProj, borderDash:[6,4], borderWidth:2.5,
+        pointRadius:0, fill:false, tension:0
+      }
+    ]},
+    options: Charts.baseOptions({
+      plugins:{ legend:{ labels:{font:{size:11}} }, tooltip:{ callbacks:{ label:(ctx)=>{
+        if(ctx.dataset.label.startsWith("Real")) return `Real: ${fmtNum(ctx.parsed.y)} O.S.`;
+        return `Projeção dia ${dr[ctx.dataIndex].dia}: ${fmtNum(ctx.parsed.y)} O.S.`;
+      }}}},
+      scales:{ x:{grid:{display:false}, ticks:{color:"#7a8798",font:{size:10},maxTicksLimit:15}}, y:{grid:{color:"#eaeef3"}, beginAtZero:true} }
+    })
+  });
+
+  // --- Gráfico 2: meses do ano atual com barra do mês atual destacada + projeção ---
+  const rows = Production.getBaseRows();
+  const anoAtual = Production.maxDataDate().getFullYear();
+  const dadosMensaisAno = MESES_PT.map((label,m)=>{
+    const total = rows.filter(r=>r.dtinicio.getFullYear()===anoAtual && r.dtinicio.getMonth()===m).length;
+    return { label, m, total };
+  });
+  const mesAtualIdx = Production.maxDataDate().getMonth();
+  const bgColors = dadosMensaisAno.map((_,m)=> m===mesAtualIdx ? Charts.colors.orange : Charts.colors.blue);
+  const projecaoData = dadosMensaisAno.map((_,m)=> m===mesAtualIdx ? proj.projecao : null);
+
+  Charts.make("chart-proj-ano-mensal", {
+    type:"bar",
+    data:{ labels: dadosMensaisAno.map(d=>d.label+"/"+anoAtual), datasets:[
+      { label:"O.S. 58", data: dadosMensaisAno.map(d=>d.total||null), backgroundColor:bgColors, borderRadius:4 },
+      { type:"line", label:"Projeção fechamento", data: projecaoData, borderColor:corProj, backgroundColor:"transparent", borderWidth:2.5, borderDash:[5,4], pointRadius:5, pointBackgroundColor:corProj }
+    ]},
+    options: Charts.baseOptions({
+      plugins:{ legend:{ labels:{font:{size:11}} }, tooltip:{ callbacks:{ footer:(items)=>{ if(items[0].dataIndex===mesAtualIdx) return '★ Mês atual — barra destacada'; }}}}
+    })
+  });
+}
+
+function getRankingRows(periodoKey){
+  const allRows = Production.getBaseRows(); // respeita quadro atual e funcionário selecionado
+  const registry = window.APP_STATE.nameRegistry;
+  const maxDate = Production.maxDataDate();
+  if(!maxDate) return [];
+
+  let startDate, endDate = dateOnly(maxDate);
+  if(periodoKey === "mes-atual"){
+    startDate = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+  } else if(periodoKey === "mes-anterior-e-atual"){
+    startDate = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -1);
+  } else { // ultimos-3
+    startDate = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2);
+  }
+
+  const filtered = allRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startDate && d<=endDate; });
+  const map = new Map();
+  filtered.forEach(r=>{
+    if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, nome: registry.get(r.codKey)||r.nome, total:0 });
+    map.get(r.codKey).total++;
+  });
+  return Array.from(map.values()).sort((a,b)=>b.total-a.total);
+}
+
+function renderRankingSection(periodoKey){
+  const el = document.getElementById("ranking-section");
+  if(!el) return;
+  const rows = getRankingRows(periodoKey);
+  const top5 = rows.slice(0,5);
+  const bot5 = rows.slice(-5).reverse();
+
+  const periodOptions = [
+    { value:"mes-atual", label:"Mês atual" },
+    { value:"mes-anterior-e-atual", label:"Mês anterior e atual" },
+    { value:"ultimos-3", label:"Últimos 3 meses" }
+  ];
+  const selHtml = (id) => `<select id="${id}" class="ranking-period-sel" style="border:1px solid var(--gray-300);border-radius:6px;padding:5px 9px;font-size:12px;">
+    ${periodOptions.map(o=>`<option value="${o.value}" ${o.value===periodoKey?'selected':''}>${o.label}</option>`).join("")}
+  </select>`;
+
+  const medalha = (i) => i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}º`;
+
+  el.innerHTML = `
+    <div style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <span class="small-muted">Período:</span>
+        ${selHtml("ranking-period-main")}
+      </div>
+      <div class="grid-2">
+        <!-- MELHORES -->
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🏆 Top 5 Melhores Repositores</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+            ${top5.map((r,i)=>`<div class="card pos" style="min-width:140px;flex:1;">
+              <div class="card-label">${medalha(i)}</div>
+              <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:4px;">${escapeHtml(r.nome.split(" ")[0])} ${escapeHtml(r.nome.split(" ").slice(-1)[0])}</div>
+              <div class="card-value pos" style="font-size:20px;">${fmtNum(r.total)}</div>
+              <div class="card-sub">O.S. 58</div>
+            </div>`).join("") || '<div class="small-muted">Sem dados.</div>'}
+          </div>
+          <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
+            <table class="data-table">
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
+              <tbody>
+                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <!-- PIORES -->
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:10px;">⚠️ Top 5 Piores Repositores</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+            ${bot5.map((r,i)=>`<div class="card neg" style="min-width:140px;flex:1;">
+              <div class="card-label">${i+1}º pior</div>
+              <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:4px;">${escapeHtml(r.nome.split(" ")[0])} ${escapeHtml(r.nome.split(" ").slice(-1)[0])}</div>
+              <div class="card-value neg" style="font-size:20px;">${fmtNum(r.total)}</div>
+              <div class="card-sub">O.S. 58</div>
+            </div>`).join("") || '<div class="small-muted">Sem dados.</div>'}
+          </div>
+          <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
+            <table class="data-table">
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
+              <tbody>
+                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById("ranking-period-main").addEventListener("change", e=>{
+    renderRankingSection(e.target.value);
+  });
+}
+
+function showWeekDrilldown(weekKey, anteriorWeekKey, labelSemana, totalAnterior){
+  // destaca linha clicada
+  document.querySelectorAll("#weekly-main-table tr.selected-week").forEach(r=>r.classList.remove("selected-week"));
+  const clickedRow = document.querySelector(`#weekly-main-table tr[data-wi]`);
+  // marca todas as linhas, encontra a correta pelo weekKey embutido no onclick
+  document.querySelectorAll("#weekly-main-table tbody tr").forEach(r=>{
+    const fn = r.getAttribute("onclick")||"";
+    if(fn.includes(","+weekKey+",")) r.classList.add("selected-week");
+  });
+
+  const breakdown = Production.weeklyDayBreakdown(weekKey, anteriorWeekKey);
+  const labelAnterior = anteriorWeekKey
+    ? (() => {
+        const w = Production.weeklyTable().find(w=>w.weekKey===anteriorWeekKey);
+        return w ? w.label : "Semana anterior";
+      })()
+    : null;
+
+  const drillEl = document.getElementById("week-drilldown");
+  const titleEl = document.getElementById("week-drilldown-title");
+  const contentEl = document.getElementById("week-drilldown-content");
+
+  titleEl.textContent = `Detalhe dia a dia — ${labelSemana}`;
+  drillEl.style.display = "block";
+
+  const totalCur  = breakdown.reduce((s,d)=>s+d.totalCur, 0);
+  const totalPrev = anteriorWeekKey ? breakdown.reduce((s,d)=>s+(d.totalPrev||0), 0) : null;
+  const diffTotal = totalPrev !== null ? totalCur - totalPrev : null;
+
+  contentEl.innerHTML = `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+      <div class="card" style="min-width:140px;flex:0 0 auto;">
+        <div class="card-label">Total da semana</div>
+        <div class="card-value">${fmtNum(totalCur)}</div>
+      </div>
+      ${totalPrev !== null ? `
+      <div class="card" style="min-width:140px;flex:0 0 auto;">
+        <div class="card-label">Semana anterior</div>
+        <div class="card-value">${fmtNum(totalPrev)}</div>
+      </div>
+      <div class="card ${diffTotal>0?'pos':diffTotal<0?'neg':''}" style="min-width:140px;flex:0 0 auto;">
+        <div class="card-label">Diferença</div>
+        <div class="card-value ${diffTotal>0?'pos':diffTotal<0?'neg':''}">${diffTotal>0?'+':''}${fmtNum(diffTotal)}</div>
+        <div class="card-sub">${variationTag(pctVariation(totalCur, totalPrev))}</div>
+      </div>` : ''}
+    </div>
+
+    <div class="grid-2">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Dia</th>
+              <th>Data</th>
+              <th>O.S. 58</th>
+              ${anteriorWeekKey ? `<th>Data (ant.)</th><th>O.S. 58 (ant.)</th><th>Diferença</th>` : ''}
+            </tr>
+          </thead>
+          <tbody>
+            ${breakdown.map(d=>{
+              const diff = d.totalPrev !== null ? d.totalCur - d.totalPrev : null;
+              return `<tr>
+                <td><strong>${d.diaNome}</strong></td>
+                <td>${fmtDateBR(d.dataCur)}</td>
+                <td><strong>${fmtNum(d.totalCur)}</strong></td>
+                ${anteriorWeekKey ? `
+                  <td class="small-muted">${d.dataPrev ? fmtDateBR(d.dataPrev) : '-'}</td>
+                  <td>${d.totalPrev !== null ? fmtNum(d.totalPrev) : '-'}</td>
+                  <td class="${diff>0?'cell-pos':diff<0?'cell-neg':'cell-neutral'}">${diff===null?'-':(diff>0?'+':'')+fmtNum(diff)}</td>
+                ` : ''}
+              </tr>`;
+            }).join("")}
+            <tr style="background:var(--gray-50);font-weight:700;">
+              <td colspan="2">Total</td>
+              <td>${fmtNum(totalCur)}</td>
+              ${anteriorWeekKey ? `<td></td><td>${fmtNum(totalPrev)}</td><td class="${diffTotal>0?'cell-pos':diffTotal<0?'cell-neg':'cell-neutral'}">${diffTotal>0?'+':''}${fmtNum(diffTotal)}</td>` : ''}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <div class="chart-wrap" style="height:220px;"><canvas id="chart-week-drilldown"></canvas></div>
+      </div>
+    </div>
+  `;
+
+  // gráfico de barras agrupadas por dia
+  Charts.make("chart-week-drilldown", {
+    type:"bar",
+    data:{
+      labels: breakdown.map(d=>d.diaNome),
+      datasets:[
+        {
+          label: labelSemana.split(" (")[0],
+          data: breakdown.map(d=>d.totalCur),
+          backgroundColor: Charts.colors.blue, borderRadius:5
+        },
+        ...(anteriorWeekKey ? [{
+          label: (labelAnterior||"Semana anterior").split(" (")[0],
+          data: breakdown.map(d=>d.totalPrev||0),
+          backgroundColor: Charts.colors.gray, borderRadius:5
+        }] : [])
+      ]
+    },
+    options: Charts.baseOptions({
+      plugins:{
+        legend:{ labels:{font:{size:11}} },
+        tooltip:{ callbacks:{ afterBody:(items)=>{
+          if(items.length<2) return;
+          const idx = items[0].dataIndex;
+          const d = breakdown[idx];
+          const df = d.totalCur - (d.totalPrev||0);
+          return [`Diferença: ${df>0?'+':''}${df}`];
+        }}}
+      }
+    })
+  });
+
+  // scroll suave até o detalhe
+  drillEl.scrollIntoView({ behavior:"smooth", block:"nearest" });
+}
+
+function addMonthsYM(y,m,n){
+  const d = addMonths(new Date(y,m,1), n);
+  return [d.getFullYear(), d.getMonth()];
+}
+
+/* ---------------------------------------------------------------------- */
+/* RENDER: Projeção                                                        */
+/* ---------------------------------------------------------------------- */
+function renderProjecao(){
+  const pane = $("#pane-projecao");
+  const st = Projection.state;
+
+  pane.innerHTML = `
+    <div class="toolbar">
+      <div class="filter-group">
+        <label>Data Inicial</label>
+        <input type="date" id="proj-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}">
+      </div>
+      <div class="filter-group">
+        <label>Data Final</label>
+        <input type="date" id="proj-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}">
+      </div>
+      <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm" id="proj-clear">Limpar filtros</button>
+    </div>
+    <div id="proj-empty-msg"></div>
+    <div id="proj-content"></div>
+  `;
+  $("#proj-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderProjecao(); });
+  $("#proj-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderProjecao(); });
+  $("#proj-clear").addEventListener("click", ()=>{ Projection.state = { dataInicial:null, dataFinal:null }; renderProjecao(); });
+
+  const rows = Projection.getRows();
+  if(!rows.length){
+    $("#proj-empty-msg").innerHTML = `<div class="warn-box">Nenhum registro encontrado na sheet 8271 para os filtros selecionados.</div>`;
+    return;
+  }
+
+  const c61 = Projection.cards61();
+  const ruas61 = Projection.ruas61();
+  const c58 = Projection.cards58();
+  const os58Rua = Projection.os58PorRua();
+
+  // badge de intervalo
+  const allDates = rows.map(r=>r.data).filter(Boolean);
+  const minD = allDates.length ? new Date(Math.min(...allDates.map(d=>d.getTime()))) : null;
+  const maxD = allDates.length ? new Date(Math.max(...allDates.map(d=>d.getTime()))) : null;
+  const intervaloBadge = minD && maxD
+    ? `<div class="hint-box" style="margin-bottom:14px;">📅 Exibindo dados de <strong>${fmtDateBR(minD)}</strong> até <strong>${fmtDateBR(maxD)}</strong> — ${rows.length} registro(s) na 8271</div>`
+    : ``;
+
+  const maxCount = Math.max(1, ...ruas61.map(r=>r.count));
+  function heatColor(v){
+    if(v===0) return "#dde3ea";
+    const ratio = v/maxCount;
+    // interpolate from light yellow to deep red
+    const r = 214 + Math.round((255-214)*(1-ratio)*0); // keep simple
+    // simple 3-stop scale: low -> orange, high -> red
+    const stops = [
+      {p:0.0, c:[240,201,110]},
+      {p:0.5, c:[224,138,31]},
+      {p:1.0, c:[214,69,69]}
+    ];
+    let c0=stops[0].c,c1=stops[1].c,p0=0,p1=.5;
+    if(ratio>0.5){ c0=stops[1].c;c1=stops[2].c;p0=.5;p1=1; }
+    const t = (ratio-p0)/(p1-p0||1);
+    const col = c0.map((v0,i)=> Math.round(v0 + (c1[i]-v0)*t));
+    return `rgb(${col[0]},${col[1]},${col[2]})`;
+  }
+
+  $("#proj-content").innerHTML = intervaloBadge + `
+    <div class="panel">
+      <div class="panel-header"><h3>TIPOOS 61 — Necessidade por Rua</h3><span class="panel-note">Fonte: 8271</span></div>
+      <div class="cards-grid">
+        <div class="card"><div class="card-label">Total de 61</div><div class="card-value">${fmtNum(c61.total)}</div></div>
+        <div class="card"><div class="card-label">Ruas com 61</div><div class="card-value">${fmtNum(c61.ruasCom61)}</div><div class="card-sub">de ${fmtNum(ruas61.length)} ruas monitoradas</div></div>
+        <div class="card"><div class="card-label">Média de 61 por Rua</div><div class="card-value">${fmtNum(c61.mediaPorRua,1)}</div></div>
+        <div class="card warn"><div class="card-label">Maior Demanda</div><div class="card-value warn">${c61.maiorDemanda?('Rua '+c61.maiorDemanda.rua):'-'}</div><div class="card-sub">${c61.maiorDemanda?fmtNum(c61.maiorDemanda.count)+' registros':''}</div></div>
+      </div>
+      <div class="panel-header"><h3 style="font-size:13px;">Mapa de Calor — Ruas</h3></div>
+      <div class="heatmap-grid">
+        ${ruas61.map(r=>`<div class="heat-cell" style="background:${heatColor(r.count)};" title="Rua ${r.rua}: ${r.count} registros de TIPOOS 61">
+          <span class="heat-rua">Rua ${r.rua}</span><span class="heat-val">${r.count}</span>
+        </div>`).join("")}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>TIPOOS 58 — Situação de O.S.</h3></div>
+      <div class="cards-grid">
+        <div class="card warn"><div class="card-label">58 Pendentes há 2+ dias</div><div class="card-value warn">${fmtNum(c58.doisOuMaisDias)}</div><div class="card-sub">OS cujo 1º registro é anterior a ${c58.ontem?fmtDateBR(c58.ontem):'-'} (não finalizadas na 8460)</div></div>
+        <div class="card"><div class="card-label">58 do dia anterior</div><div class="card-value">${fmtNum(c58.doDiaAnterior)}</div><div class="card-sub">${c58.ontem?fmtDateBR(c58.ontem):'-'}</div></div>
+        <div class="card"><div class="card-label">58 para hoje</div><div class="card-value">${fmtNum(c58.doDiaHoje)}</div><div class="card-sub">${c58.hoje?fmtDateBR(c58.hoje):'-'}</div></div>
+        <div class="card"><div class="card-label">Total de Registros 58</div><div class="card-value">${fmtNum(c58.total)}</div></div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart-58-rua"></canvas></div>
+    </div>
+  `;
+
+  Charts.make("chart-58-rua", {
+    type:"bar",
+    data:{ labels: os58Rua.map(r=>"Rua "+r.rua), datasets:[{ label:"O.S. 58", data: os58Rua.map(r=>r.count), backgroundColor:Charts.colors.blue, borderRadius:4 }] },
+    options: Charts.baseOptions({ plugins:{ legend:{display:false} } })
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* RENDER: Feedbacks                                                       */
+/* ---------------------------------------------------------------------- */
+const FeedbackState = { dataInicial: null, dataFinal: null };
+
+function getFeedbackFiltered(){
+  const processed = window.APP_STATE.processed;
+  let rows = processed.feedback;
+  if(FeedbackState.dataInicial){
+    const di = dateOnly(FeedbackState.dataInicial);
+    rows = rows.filter(r=>r.data && dateOnly(r.data) >= di);
+  }
+  if(FeedbackState.dataFinal){
+    const df = dateOnly(FeedbackState.dataFinal);
+    rows = rows.filter(r=>r.data && dateOnly(r.data) <= df);
+  }
+  return rows;
+}
+
+function renderFeedbacks(){
+  const pane = $("#pane-feedbacks");
+  const st = FeedbackState;
+  pane.innerHTML = `
+    <div class="toolbar">
+      <div class="filter-group"><label>Data Inicial</label><input type="date" id="fb-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
+      <div class="filter-group"><label>Data Final</label><input type="date" id="fb-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+      <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm" id="fb-clear">Limpar filtros</button>
+    </div>
+    <div id="fb-content"></div>
+  `;
+  $("#fb-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderFeedbacks(); });
+  $("#fb-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderFeedbacks(); });
+  $("#fb-clear").addEventListener("click", ()=>{ FeedbackState.dataInicial=null; FeedbackState.dataFinal=null; renderFeedbacks(); });
+  renderFeedbacksContent();
+}
+
+function renderFeedbacksContent(){
+  const filtRows = getFeedbackFiltered();
+  const registry = window.APP_STATE.nameRegistry;
+
+  // calcular cards e byEmp sobre os rows filtrados
+  const pessoal = filtRows.filter(r=>r.avPessoal!==null).map(r=>r.avPessoal);
+  const gestor  = filtRows.filter(r=>r.avGestor!==null).map(r=>r.avGestor);
+  const cards = {
+    mediaGestor: avg(gestor), mediaPessoal: avg(pessoal),
+    totalFeedbacks: filtRows.length,
+    totalAdvertencias: filtRows.filter(r=>r.isAdvertencia).length,
+    funcionariosAvaliados: uniq(filtRows.map(r=>r.codKey||r.nome)).length
+  };
+
+  const empMap = new Map();
+  filtRows.forEach(r=>{
+    const key = r.codKey||"SEMCOD::"+r.nome;
+    if(!empMap.has(key)) empMap.set(key, { codKey:key, nome: registry.get(r.codKey)||r.nome, feedbacks:0, advertencias:0, somaPessoal:0, nPessoal:0, somaGestor:0, nGestor:0, registros:[] });
+    const e = empMap.get(key);
+    e.feedbacks++;
+    if(r.isAdvertencia) e.advertencias++;
+    if(r.avPessoal!==null){ e.somaPessoal+=r.avPessoal; e.nPessoal++; }
+    if(r.avGestor!==null){ e.somaGestor+=r.avGestor; e.nGestor++; }
+    e.registros.push(r);
+  });
+  const byEmp = Array.from(empMap.values()).map(e=>{
+    const mp = e.nPessoal ? e.somaPessoal/e.nPessoal : null;
+    const mg = e.nGestor  ? e.somaGestor/e.nGestor   : null;
+    const mg2 = mp!==null && mg!==null ? (mp+mg)/2 : (mg!==null?mg:mp);
+    return { ...e, mediaPessoal:mp, mediaGestor:mg, mediaGeral:mg2, classificacao: Feedback.classify(mg2) };
+  }).sort((a,b)=>b.feedbacks-a.feedbacks);
+
+  const fbDates = filtRows.map(r=>r.data).filter(Boolean);
+  const fbMin = fbDates.length ? new Date(Math.min(...fbDates.map(d=>d.getTime()))) : null;
+  const fbMax = fbDates.length ? new Date(Math.max(...fbDates.map(d=>d.getTime()))) : null;
+  const badge = fbMin ? `<div class="hint-box">📅 Exibindo: <strong>${fmtDateBR(fbMin)}</strong> até <strong>${fmtDateBR(fbMax)}</strong> — ${filtRows.length} feedback(s)</div>` : "";
+
+  $("#fb-content").innerHTML = badge + `
+    <div class="cards-grid">
+      <div class="card"><div class="card-label">Média Av. Gestor</div><div class="card-value">${fmtNum(cards.mediaGestor,1)}</div></div>
+      <div class="card"><div class="card-label">Média Av. Pessoal</div><div class="card-value">${fmtNum(cards.mediaPessoal,1)}</div></div>
+      <div class="card"><div class="card-label">Total de Feedbacks</div><div class="card-value">${fmtNum(cards.totalFeedbacks)}</div></div>
+      <div class="card ${cards.totalAdvertencias>0?'neg':''}"><div class="card-label">Total de Advertências</div><div class="card-value ${cards.totalAdvertencias>0?'neg':''}">${fmtNum(cards.totalAdvertencias)}</div></div>
+      <div class="card"><div class="card-label">Funcionários Avaliados</div><div class="card-value">${fmtNum(cards.funcionariosAvaliados)}</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Feedbacks / Advertências por Funcionário</h3></div>
+      <div class="chart-wrap tall"><canvas id="chart-feedback-emp"></canvas></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Tabela de Feedback</h3><span class="panel-note">Passe o mouse sobre a linha para ver o resumo</span></div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Data</th><th>Funcionário</th><th>Feedbacks</th><th>Advertências</th><th>Média Geral</th><th>Av. Pessoal</th><th>Av. Gestor</th><th>Classificação</th></tr></thead>
+        <tbody>
+          ${byEmp.length ? byEmp.map(e=>`<tr title="${escapeHtml(e.registros.map(r=>r.resumo).filter(Boolean).join(' | '))}">
+            <td>${e.registros.map(r=>fmtDateBR(r.data)).join(", ")}</td>
+            <td>${escapeHtml(e.nome)}</td><td>${e.feedbacks}</td>
+            <td class="${e.advertencias>0?'cell-neg':''}">${e.advertencias}</td>
+            <td>${e.mediaGeral!==null?fmtNum(e.mediaGeral,1):'-'}</td>
+            <td>${e.mediaPessoal!==null?fmtNum(e.mediaPessoal,1):'-'}</td>
+            <td>${e.mediaGestor!==null?fmtNum(e.mediaGestor,1):'-'}</td>
+            <td>${e.classificacao?`<span class="tag-${e.classificacao.cls==='pos'?'pos':e.classificacao.cls==='neg'?'neg':'warn'}">${e.classificacao.label}</span>`:'-'}</td>
+          </tr>`).join("") : '<tr><td colspan="8" class="small-muted">Nenhum feedback no período selecionado.</td></tr>'}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+
+  Charts.make("chart-feedback-emp", {
+    type:"bar",
+    data:{ labels: byEmp.map(e=>e.nome), datasets:[
+      { label:"Feedbacks", data: byEmp.map(e=>e.feedbacks), backgroundColor:Charts.colors.blue, borderRadius:4 },
+      { label:"Advertências", data: byEmp.map(e=>e.advertencias), backgroundColor:Charts.colors.red, borderRadius:4 }
+    ]},
+    options: Charts.baseOptions({ indexAxis:"y" })
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* RENDER: Quadro                                                          */
+/* ---------------------------------------------------------------------- */
+let quadroShowComissao = false;
+const QuadroState = { dataInicial: null, dataFinal: null };
+
+function renderQuadro(){
+  const pane = $("#pane-quadro");
+  const currentTeam = window.APP_STATE.currentTeam;
+  const registry = window.APP_STATE.nameRegistry;
+  const processed = window.APP_STATE.processed;
+  const st = QuadroState;
+  const feedbackByEmp = new Map(Feedback.byEmployee().map(e=>[e.codKey,e]));
+  const commission = Commission.computeAll(st.dataInicial, st.dataFinal);
+  const commByEmp = new Map(commission.map(e=>[e.codKey,e]));
+  const temMissoes = processed.missoesDispo;
+
+  // produção por funcionário (8460, TIPOOS=58) — respeitando filtro de data
+  const prod8460Rows = processed.p8460.filter(r=>{
+    if(r.tipoos!==58 || !r.codKey) return false;
+    if(st.dataInicial && dateOnly(r.dtinicio) < dateOnly(st.dataInicial)) return false;
+    if(st.dataFinal && dateOnly(r.dtinicio) > dateOnly(st.dataFinal)) return false;
+    return true;
+  });
+  const prod8460 = new Map();
+  prod8460Rows.forEach(r=>{ prod8460.set(r.codKey, (prod8460.get(r.codKey)||0)+1); });
+
+  // missões por funcionário — respeitando filtro de data
+  const missoesPorFuncionario = new Map();
+  if(temMissoes && processed.missoes.length){
+    processed.missoes.filter(r=>{
+      if(!r.codKey) return false;
+      if(st.dataInicial && dateOnly(r.data) < dateOnly(st.dataInicial)) return false;
+      if(st.dataFinal && dateOnly(r.data) > dateOnly(st.dataFinal)) return false;
+      return true;
+    }).forEach(r=>{
+      if(!missoesPorFuncionario.has(r.codKey)) missoesPorFuncionario.set(r.codKey, { total:0, tipos:[] });
+      const e = missoesPorFuncionario.get(r.codKey);
+      e.total++;
+      if(r.tipo) e.tipos.push(r.tipo);
+    });
+  }
+
+  // feedbacks/advertências também respeitando o filtro de data
+  const feedbackFiltrado = processed.feedback.filter(r=>{
+    if(!r.data) return true; // sem data, não filtra
+    if(st.dataInicial && dateOnly(r.data) < dateOnly(st.dataInicial)) return false;
+    if(st.dataFinal && dateOnly(r.data) > dateOnly(st.dataFinal)) return false;
+    return true;
+  });
+  const fbByEmpFiltrado = new Map();
+  feedbackFiltrado.forEach(r=>{
+    const key = r.codKey;
+    if(!key) return;
+    if(!fbByEmpFiltrado.has(key)) fbByEmpFiltrado.set(key, { feedbacks:0, advertencias:0 });
+    const e = fbByEmpFiltrado.get(key);
+    e.feedbacks++;
+    if(r.isAdvertencia) e.advertencias++;
+  });
+
+  const rows = currentTeam.members.map(m=>{
+    const fb = fbByEmpFiltrado.get(m.codKey);
+    const co = commByEmp.get(m.codKey);
+    const mis = missoesPorFuncionario.get(m.codKey);
+    return {
+      codKey:m.codKey, cod: m.codigo, nome: registry.get(m.codKey)||m.nome, status:m.statusRaw,
+      feedbacks: fb?fb.feedbacks:0, advertencias: fb?fb.advertencias:0,
+      os58: prod8460.get(m.codKey)||0,
+      missoes: mis ? mis.total : 0,
+      pontos: co?co.pontos:0,
+      comissao: co?co.comissaoTotal:0
+    };
+  }).sort((a,b)=>a.nome.localeCompare(b.nome));
+
+  // badge de período
+  const filtroAtivo = st.dataInicial || st.dataFinal;
+  const badge = filtroAtivo
+    ? `<div class="hint-box">📅 Filtro ativo: <strong>${st.dataInicial?fmtDateBR(st.dataInicial):'início'}</strong> até <strong>${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}</strong> — O.S. 58, Missões, Feedbacks e Comissão refletem apenas este período</div>`
+    : `<div class="hint-box">📊 Exibindo <strong>todo o histórico</strong> de O.S. 58, Missões, Feedbacks e Comissão. Use o filtro de data para restringir a um período (ex: mês atual).</div>`;
+
+  pane.innerHTML = `
+    <div class="toolbar">
+      <div class="filter-group"><label>Data Inicial</label><input type="date" id="quadro-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
+      <div class="filter-group"><label>Data Final</label><input type="date" id="quadro-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+      <div class="filter-group">
+        <label>Atalhos</label>
+        <div class="toggle-group" id="quadro-atalhos">
+          <button data-v="mes-atual">Mês Atual</button>
+          <button data-v="mes-anterior">Mês Anterior</button>
+          <button data-v="tudo">Tudo</button>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm" id="quadro-clear">Limpar filtros</button>
+    </div>
+
+    ${badge}
+
+    <div class="hint-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <span>Quadro atual: <strong>${currentTeam.date?fmtDateBR(currentTeam.date):'-'}</strong> · ${currentTeam.codes.size} repositores ativos</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-outline btn-sm" id="btn-toggle-comissao">${quadroShowComissao?'Ocultar Comissão':'Mostrar Comissão'}</button>
+        ${!temMissoes?`<span class="tag-warn">Aba MISSÕES não encontrada no arquivo</span>`:`<span class="tag-pos">${processed.missoes.length} missão(ões) registrada(s) no total</span>`}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h3>Quadro Consolidado</h3></div>
+      <div class="table-wrap"><table class="data-table" id="quadro-table">
+        <thead><tr>
+          <th>Código</th><th>Funcionário</th><th>Status</th><th>Feedbacks</th><th>Advertências</th>
+          <th>O.S. 58</th><th>Missões</th><th>Pontos</th>
+          ${quadroShowComissao?'<th>Comissão</th>':''}
+        </tr></thead>
+        <tbody>
+          ${rows.map(r=>`<tr class="clickable" onclick="showEmployeeSummary('${r.codKey}')">
+            <td>${r.cod||'-'}</td><td>${escapeHtml(r.nome)}</td><td>${escapeHtml(r.status)}</td>
+            <td>${r.feedbacks}</td>
+            <td class="${r.advertencias>0?'cell-neg':''}">${r.advertencias}</td>
+            <td>${fmtNum(r.os58)}</td>
+            <td>${fmtNum(r.missoes)}</td>
+            <td>${fmtNum(r.pontos)}</td>
+            ${quadroShowComissao?`<td><strong>${fmtBRL(r.comissao)}</strong></td>`:''}
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+
+  $("#btn-toggle-comissao").addEventListener("click", ()=>{
+    quadroShowComissao = !quadroShowComissao;
+    renderQuadro();
+  });
+  $("#quadro-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderQuadro(); });
+  $("#quadro-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderQuadro(); });
+  $("#quadro-clear").addEventListener("click", ()=>{ st.dataInicial=null; st.dataFinal=null; renderQuadro(); });
+  $("#quadro-atalhos").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    const maxDate = Production.maxDataDate() || new Date();
+    if(b.dataset.v==="mes-atual"){
+      st.dataInicial = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+      st.dataFinal = maxDate;
+    } else if(b.dataset.v==="mes-anterior"){
+      const pm = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -1);
+      st.dataInicial = new Date(pm.getFullYear(), pm.getMonth(), 1);
+      st.dataFinal = new Date(pm.getFullYear(), pm.getMonth()+1, 0);
+    } else {
+      st.dataInicial = null; st.dataFinal = null;
+    }
+    renderQuadro();
+  });
+}
+
+function showEmployeeSummary(codKey){
+  const registry = window.APP_STATE.nameRegistry;
+  const nome = registry.get(codKey) || codKey;
+  const prodRows = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58 && r.codKey===codKey);
+  const fb = Feedback.byEmployee().find(e=>e.codKey===codKey);
+  const ad = Audit.byRepositor().find(e=>e.codKey===codKey);
+  const co = Commission.computeAll().find(e=>e.codKey===codKey);
+  const att = Attendance.individualHistory(codKey);
+
+  UI.openModal(`
+    <h3>${escapeHtml(nome)}</h3>
+    <div class="grid-2">
+      <div>
+        <p><strong>Produção (O.S. 58):</strong> ${fmtNum(prodRows.length)}</p>
+        <p><strong>Pontos:</strong> ${co?fmtNum(co.pontos):0} &nbsp; <strong>Comissão:</strong> ${co?fmtBRL(co.comissaoTotal):fmtBRL(0)}</p>
+        <p><strong>Regra aplicada:</strong> ${co?co.regra:'-'} ${co?`(R$ ${fmtNum(co.valorPonto,2)}/pt)`:''}</p>
+        <p><strong>Missões (O.S. equiv.):</strong> ${co?fmtNum(co.missionsOs):0} &nbsp; <strong>Valor missões:</strong> ${co?fmtBRL(co.missionsTotal):fmtBRL(0)}</p>
+      </div>
+      <div>
+        <p><strong>Feedbacks:</strong> ${fb?fb.feedbacks:0} &nbsp; <strong>Advertências:</strong> ${fb?fb.advertencias:0}</p>
+        <p><strong>Av. Pessoal:</strong> ${fb&&fb.mediaPessoal!==null?fmtNum(fb.mediaPessoal,1):'-'} &nbsp; <strong>Av. Gestor:</strong> ${fb&&fb.mediaGestor!==null?fmtNum(fb.mediaGestor,1):'-'}</p>
+        <p><strong>Classificação:</strong> ${fb&&fb.classificacao?fb.classificacao.label:'-'}</p>
+        <p><strong>Auditorias:</strong> ${ad?ad.auditorias:0} &nbsp; <strong>Qualidade média:</strong> ${ad&&ad.qualidadeMedia!==null?fmtNum(ad.qualidadeMedia,1)+'%':'-'}</p>
+      </div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--gray-200);margin:14px 0;">
+    <p><strong>Presença:</strong> ${att.presencaPct!==null?fmtNum(att.presencaPct,1)+'%':'-'}</p>
+    <div class="cards-grid">
+      <div class="card"><div class="card-label">Presente</div><div class="card-value">${att.counts.PRESENTE}</div></div>
+      <div class="card"><div class="card-label">Seg. Turno</div><div class="card-value">${att.counts.SEGUNDO_TURNO}</div></div>
+      <div class="card neg"><div class="card-label">Faltas</div><div class="card-value neg">${att.counts.FALTA}</div></div>
+      <div class="card"><div class="card-label">Folgas</div><div class="card-value">${att.counts.FOLGA}</div></div>
+      <div class="card"><div class="card-label">Férias</div><div class="card-value">${att.counts.FERIAS}</div></div>
+      <div class="card"><div class="card-label">Atestados</div><div class="card-value">${att.counts.ATESTADO}</div></div>
+    </div>
+  `);
+}
+
+/* ---------------------------------------------------------------------- */
+/* RENDER: Chamada                                                         */
+/* ---------------------------------------------------------------------- */
+function renderChamada(){
+  const pane = $("#pane-chamada");
+  const processed = window.APP_STATE.processed;
+  const currentTeam = window.APP_STATE.currentTeam;
+  const registry = window.APP_STATE.nameRegistry;
+
+  // ---- RESUMO ESTÁTICO: quadro atual (última data) ----
+  const maxDate = currentTeam.date;
+  const quadroAtualRows = maxDate
+    ? processed.quadro.filter(r=>r.data.getTime()===maxDate.getTime())
+    : [];
+  const scounts = { PRESENTE:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0, SEGUNDO_TURNO:0 };
+  quadroAtualRows.forEach(r=>{ scounts[r.bucket] = (scounts[r.bucket]||0)+1; });
+  const spres = scounts.PRESENTE + scounts.SEGUNDO_TURNO;
+  const sdenom = spres + scounts.FALTA;
+  const spresPct = sdenom>0 ? spres/sdenom*100 : null;
+
+  const listaAtual = quadroAtualRows.sort((a,b)=>(registry.get(a.codKey)||a.nome).localeCompare(registry.get(b.codKey)||b.nome));
+
+  // ---- HISTÓRICO FILTRADO ----
+  const st = Attendance.state;
+  const histRows = Attendance.getRows();
+  const s = Attendance.summary();
+  const byDay = Attendance.byDay();
+  const faltantes = Attendance.faltantes();
+
+  const histDates = histRows.map(r=>r.data).filter(Boolean);
+  const histMin = histDates.length ? new Date(Math.min(...histDates.map(d=>d.getTime()))) : null;
+  const histMax = histDates.length ? new Date(Math.max(...histDates.map(d=>d.getTime()))) : null;
+
+  // ranking atestados
+  const atestados = (() => {
+    const m = new Map();
+    histRows.filter(r=>r.bucket==="ATESTADO").forEach(r=>{
+      if(!m.has(r.codKey)) m.set(r.codKey, { codKey:r.codKey, cod:r.codigo, nome: registry.get(r.codKey)||r.nome, qtd:0 });
+      m.get(r.codKey).qtd++;
+    });
+    return Array.from(m.values()).sort((a,b)=>b.qtd-a.qtd);
+  })();
+
+  // ranking seg. turno
+  const segTurno = (() => {
+    const m = new Map();
+    histRows.filter(r=>r.bucket==="SEGUNDO_TURNO").forEach(r=>{
+      if(!m.has(r.codKey)) m.set(r.codKey, { codKey:r.codKey, cod:r.codigo, nome: registry.get(r.codKey)||r.nome, qtd:0 });
+      m.get(r.codKey).qtd++;
+    });
+    return Array.from(m.values()).sort((a,b)=>b.qtd-a.qtd);
+  })();
+
+  // mês a mês presença
+  const byMonth = (() => {
+    const m = new Map();
+    histRows.forEach(r=>{
+      const k = ymKey(r.data);
+      if(!m.has(k)) m.set(k, { key:k, date:r.data, PRESENTE:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0, SEGUNDO_TURNO:0 });
+      m.get(k)[r.bucket] = (m.get(k)[r.bucket]||0)+1;
+    });
+    return Array.from(m.values()).sort((a,b)=>a.key-b.key).map(d=>{
+      const base = d.PRESENTE+d.SEGUNDO_TURNO, den = base+d.FALTA;
+      return { ...d, label: fmtMonthYear(Math.floor(d.key/100), (d.key%100)-1), presencaPct: den>0?base/den*100:null };
+    });
+  })();
+
+  const statusColor = { PRESENTE:"var(--green)", FALTA:"var(--red)", FOLGA:"var(--gray-500)", FERIAS:"#9c6ade", ATESTADO:"var(--orange)", SEGUNDO_TURNO:"#5b9bd5" };
+  const statusLabel = { PRESENTE:"Presente", FALTA:"Falta", FOLGA:"Folga", FERIAS:"Férias", ATESTADO:"Atestado", SEGUNDO_TURNO:"Seg. Turno" };
+
+  pane.innerHTML = `
+    <!-- ===== BLOCO 1: RESUMO ESTÁTICO DO QUADRO ATUAL ===== -->
+    <div class="panel" style="border-left:4px solid var(--blue-med);">
+      <div class="panel-header"><h3>📋 Quadro Atual — ${fmtDateBR(maxDate)} (estático)</h3></div>
+      <div class="cards-grid" style="margin-bottom:16px;">
+        <div class="card ${spresPct>=90?'pos':spresPct<80?'neg':'warn'}">
+          <div class="card-label">% Presença hoje</div>
+          <div class="card-value ${spresPct>=90?'pos':spresPct<80?'neg':'warn'}">${spresPct!==null?fmtNum(spresPct,1)+'%':'-'}</div>
+        </div>
+        <div class="card"><div class="card-label">Presentes</div><div class="card-value">${scounts.PRESENTE}</div></div>
+        <div class="card"><div class="card-label">Seg. Turno</div><div class="card-value">${scounts.SEGUNDO_TURNO}</div></div>
+        <div class="card neg"><div class="card-label">Faltas</div><div class="card-value neg">${scounts.FALTA}</div></div>
+        <div class="card"><div class="card-label">Folgas</div><div class="card-value">${scounts.FOLGA}</div></div>
+        <div class="card"><div class="card-label">Férias</div><div class="card-value">${scounts.FERIAS}</div></div>
+        <div class="card"><div class="card-label">Atestados</div><div class="card-value">${scounts.ATESTADO}</div></div>
+      </div>
+      <div class="grid-2">
+        <div>
+          <div class="chart-wrap"><canvas id="chart-status-atual"></canvas></div>
+        </div>
+        <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
+          <table class="data-table">
+            <thead><tr><th>Código</th><th>Funcionário</th><th>Status</th></tr></thead>
+            <tbody>
+              ${listaAtual.map(r=>`<tr>
+                <td>${r.codigo||'-'}</td>
+                <td>${escapeHtml(registry.get(r.codKey)||r.nome)}</td>
+                <td><span style="color:${statusColor[r.bucket]};font-weight:700;">${r.statusRaw||statusLabel[r.bucket]}</span></td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== BLOCO 2: HISTÓRICO FILTRADO ===== -->
+    <div class="panel">
+      <div class="panel-header" style="flex-direction:column;align-items:flex-start;gap:10px;">
+        <h3>📅 Histórico de Presença</h3>
+        <div class="toolbar" style="padding:0;border:none;background:none;box-shadow:none;margin:0;">
+          <div class="filter-group"><label>Data Inicial</label><input type="date" id="cham-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
+          <div class="filter-group"><label>Data Final</label><input type="date" id="cham-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+          <button class="btn btn-outline btn-sm" id="cham-clear">Limpar</button>
+        </div>
+      </div>
+
+      ${histMin?`<div class="hint-box">📅 Exibindo: <strong>${fmtDateBR(histMin)}</strong> até <strong>${fmtDateBR(histMax)}</strong> — ${histRows.length} registros</div>`:''}
+
+      <div class="cards-grid">
+        <div class="card ${s.presencaPct>=90?'pos':s.presencaPct<80?'neg':'warn'}">
+          <div class="card-label">% Presença do Período</div>
+          <div class="card-value ${s.presencaPct>=90?'pos':s.presencaPct<80?'neg':'warn'}">${s.presencaPct!==null?fmtNum(s.presencaPct,1)+'%':'-'}</div>
+          <div class="card-sub">(Pres. + Seg.Turno) ÷ (Pres. + Seg.Turno + Falta)</div>
+        </div>
+        <div class="card"><div class="card-label">Presentes</div><div class="card-value">${s.counts.PRESENTE}</div></div>
+        <div class="card"><div class="card-label">Seg. Turno</div><div class="card-value">${s.counts.SEGUNDO_TURNO}</div></div>
+        <div class="card neg"><div class="card-label">Faltas</div><div class="card-value neg">${s.counts.FALTA}</div></div>
+        <div class="card"><div class="card-label">Folgas</div><div class="card-value">${s.counts.FOLGA}</div></div>
+        <div class="card"><div class="card-label">Férias</div><div class="card-value">${s.counts.FERIAS}</div></div>
+        <div class="card"><div class="card-label">Atestados</div><div class="card-value">${s.counts.ATESTADO}</div></div>
+        <div class="card warn"><div class="card-label">Absenteísmo</div><div class="card-value warn">${s.absenteismo!==null?fmtNum(s.absenteismo,1)+'%':'-'}</div></div>
+      </div>
+
+      <div class="grid-2" style="margin-top:14px;">
+        <div class="panel" style="margin-bottom:0;">
+          <div class="panel-header"><h3>Presença Dia a Dia</h3></div>
+          <div class="chart-wrap"><canvas id="chart-presenca-dia"></canvas></div>
+        </div>
+        <div class="panel" style="margin-bottom:0;">
+          <div class="panel-header"><h3>Status (Período)</h3></div>
+          <div class="chart-wrap"><canvas id="chart-status-hist"></canvas></div>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px;margin-bottom:0;">
+        <div class="panel-header"><h3>Presença Mês a Mês</h3></div>
+        <div class="chart-wrap"><canvas id="chart-presenca-mes"></canvas></div>
+      </div>
+
+      <!-- 3 tabelas de ranking -->
+      <div class="grid-3" style="margin-top:14px;">
+        <div class="panel" style="margin-bottom:0;">
+          <div class="panel-header"><h3>⚠️ Ranking Faltantes</h3></div>
+          <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
+            <table class="data-table">
+              <thead><tr><th>Código</th><th>Funcionário</th><th>Faltas</th></tr></thead>
+              <tbody>${faltantes.map(f=>`<tr class="clickable" onclick="showEmployeeSummary('${f.codKey}')"><td>${f.codKey.replace('NOME::','')!==f.codKey?'-':f.codKey}</td><td>${escapeHtml(f.nome)}</td><td class="cell-neg">${f.faltas}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">Sem faltas.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel" style="margin-bottom:0;">
+          <div class="panel-header"><h3>🔁 Ranking Seg. Turno</h3></div>
+          <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
+            <table class="data-table">
+              <thead><tr><th>Código</th><th>Funcionário</th><th>Qtd</th></tr></thead>
+              <tbody>${segTurno.map(f=>`<tr class="clickable" onclick="showEmployeeSummary('${f.codKey}')"><td>${f.cod||'-'}</td><td>${escapeHtml(f.nome)}</td><td>${f.qtd}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">Sem registros.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel" style="margin-bottom:0;">
+          <div class="panel-header"><h3>🏥 Ranking Atestados</h3></div>
+          <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
+            <table class="data-table">
+              <thead><tr><th>Código</th><th>Funcionário</th><th>Qtd</th></tr></thead>
+              <tbody>${atestados.map(f=>`<tr class="clickable" onclick="showEmployeeSummary('${f.codKey}')"><td>${f.cod||'-'}</td><td>${escapeHtml(f.nome)}</td><td class="cell-warn">${f.qtd}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">Sem atestados.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // listeners dos filtros (dentro do painel de histórico)
+  $("#cham-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderChamada(); });
+  $("#cham-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderChamada(); });
+  $("#cham-clear").addEventListener("click", ()=>{ Attendance.state = {dataInicial:null,dataFinal:null}; renderChamada(); });
+
+  // Gráfico pizza estático
+  Charts.make("chart-status-atual", {
+    type:"doughnut",
+    data:{ labels:["Presente","Seg. Turno","Falta","Folga","Férias","Atestado"],
+      datasets:[{ data:[scounts.PRESENTE,scounts.SEGUNDO_TURNO,scounts.FALTA,scounts.FOLGA,scounts.FERIAS,scounts.ATESTADO],
+        backgroundColor:[Charts.colors.green,"#5b9bd5",Charts.colors.red,Charts.colors.gray,"#9c6ade",Charts.colors.orange] }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:"bottom", labels:{font:{size:11}} } } }
+  });
+
+  // Gráfico linha dia a dia
+  Charts.make("chart-presenca-dia", {
+    type:"line",
+    data:{ labels: byDay.map(d=>fmtDateBR(d.date)), datasets:[
+      { label:"% Presença", data: byDay.map(d=>d.presencaPct), borderColor:Charts.colors.green, backgroundColor:"rgba(26,156,98,.12)", fill:true, tension:.3, yAxisID:"pct" },
+      { label:"Faltas", data: byDay.map(d=>d.FALTA), borderColor:Charts.colors.red, borderDash:[4,4], tension:0, yAxisID:"qtd" }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{font:{size:11}} } },
+      scales:{
+        pct:{ type:"linear", position:"left", min:0, max:100, grid:{color:"#eaeef3"}, ticks:{callback:v=>v+'%',color:"var(--green)"} },
+        qtd:{ type:"linear", position:"right", min:0, grid:{display:false}, ticks:{color:"var(--red)"} },
+        x:{ grid:{display:false}, ticks:{color:"#7a8798",font:{size:10}} }
+      }
+    }
+  });
+
+  // Gráfico pizza histórico
+  Charts.make("chart-status-hist", {
+    type:"doughnut",
+    data:{ labels:["Presente","Seg. Turno","Falta","Folga","Férias","Atestado"],
+      datasets:[{ data:[s.counts.PRESENTE,s.counts.SEGUNDO_TURNO,s.counts.FALTA,s.counts.FOLGA,s.counts.FERIAS,s.counts.ATESTADO],
+        backgroundColor:[Charts.colors.green,"#5b9bd5",Charts.colors.red,Charts.colors.gray,"#9c6ade",Charts.colors.orange] }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:"bottom", labels:{font:{size:11}} } } }
+  });
+
+  // Gráfico mês a mês
+  Charts.make("chart-presenca-mes", {
+    type:"bar",
+    data:{ labels: byMonth.map(m=>m.label), datasets:[
+      { label:"Presentes", data: byMonth.map(m=>m.PRESENTE+m.SEGUNDO_TURNO), backgroundColor:Charts.colors.green, borderRadius:4 },
+      { label:"Faltas",    data: byMonth.map(m=>m.FALTA), backgroundColor:Charts.colors.red, borderRadius:4 },
+      { label:"Folgas",    data: byMonth.map(m=>m.FOLGA), backgroundColor:Charts.colors.gray, borderRadius:4 }
+    ]},
+    options: Charts.baseOptions({ scales:{ x:{stacked:true,grid:{display:false}}, y:{stacked:true} } })
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* RENDER: Auditoria                                                       */
+/* ---------------------------------------------------------------------- */
+function renderAuditoria(){
+  const pane = $("#pane-auditoria");
+  const st = Audit.state;
+  const allRuas = uniq(window.APP_STATE.processed.auditoria.map(r=>r.rua)).sort((a,b)=>a-b);
+  const registry = window.APP_STATE.nameRegistry;
+  const allReps = uniq(window.APP_STATE.processed.auditoria.filter(r=>r.codKey).map(r=>r.codKey))
+    .map(c=>({codKey:c, nome:registry.get(c)||c})).sort((a,b)=>a.nome.localeCompare(b.nome));
+
+  pane.innerHTML = `
+    <div class="toolbar">
+      <div class="filter-group"><label>Data Inicial</label><input type="date" id="aud-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
+      <div class="filter-group"><label>Data Final</label><input type="date" id="aud-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+      <div class="filter-group"><label>Rua</label><select id="aud-rua"><option value="">Todas</option>${allRuas.map(r=>`<option value="${r}" ${String(st.rua)===String(r)?'selected':''}>Rua ${r}</option>`).join("")}</select></div>
+      <div class="filter-group"><label>Repositor</label><select id="aud-rep"><option value="">Todos</option>${allReps.map(r=>`<option value="${r.codKey}" ${st.repositor===r.codKey?'selected':''}>${escapeHtml(r.nome)}</option>`).join("")}</select></div>
+      <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm" id="aud-legend-btn">? Como funciona</button>
+      <button class="btn btn-outline btn-sm" id="aud-clear">Limpar filtros</button>
+    </div>
+    <div id="aud-content"></div>
+  `;
+  $("#aud-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderAuditoria(); });
+  $("#aud-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderAuditoria(); });
+  $("#aud-rua").addEventListener("change", e=>{ st.rua = e.target.value||null; renderAuditoria(); });
+  $("#aud-rep").addEventListener("change", e=>{ st.repositor = e.target.value||null; renderAuditoria(); });
+  $("#aud-clear").addEventListener("click", ()=>{ Audit.state = {dataInicial:null,dataFinal:null,rua:null,repositor:null}; renderAuditoria(); });
+  $("#aud-legend-btn").addEventListener("click", showAuditLegend);
+
+  const rows = Audit.getRows();
+  if(!rows.length){
+    $("#aud-content").innerHTML = `<div class="warn-box">Nenhuma auditoria encontrada para os filtros selecionados.</div>`;
+    return;
+  }
+
+  const audDates = rows.map(r=>r.data).filter(Boolean);
+  const audMin = audDates.length ? new Date(Math.min(...audDates.map(d=>d.getTime()))) : null;
+  const audMax = audDates.length ? new Date(Math.max(...audDates.map(d=>d.getTime()))) : null;
+  const audBadge = audMin ? `<div class="hint-box">📅 Exibindo: <strong>${fmtDateBR(audMin)}</strong> até <strong>${fmtDateBR(audMax)}</strong> — ${rows.length} auditoria(s)${Audit.state.rua?' · Rua '+Audit.state.rua:''}${Audit.state.repositor?' · '+escapeHtml(window.APP_STATE.nameRegistry.get(Audit.state.repositor)||Audit.state.repositor):''}</div>` : "";
+
+  const cards = Audit.cards();
+  const byRep = Audit.byRepositor();
+  const byRua = Audit.byRua();
+  const evolucao = Audit.evolucao();
+  const simNao = Audit.simNaoPorCriterio();
+
+  $("#aud-content").innerHTML = audBadge + `
+      ${cards.invalidos>0 ? `<div class="warn-box">${cards.invalidos} registro(s) possuem valores diferentes de Realizado/Não Realizado em algum critério e foram sinalizados como inválidos (não entram no cálculo de qualidade).</div>` : ``}
+    <div class="cards-grid">
+      <div class="card"><div class="card-label">Auditorias Realizadas</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
+      <div class="card ${cards.qualidadeMedia>=80?'pos':cards.qualidadeMedia<60?'neg':'warn'}"><div class="card-label">Qualidade Média</div><div class="card-value ${cards.qualidadeMedia>=80?'pos':cards.qualidadeMedia<60?'neg':'warn'}">${cards.qualidadeMedia!==null?fmtNum(cards.qualidadeMedia,1)+'%':'-'}</div></div>
+      <div class="card"><div class="card-label">Total Realizados</div><div class="card-value pos">${fmtNum(cards.totalSim)}</div></div>
+      <div class="card"><div class="card-label">Total Não Realizados</div><div class="card-value neg">${fmtNum(cards.totalNao)}</div></div>
+      <div class="card warn"><div class="card-label">Critério com Mais "Não Realizado"</div><div class="card-value warn" style="font-size:15px;">${cards.criterioPior||'-'}</div><div class="card-sub">${cards.criterioPiorVal} ocorrência(s)</div></div>
+      <div class="card"><div class="card-label">Repositores Auditados</div><div class="card-value">${fmtNum(cards.repositoresAuditados)}</div></div>
+      <div class="card"><div class="card-label">Ruas Auditadas</div><div class="card-value">${fmtNum(cards.ruasAuditadas)}</div></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><h3>Qualidade por Repositor</h3></div>
+        <div class="chart-wrap tall"><canvas id="chart-qual-rep"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3>Qualidade por Rua</h3></div>
+        <div class="chart-wrap tall"><canvas id="chart-qual-rua"></canvas></div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><h3>Evolução da Qualidade</h3></div>
+        <div class="chart-wrap"><canvas id="chart-qual-evo"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3>Realizado × Não Realizado por Critério</h3></div>
+        <div class="chart-wrap"><canvas id="chart-sim-nao"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Ranking de Repositores</h3></div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Código</th><th>Repositor</th><th>Auditorias</th><th>Realizado</th><th>Não Realizado</th><th>Qualidade %</th></tr></thead>
+        <tbody>${byRep.map(e=>`<tr><td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${e.auditorias}</td><td class="cell-pos">${e.sim}</td><td class="cell-neg">${e.nao}</td><td>${e.qualidadeMedia!==null?fmtNum(e.qualidadeMedia,1)+'%':'-'}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Detalhamento das Auditorias</h3></div>
+      <div class="table-wrap" style="max-height:340px;overflow-y:auto;"><table class="data-table">
+        <thead><tr><th>Data</th><th>Rua</th><th>Código</th><th>Repositor</th><th>Qualidade</th><th>Realizados</th><th>Não Realizados</th></tr></thead>
+        <tbody>${rows.map(r=>`<tr class="clickable" onclick='showAuditDetail(${r._row})'><td>${fmtDateBR(r.data)}</td><td>${r.rua}</td><td>${r.cod||'-'}</td><td>${escapeHtml(r.nome||'-')}</td>
+          <td>${r.qualidade!==null?fmtNum(r.qualidade,1)+'%':'Inválido'}</td><td class="cell-pos">${r.simCount}</td><td class="cell-neg">${7-r.simCount-r.invalid}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </div>
+  `;
+
+  Charts.make("chart-qual-rep", {
+    type:"bar",
+    data:{ labels: byRep.map(e=>e.nome), datasets:[{ label:"Qualidade %", data: byRep.map(e=>e.qualidadeMedia), backgroundColor:Charts.colors.blue, borderRadius:4 }] },
+    options: Charts.baseOptions({ indexAxis:"y", scales:{ x:{ min:0,max:100, grid:{color:"#eaeef3"} }, y:{grid:{display:false}} } })
+  });
+  Charts.make("chart-qual-rua", {
+    type:"bar",
+    data:{ labels: byRua.map(e=>"Rua "+e.rua), datasets:[{ label:"Qualidade %", data: byRua.map(e=>e.qualidadeMedia), backgroundColor:Charts.colors.orange, borderRadius:4 }] },
+    options: Charts.baseOptions({ scales:{ y:{min:0,max:100} } })
+  });
+  Charts.make("chart-qual-evo", {
+    type:"line",
+    data:{ labels: evolucao.map(e=>fmtDateBR(e.date)), datasets:[{ label:"Qualidade %", data: evolucao.map(e=>e.qualidadeMedia), borderColor:Charts.colors.green, backgroundColor:"rgba(26,156,98,.12)", fill:true, tension:.3 }] },
+    options: Charts.baseOptions({ plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100} } })
+  });
+  Charts.make("chart-sim-nao", {
+    type:"bar",
+    data:{ labels: simNao.map(s=>s.criterio.replace("?","")), datasets:[
+      { label:"Realizado", data: simNao.map(s=>s.sim), backgroundColor:Charts.colors.green, borderRadius:4 },
+      { label:"Não Realizado", data: simNao.map(s=>s.nao), backgroundColor:Charts.colors.red, borderRadius:4 }
+    ]},
+    options: Charts.baseOptions({ indexAxis:"y" })
+  });
+}
+
+function showAuditDetail(rowIdx){
+  const r = window.APP_STATE.processed.auditoria.find(x=>x._row===rowIdx);
+  if(!r) return;
+  UI.openModal(`
+    <h3>Auditoria — Rua ${r.rua}</h3>
+    <p><strong>Data:</strong> ${fmtDateBR(r.data)} &nbsp; <strong>Código:</strong> ${r.cod||'-'} &nbsp; <strong>Repositor:</strong> ${escapeHtml(r.nome||'-')}</p>
+    <p><strong>Qualidade:</strong> ${r.qualidade!==null?fmtNum(r.qualidade,2)+'%':'Registro inválido'}</p>
+    <ul class="criteria-list">
+      ${AUDIT_CRITERIA.map(c=>`<li><span>${c.replace("?","")}</span><span class="${r.criteria[c]==='SIM'?'badge-sim':r.criteria[c]==='NÃO'?'badge-nao':''}">${r.criteria[c]==='INVALIDO'?'—':r.criteria[c]==='SIM'?'✅ Realizado':r.criteria[c]==='NÃO'?'❌ Não Realizado':'—'}</span></li>`).join("")}
+    </ul>
+  `);
+}
+
+function showAuditLegend(){
+  UI.openModal(`
+    <h3>Como funciona a Qualidade da Auditoria</h3>
+    <p class="small-muted">Cada auditoria possui 7 critérios avaliados como <strong>Realizado</strong> ou <strong>Não Realizado</strong>.</p>
+    <div class="legend-line"><span class="dot sim"></span> ✅ Realizado = critério atendido corretamente</div>
+    <div class="legend-line"><span class="dot nao"></span> ❌ Não Realizado = critério não atendido</div>
+    <table class="legend-table">
+      <tr><td>7 Realizados</td><td><strong>100%</strong></td></tr>
+      <tr><td>6 Realizados</td><td><strong>85,71%</strong></td></tr>
+      <tr><td>5 Realizados</td><td><strong>71,43%</strong></td></tr>
+      <tr><td>4 Realizados</td><td><strong>57,14%</strong></td></tr>
+      <tr><td>3 Realizados</td><td><strong>42,86%</strong></td></tr>
+      <tr><td>2 Realizados</td><td><strong>28,57%</strong></td></tr>
+      <tr><td>1 Realizado</td><td><strong>14,29%</strong></td></tr>
+      <tr><td>0 Realizados</td><td><strong>0%</strong></td></tr>
+    </table>
+    <p class="small-muted" style="margin-top:10px;">Fórmula: Qualidade % = Realizados ÷ 7 × 100</p>
+  `);
+}
+
+/* ---------------------------------------------------------------------- */
+/* RENDER: Comissão                                                        */
+/* ---------------------------------------------------------------------- */
+let commissionQuadroAtual = "SIM"; // começa filtrado pelo quadro atual
+const CommissionState = { dataInicial: null, dataFinal: null };
+
+function renderComissao(){
+  const pane = $("#pane-comissao");
+  const cfg = window.APP_STATE.commissionConfig;
+  const currentTeamCodes = window.APP_STATE.currentTeam.codes;
+  const st = CommissionState;
+
+  const badgePeriodo = (st.dataInicial || st.dataFinal)
+    ? `<span class="hint-box" style="margin:0;padding:6px 12px;">📅 <strong>${st.dataInicial?fmtDateBR(st.dataInicial):'início'}</strong> até <strong>${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}</strong></span>`
+    : `<span class="hint-box" style="margin:0;padding:6px 12px;">📊 Todo o histórico de produção</span>`;
+
+  pane.innerHTML = `
+    <div class="toolbar" style="margin-bottom:14px;">
+      <div class="filter-group">
+        <label>Apenas Quadro Atual?</label>
+        <div class="toggle-group" id="comm-quadro-toggle">
+          <button data-v="SIM" class="${commissionQuadroAtual==='SIM'?'active':''}">Sim</button>
+          <button data-v="NAO" class="${commissionQuadroAtual==='NAO'?'active':''}">Não</button>
+        </div>
+      </div>
+      <div class="filter-group"><label>Data Inicial</label><input type="date" id="comm-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
+      <div class="filter-group"><label>Data Final</label><input type="date" id="comm-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+      <div class="filter-group">
+        <label>Atalhos</label>
+        <div class="toggle-group" id="comm-atalhos">
+          <button data-v="mes-atual">Mês Atual</button>
+          <button data-v="mes-anterior">Mês Anterior</button>
+          <button data-v="tudo">Tudo</button>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      ${badgePeriodo}
+      <span class="hint-box" style="margin:0;padding:6px 12px;">${commissionQuadroAtual==='SIM' ? `Exibindo apenas os <strong>${currentTeamCodes.size}</strong> repositores do quadro atual` : `Exibindo <strong>todos</strong> os repositores históricos`}</span>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><h3>Faixas de Pontuação</h3><div class="panel-actions"><button class="btn btn-outline btn-sm" id="add-band">+ Adicionar faixa</button></div></div>
+        <div id="bands-editor"></div>
+        <p class="panel-note">O gestor pode editar pontuação inicial, final e valor por ponto de cada faixa, além de ativar/desativar ou remover.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3>Exceções Individuais</h3><div class="panel-actions"><button class="btn btn-outline btn-sm" id="add-exception">+ Adicionar exceção</button></div></div>
+        <div id="exceptions-editor"></div>
+        <p class="panel-note">Exceções vinculadas ao código têm prioridade sobre a faixa normal.</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Missões</h3><div class="panel-actions"><button class="btn btn-outline btn-sm" id="add-mission">+ Adicionar missão</button></div></div>
+      <div id="missions-editor"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Comissão Calculada</h3><span class="panel-note">Produção obtida automaticamente da 8460 (TIPOOS = 58) — ${(st.dataInicial||st.dataFinal) ? 'período filtrado acima' : 'todo o histórico'}</span></div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Código</th><th>Repositor</th><th>Produção (O.S. 58)</th><th>Pontos</th><th>Valor/Ponto</th><th>Regra</th><th>Comissão Produção</th><th>Missões</th><th>Comissão Total</th></tr></thead>
+        <tbody id="commission-tbody"></tbody>
+      </table></div>
+    </div>
+  `;
+
+  $("#comm-quadro-toggle").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    commissionQuadroAtual = b.dataset.v;
+    renderComissao();
+  });
+  $("#comm-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderComissao(); });
+  $("#comm-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderComissao(); });
+  $("#comm-atalhos").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    const maxDate = Production.maxDataDate() || new Date();
+    if(b.dataset.v==="mes-atual"){
+      st.dataInicial = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+      st.dataFinal = maxDate;
+    } else if(b.dataset.v==="mes-anterior"){
+      const pm = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -1);
+      st.dataInicial = new Date(pm.getFullYear(), pm.getMonth(), 1);
+      st.dataFinal = new Date(pm.getFullYear(), pm.getMonth()+1, 0);
+    } else {
+      st.dataInicial = null; st.dataFinal = null;
+    }
+    renderComissao();
+  });
+
+  renderBandsEditor();
+  renderExceptionsEditor();
+  renderMissionsEditor();
+  renderCommissionTable();
+
+  $("#add-band").addEventListener("click", ()=>{
+    cfg.bands.push({ min:0, max:0, value:0, active:true });
+    renderBandsEditor(); renderCommissionTable();
+  });
+  $("#add-exception").addEventListener("click", ()=>{
+    cfg.exceptions.push({ codigo:"", nome:"", valuePerPoint:0.40, active:true });
+    renderExceptionsEditor(); renderCommissionTable();
+  });
+  $("#add-mission").addEventListener("click", ()=>{
+    cfg.missions.push({ name:"Nova missão", qty:1, osEquiv:1, valuePerOs:0 });
+    renderMissionsEditor(); renderCommissionTable();
+  });
+}
+
+function renderBandsEditor(){
+  const cfg = window.APP_STATE.commissionConfig;
+  const el = $("#bands-editor");
+  el.innerHTML = `<div class="band-row" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;">
+      <div>Pontuação Inicial</div><div>Pontuação Final</div><div>Valor por Ponto (R$)</div><div></div>
+    </div>` +
+    cfg.bands.map((b,i)=>`
+      <div class="band-row">
+        <input type="number" step="1" value="${b.min}" data-i="${i}" data-f="min">
+        <input type="number" step="1" value="${b.max}" data-i="${i}" data-f="max">
+        <input type="number" step="0.01" value="${b.value}" data-i="${i}" data-f="value">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <label class="small-muted" style="display:flex;align-items:center;gap:4px;"><input type="checkbox" ${b.active!==false?'checked':''} data-i="${i}" data-f="active"> Ativa</label>
+          <button class="icon-btn" data-i="${i}" data-act="del">✕</button>
+        </div>
+      </div>`).join("");
+
+  $all('#bands-editor input[type="number"]').forEach(inp=>{
+    inp.addEventListener("change", ()=>{
+      const i = Number(inp.dataset.i), f = inp.dataset.f;
+      cfg.bands[i][f] = Number(inp.value);
+      renderCommissionTable();
+    });
+  });
+  $all('#bands-editor input[type="checkbox"]').forEach(inp=>{
+    inp.addEventListener("change", ()=>{
+      const i = Number(inp.dataset.i);
+      cfg.bands[i].active = inp.checked;
+      renderCommissionTable();
+    });
+  });
+  $all('#bands-editor button[data-act="del"]').forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      cfg.bands.splice(Number(btn.dataset.i),1);
+      renderBandsEditor(); renderCommissionTable();
+    });
+  });
+}
+
+function renderExceptionsEditor(){
+  const cfg = window.APP_STATE.commissionConfig;
+  const el = $("#exceptions-editor");
+  el.innerHTML = (cfg.exceptions.length ? `<div class="exception-row" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;">
+      <div>Código</div><div>Nome</div><div>R$/Ponto</div><div>Ativo</div><div></div>
+    </div>` : `<p class="small-muted">Nenhuma exceção cadastrada.</p>`) +
+    cfg.exceptions.map((ex,i)=>`
+      <div class="exception-row">
+        <input type="text" value="${escapeHtml(ex.codigo)}" data-i="${i}" data-f="codigo" placeholder="Código">
+        <input type="text" value="${escapeHtml(ex.nome)}" data-i="${i}" data-f="nome" placeholder="Nome (opcional)">
+        <input type="number" step="0.01" value="${ex.valuePerPoint}" data-i="${i}" data-f="valuePerPoint">
+        <input type="checkbox" ${ex.active!==false?'checked':''} data-i="${i}" data-f="active">
+        <button class="icon-btn" data-i="${i}" data-act="del">✕</button>
+      </div>`).join("");
+
+  $all('#exceptions-editor input[type="text"], #exceptions-editor input[type="number"]').forEach(inp=>{
+    inp.addEventListener("change", ()=>{
+      const i = Number(inp.dataset.i), f = inp.dataset.f;
+      cfg.exceptions[i][f] = f==="valuePerPoint" ? Number(inp.value) : inp.value;
+      renderCommissionTable();
+    });
+  });
+  $all('#exceptions-editor input[type="checkbox"]').forEach(inp=>{
+    inp.addEventListener("change", ()=>{
+      cfg.exceptions[Number(inp.dataset.i)].active = inp.checked;
+      renderCommissionTable();
+    });
+  });
+  $all('#exceptions-editor button[data-act="del"]').forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      cfg.exceptions.splice(Number(btn.dataset.i),1);
+      renderExceptionsEditor(); renderCommissionTable();
+    });
+  });
+}
+
+function renderMissionsEditor(){
+  const cfg = window.APP_STATE.commissionConfig;
+  const el = $("#missions-editor");
+  el.innerHTML = `<div class="band-row" style="grid-template-columns:1.6fr .8fr .8fr .8fr auto;font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;">
+      <div>Nome</div><div>Qtd</div><div>O.S. Equiv.</div><div>R$/O.S.</div><div></div>
+    </div>` +
+    cfg.missions.map((m,i)=>`
+      <div class="band-row" style="grid-template-columns:1.6fr .8fr .8fr .8fr auto;">
+        <input type="text" value="${escapeHtml(m.name)}" data-i="${i}" data-f="name">
+        <input type="number" step="1" value="${m.qty}" data-i="${i}" data-f="qty">
+        <input type="number" step="1" value="${m.osEquiv}" data-i="${i}" data-f="osEquiv">
+        <input type="number" step="0.01" value="${m.valuePerOs}" data-i="${i}" data-f="valuePerOs">
+        <div><span class="small-muted">${fmtBRL(m.qty*m.osEquiv*m.valuePerOs)}</span> <button class="icon-btn" data-i="${i}" data-act="del">✕</button></div>
+      </div>`).join("");
+
+  $all('#missions-editor input').forEach(inp=>{
+    inp.addEventListener("change", ()=>{
+      const i = Number(inp.dataset.i), f = inp.dataset.f;
+      cfg.missions[i][f] = f==="name" ? inp.value : Number(inp.value);
+      renderMissionsEditor(); renderCommissionTable();
+    });
+  });
+  $all('#missions-editor button[data-act="del"]').forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      cfg.missions.splice(Number(btn.dataset.i),1);
+      renderMissionsEditor(); renderCommissionTable();
+    });
+  });
+}
+
+function renderCommissionTable(){
+  const currentTeamCodes = window.APP_STATE.currentTeam.codes;
+  const st = CommissionState;
+  let data = Commission.computeAll(st.dataInicial, st.dataFinal);
+  if(commissionQuadroAtual === "SIM"){
+    data = data.filter(e=> currentTeamCodes.has(e.codKey));
+  }
+  $("#commission-tbody").innerHTML = data.map(e=>`
+    <tr>
+      <td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${fmtNum(e.producao)}</td><td>${fmtNum(e.pontos)}</td>
+      <td>${fmtBRL(e.valorPonto)}</td>
+      <td>${e.regra==='Exceção Individual'?`<span class="tag-warn">${e.regra}</span>`:e.regra==='Regra Normal'?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>
+      <td>${fmtBRL(e.comissaoProducao)}</td><td>${fmtBRL(e.missionsTotal)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>
+    </tr>`).join("") || `<tr><td colspan="9" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
+}
