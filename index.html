@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Central de Reposição</title>
+<title>Núcleo Reposição</title>
 
 <!-- Carregamento com múltiplos CDNs e fallback automático -->
 <script>
@@ -29,6 +29,15 @@
       ]
     },
     {
+      name: "chartjs-plugin-datalabels",
+      check: function(){ return typeof window.ChartDataLabels !== "undefined"; },
+      urls: [
+        "https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js",
+        "https://unpkg.com/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"
+      ]
+    },
+    {
       name: "html2canvas",
       check: function(){ return typeof html2canvas !== "undefined"; },
       urls: [
@@ -44,6 +53,15 @@
         "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
         "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
         "https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"
+      ]
+    },
+    {
+      name: "docx (gerador de Word)",
+      check: function(){ return typeof window.docx !== "undefined"; },
+      urls: [
+        "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js",
+        "https://unpkg.com/docx@8.5.0/build/index.umd.js",
+        "https://cdn.jsdelivr.net/npm/docx@8.6.0/build/index.umd.js"
       ]
     }
   ];
@@ -305,6 +323,7 @@ table.data-table tbody tr.clickable{cursor:pointer;}
 .cell-neutral{color:var(--gray-500);font-weight:600;}
 .cell-warn{color:var(--orange);font-weight:700;}
 tr.selected-week td { background:var(--blue-light) !important; font-weight:700; }
+tr.row-selected td { background:var(--blue-light) !important; font-weight:700; }
 
 /* ===== HEATMAP ===== */
 .heatmap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:6px;}
@@ -371,15 +390,102 @@ tr.selected-week td { background:var(--blue-light) !important; font-weight:700; 
 ::-webkit-scrollbar{height:8px;width:8px;}
 ::-webkit-scrollbar-thumb{background:var(--gray-300);border-radius:4px;}
 
+/* ===== LOGOS ===== */
+.header-logo{ height:28px; width:auto; vertical-align:middle; margin-right:4px; border-radius:4px; background:#fff; padding:2px; }
+.empty-logo{ height:56px; width:auto; margin-bottom:14px; }
+
+/* ===== LOGIN SCREEN ===== */
+#login-screen{
+  position:fixed; inset:0; z-index:1000;
+  display:flex; background:var(--white);
+}
+#login-screen.hidden{ display:none; }
+.login-left{
+  flex:0 0 46%; max-width:520px; min-width:320px;
+  display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(160deg, #ffffff 0%, var(--gray-50) 100%);
+  padding:40px;
+}
+.login-left-inner{ width:100%; max-width:360px; }
+.login-logo{ height:64px; width:auto; margin-bottom:18px; }
+.login-title{ font-size:24px; font-weight:800; color:var(--blue-deep); margin:0 0 6px; }
+.login-subtitle{ font-size:13.5px; color:var(--gray-500); margin:0 0 26px; }
+.login-field{ margin-bottom:16px; }
+.login-field label{ display:block; font-size:11px; font-weight:700; color:var(--gray-500); text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; }
+.login-password-wrap{ position:relative; display:flex; align-items:center; }
+.login-password-wrap input{
+  width:100%; border:1px solid var(--gray-300); border-radius:8px;
+  padding:12px 44px 12px 14px; font-size:15px; color:var(--ink);
+  background:#fff;
+}
+.login-password-wrap input:focus{ outline:2px solid var(--blue-soft); border-color:var(--blue-med); }
+.login-eye-btn{
+  position:absolute; right:8px; background:none; border:none; padding:6px;
+  color:var(--gray-500); display:flex; align-items:center; justify-content:center; border-radius:6px;
+}
+.login-eye-btn:hover{ color:var(--blue-med); background:var(--blue-light); }
+.login-error{
+  display:none; background:var(--red-bg); border:1px solid #f0b3b3; color:#8a2020;
+  border-radius:7px; padding:9px 12px; font-size:13px; margin-bottom:14px;
+}
+.login-error.show{ display:block; }
+.login-submit{ width:100%; padding:12px; font-size:14.5px; justify-content:center; }
+.login-right{
+  flex:1; background-size:cover; background-position:center;
+  background-image:url('https://images.unsplash.com/photo-1645736315000-6f788915923b?q=80&w=1600&auto=format&fit=crop');
+  position:relative;
+}
+.login-right::after{
+  content:""; position:absolute; inset:0;
+  background:linear-gradient(120deg, rgba(11,38,71,.55) 0%, rgba(11,38,71,.15) 55%, rgba(11,38,71,.05) 100%);
+}
+@media (max-width:820px){
+  .login-right{ display:none; }
+  .login-left{ flex:1 1 100%; max-width:none; }
+}
+
 @media print{
   #app-header,#main-nav,#sub-nav,.toolbar,.panel-actions,.btn{display:none !important;}
 }
+
+/* Esconde o app inteiro até a autenticação ser concluída */
+body.locked #app-header,
+body.locked #main-nav,
+body.locked #sub-nav,
+body.locked #app-body{ display:none !important; }
 </style>
 </head>
-<body>
+<body class="locked">
+
+<!-- ===================== TELA DE LOGIN ===================== -->
+<div id="login-screen">
+  <div class="login-left">
+    <div class="login-left-inner">
+      <img id="login-logo" class="login-logo" alt="Logo">
+      <h1 class="login-title">Núcleo Reposição</h1>
+      <p class="login-subtitle">Acesso restrito. Informe a senha para continuar.</p>
+
+      <form id="login-form" autocomplete="off">
+        <div class="login-field">
+          <label for="login-password">Senha</label>
+          <div class="login-password-wrap">
+            <input type="password" id="login-password" placeholder="Digite a senha" autocomplete="current-password">
+            <button type="button" id="login-eye-toggle" class="login-eye-btn" aria-label="Mostrar senha">
+              <svg id="eye-icon-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              <svg id="eye-icon-closed" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+            </button>
+          </div>
+        </div>
+        <div id="login-error" class="login-error"></div>
+        <button type="submit" class="btn btn-primary login-submit">Entrar</button>
+      </form>
+    </div>
+  </div>
+  <div class="login-right" id="login-right"></div>
+</div>
 
 <header id="app-header">
-  <h1><span class="logo-dot"></span> CENTRAL DE REPOSIÇÃO</h1>
+  <h1><img id="header-logo" class="header-logo" alt="Logo"> NÚCLEO REPOSIÇÃO</h1>
   <div class="header-right">
     <span class="quadro-badge" id="quadro-badge">Nenhum arquivo carregado</span>
     <button class="btn btn-outline btn-sm" id="btn-export-png" disabled>⤓ PNG</button>
@@ -399,7 +505,8 @@ tr.selected-week td { background:var(--blue-light) !important; font-weight:700; 
 <div id="app-body">
 
   <div id="empty-state">
-    <h2>Bem-vindo à Central de Reposição</h2>
+    <img id="empty-logo" class="empty-logo" alt="Logo">
+    <h2>Bem-vindo ao Núcleo Reposição</h2>
     <p>Carregue o arquivo <strong>NUCLEO REPOSIÇÃO.xlsx</strong> para visualizar produção, projeção, quadro, presença, feedbacks, auditorias e comissão da equipe.</p>
     <p class="small-muted">O arquivo deve conter as abas: AUDITORIA REP, FEEDBACK REP, QUADRO REP, 8271 e 8460.</p>
     <button class="btn btn-primary big-upload" id="btn-empty-upload">📂 CARREGAR NUCLEO REPOSIÇÃO</button>
