@@ -229,6 +229,27 @@ function startOfWeekMonday(d){
   const day = (d.getDay()+6)%7; // 0=monday
   return dateOnly(addDays(d, -day));
 }
+
+/* ---------------------------------------------------------------------- */
+/* DIAS ÚTEIS — a empresa trabalha apenas de Segunda a Sexta. Toda média e
+   projeção de produção usa dia útil como unidade, não dia corrido.        */
+/* ---------------------------------------------------------------------- */
+function isWeekday(date){
+  const dow = date.getDay(); // 0=domingo, 6=sábado
+  return dow>=1 && dow<=5;
+}
+function countWeekdaysInMonth(year, month){
+  const totalDays = new Date(year, month+1, 0).getDate();
+  let count = 0;
+  for(let d=1; d<=totalDays; d++){ if(isWeekday(new Date(year,month,d))) count++; }
+  return count;
+}
+function countWeekdaysUpToDay(year, month, uptoDay){
+  let count = 0;
+  for(let d=1; d<=uptoDay; d++){ if(isWeekday(new Date(year,month,d))) count++; }
+  return count;
+}
+
 function escapeHtml(s){
   return String(s===null||s===undefined?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
@@ -651,10 +672,13 @@ const Production = {
     const totalAnterior = prevMonthRows.length;
     const variacao = pctVariation(totalAtual, totalAnterior);
 
-    const diasComDados = uniq(curMonthRows.map(r=>ymdKey(r.dtinicio))).length || 1;
-    const mediaDiaria = totalAtual / diasComDados;
+    // média diária considera apenas dias úteis (Seg-Sex) — a empresa não trabalha fim de semana
+    const curMonthRowsUteis = curMonthRows.filter(r=>isWeekday(r.dtinicio));
+    const diasComDados = uniq(curMonthRowsUteis.map(r=>ymdKey(r.dtinicio))).length || 1;
+    const mediaDiaria = curMonthRowsUteis.length / diasComDados;
 
-    const totalDiasMes = new Date(refYear, refMonth+1, 0).getDate();
+    const totalDiasMesCalendario = new Date(refYear, refMonth+1, 0).getDate();
+    const totalDiasMes = countWeekdaysInMonth(refYear, refMonth); // dias ÚTEIS do mês — usado nos cálculos
     const diaAtualDoMes = maxDate.getDate();
 
     // projeção UNIFICADA: usa a mesma lógica/base de Production.projection()
@@ -677,7 +701,7 @@ const Production = {
     return {
       refYear, refMonth, maxDate,
       totalAtual, totalAnterior, variacao,
-      mediaDiaria, diasComDados, totalDiasMes, diaAtualDoMes,
+      mediaDiaria, diasComDados, totalDiasMes, totalDiasMesCalendario, diaAtualDoMes,
       projecao, projecaoBaseLabel, projecaoMaior,
       totalAnoAnterior, variacaoAnual,
       mesmaPeriodicidadeAtiva: mp, diaCorte
@@ -726,12 +750,13 @@ const Production = {
         }
         prevTotal = prevRows.length;
       }
-      const diasNoMes = uniq(rowsForMonth.map(r=>ymdKey(r.dtinicio))).length || 1;
+      const diasUteisNoMes = uniq(rowsForMonth.filter(r=>isWeekday(r.dtinicio)).map(r=>ymdKey(r.dtinicio))).length || 1;
+      const totalUtil = rowsForMonth.filter(r=>isWeekday(r.dtinicio)).length;
       return {
         year:y, month:m, label: fmtMonthYear(y,m), total,
         prevTotal, diff: prevTotal!==null ? total-prevTotal : null,
         variacao: prevTotal!==null ? pctVariation(total, prevTotal) : null,
-        mediaDiaria: total/diasNoMes,
+        mediaDiaria: totalUtil/diasUteisNoMes,
         periodoLabel: refDate ? `até dia ${Math.min(refDate.getDate(), new Date(y,m+1,0).getDate())}` : null
       };
     });
@@ -820,6 +845,28 @@ const Production = {
   },
 
   // Retorna breakdown dia a dia (Seg-Sex) de uma semana vs semana anterior
+  // Projeta o valor de um dia que ainda não ocorreu: média de todas as ocorrências
+  // anteriores desse mesmo dia da semana dentro do mesmo mês (dados reais, até o
+  // momento). Ex: para projetar uma quarta-feira, usa a média das quartas já
+  // ocorridas neste mês. Retorna null se não houver nenhuma ocorrência anterior.
+  projectedValueForWeekday(date){
+    const rows = this.getBaseRows();
+    const maxDate = this.maxDataDate();
+    const y = date.getFullYear(), m = date.getMonth(), dow = date.getDay();
+    const totalDiasMes = new Date(y, m+1, 0).getDate();
+    const occurrences = [];
+    for(let d=1; d<=totalDiasMes; d++){
+      const dt = new Date(y,m,d);
+      if(dt.getDay()!==dow) continue;
+      if(dateOnly(dt).getTime()===dateOnly(date).getTime()) continue; // não conta o próprio dia
+      if(!maxDate || dateOnly(dt) > dateOnly(maxDate)) continue; // só conta ocorrências já passadas
+      const cnt = rows.filter(r=> dateOnly(r.dtinicio).getTime()===dateOnly(dt).getTime()).length;
+      occurrences.push(cnt);
+    }
+    if(!occurrences.length) return null;
+    return avg(occurrences);
+  },
+
   weeklyDayBreakdown(weekKey, anteriorWeekKey){
     const rows = this.getBaseRows();
     const DIAS = ["Segunda","Terça","Quarta","Quinta","Sexta","Sábado","Domingo"];
@@ -833,6 +880,8 @@ const Production = {
     const start  = getWeekStart(weekKey);
     const startP = anteriorWeekKey ? getWeekStart(anteriorWeekKey) : null;
     if(!start) return [];
+
+    const maxDate = this.maxDataDate();
 
     // conta OS por dia da semana para a semana atual e anterior
     const countByDate = new Map();
@@ -848,10 +897,16 @@ const Production = {
       const dataPrev = startP ? addDays(startP, offset) : null;
       const dow = dataCur.getDay(); // 0=dom, 1=seg … 6=sab
       const diaNome = DIAS[(dow+6)%7]; // converte: seg=0…dom=6
-      if(dow===0) continue; // pula domingo
+      if(dow===0 || dow===6) continue; // pula domingo e sábado — empresa trabalha só Seg-Sex
+
+      const occurred = maxDate ? dateOnly(dataCur) <= dateOnly(maxDate) : false;
+      const totalCur = countByDate.get(dataCur.getTime()) || 0;
+      const projetado = occurred ? null : this.projectedValueForWeekday(dataCur);
+
       result.push({
-        diaNome,
-        dataCur,  totalCur:  countByDate.get(dataCur.getTime())  || 0,
+        diaNome, dataCur, occurred,
+        totalCur: occurred ? totalCur : null, // só preenche "feito" quando o dia já passou
+        projetado,
         dataPrev, totalPrev: dataPrev ? (countByDate.get(dataPrev.getTime()) || 0) : null
       });
     }
@@ -941,27 +996,31 @@ const Production = {
     // meses de base = os N meses imediatamente anteriores ao atual
     const base = evo.slice(Math.max(0, evo.length-1-n), evo.length-1);
     const mediaBase = base.length ? avg(base.map(b=>b.mediaDiaria)) : last.mediaDiaria;
-    const totalDiasMes = new Date(last.year, last.month+1, 0).getDate();
+    const totalDiasMesCalendario = new Date(last.year, last.month+1, 0).getDate();
+    const totalDiasMes = countWeekdaysInMonth(last.year, last.month); // dias ÚTEIS do mês
     const projecao = mediaBase * totalDiasMes;
     const mediaDiariaAtual = last.mediaDiaria;
     // Verde quando o ritmo atual >= média base histórica (mês atual está igual ou melhor que a referência)
     const projecaoMaior = mediaDiariaAtual >= mediaBase;
 
-    // serie diária do mês atual (dados reais)
+    // serie diária do mês atual (dados reais) — mostra todos os dias corridos (inclusive fins de
+    // semana, para contexto visual), mas a projeção só avança em dias úteis
     const rows = this.getBaseRows();
     const y = last.year, m = last.month;
     const diasReais = [];
-    for(let d=1; d<=totalDiasMes; d++){
+    for(let d=1; d<=totalDiasMesCalendario; d++){
       const dt = new Date(y,m,d);
       const cnt = rows.filter(r=> r.dtinicio.getFullYear()===y && r.dtinicio.getMonth()===m && r.dtinicio.getDate()===d).length;
-      diasReais.push({ dia:d, date:dt, real: cnt>0||d<=last.total/last.mediaDiaria ? cnt : null });
+      diasReais.push({ dia:d, date:dt, util:isWeekday(dt), real: cnt>0||d<=last.total/last.mediaDiaria ? cnt : null });
     }
     // acumulado real
     let acum = 0;
     diasReais.forEach(d=>{ if(d.real!==null){ acum+=d.real; d.acumReal=acum; } else { d.acumReal=null; } });
-    // projeção acumulada dia a dia
+    // projeção acumulada dia a dia — só soma a média base nos dias úteis; fica "achatada" no fim de semana
+    let acumProj = 0;
     diasReais.forEach(d=>{
-      d.acumProj = +(mediaBase * d.dia).toFixed(0);
+      if(d.util) acumProj += mediaBase;
+      d.acumProj = +acumProj.toFixed(0);
     });
     // último dia real conhecido
     const ultimoDiaReal = last.total; // total acumulado real do mês atual
@@ -986,7 +1045,7 @@ const Production = {
       baseMeses: base.map(b=>b.label),
       mesesDisponiveisBase: base.length,
       mesesSolicitados: n,
-      mediaBase, projecao, mediaDiariaAtual, totalDiasMes,
+      mediaBase, projecao, mediaDiariaAtual, totalDiasMes, totalDiasMesCalendario,
       mesAtual: last.label, projecaoMaior,
       ultimoDia, ultimoDiaReal,
       diasReais, empProj,
@@ -996,38 +1055,35 @@ const Production = {
     };
   },
 
-  // Média diária de O.S. 58 do colaborador no mês corrente (mesma lógica usada na
-  // projeção por funcionário). Usada apenas pela Projeção por Funcionário.
+  // Média diária de O.S. 58 do colaborador no mês corrente, considerando apenas dias
+  // úteis (Seg-Sex) tanto na produção quanto no denominador de dias. Usada pela
+  // Projeção por Funcionário.
   employeeDailyAverage(codKey){
     const rows = this.getBaseRows();
     const maxDate = this.maxDataDate();
     if(!maxDate) return 0;
     const y = maxDate.getFullYear(), m = maxDate.getMonth();
     const monthRows = rows.filter(r=>r.dtinicio.getFullYear()===y && r.dtinicio.getMonth()===m);
-    const ultimoDia = monthRows.length ? Math.max(...monthRows.map(r=>r.dtinicio.getDate())) : 0;
-    const diasTrabalhados = ultimoDia || 1;
-    const totalAtual = monthRows.filter(r=>r.codKey===codKey).length;
-    return totalAtual / diasTrabalhados;
+    const ultimoDiaNum = monthRows.length ? Math.max(...monthRows.map(r=>r.dtinicio.getDate())) : 0;
+    const diasUteisTrabalhados = ultimoDiaNum ? countWeekdaysUpToDay(y, m, ultimoDiaNum) : 1;
+    const totalAtual = monthRows.filter(r=>r.codKey===codKey && isWeekday(r.dtinicio)).length;
+    return totalAtual / (diasUteisTrabalhados || 1);
   },
 
   // Média diária de O.S. 58 do colaborador considerando TODO o histórico dele na 8460
-  // (não só o mês atual). Usada especificamente no cálculo de Missões, conforme pedido:
-  // "média que este colaborador produz ao longo de todo seu histórico na 8460".
+  // (não só o mês atual), apenas dias úteis. Usada especificamente no cálculo de
+  // Missões, conforme pedido: "média que este colaborador produz ao longo de todo
+  // seu histórico na 8460".
   employeeHistoricalDailyAverage(codKey){
-    const rows = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58 && r.codKey===codKey);
+    const rows = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58 && r.codKey===codKey && isWeekday(r.dtinicio));
     if(!rows.length) return 0;
     const diasTrabalhados = uniq(rows.map(r=>ymdKey(r.dtinicio))).length || 1;
     return rows.length / diasTrabalhados;
   },
 
-  // Média diária de O.S. 58 do colaborador considerando TODO o histórico dele na 8460
-  // (não só o mês atual). Usada pelo cálculo de Missões em Gestão > Comissão:
-  // "quantas O.S. ele teria feito, na média histórica dele, se não estivesse em missão".
+  // (mantida por compatibilidade — mesmo cálculo de employeeHistoricalDailyAverage)
   employeeAllTimeDailyAverage(codKey){
-    const rows = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58 && r.codKey===codKey);
-    if(!rows.length) return 0;
-    const diasDistintos = uniq(rows.map(r=>ymdKey(r.dtinicio))).length || 1;
-    return rows.length / diasDistintos;
+    return this.employeeHistoricalDailyAverage(codKey);
   },
 
   employeeRanking(){
@@ -1168,7 +1224,7 @@ const Feedback = {
       const mediaGestor = e.nGestor ? e.somaGestor/e.nGestor : null;
       const mediaGeral = (mediaPessoal!==null && mediaGestor!==null) ? (mediaPessoal+mediaGestor)/2 :
                           (mediaGestor!==null ? mediaGestor : mediaPessoal);
-      return { ...e, mediaPessoal, mediaGestor, mediaGeral, classificacao: this.classify(mediaGeral) };
+      return { ...e, mediaPessoal, mediaGestor, mediaGeral, classificacao: this.classify(mediaGestor) };
     }).sort((a,b)=>b.feedbacks-a.feedbacks);
   },
   cards(){
@@ -1561,254 +1617,303 @@ const Charts = {
 /* ---------------------------------------------------------------------- */
 /* MODULE: FeedbackDoc — geração do Termo de Feedback (.docx) no navegador */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* Histórico de produção e indicadores individuais (usados no PDF de Feedback) */
+/* ---------------------------------------------------------------------- */
+
+// O.S. dia anterior / última semana / mês anterior (completo) / últimos 3 meses do funcionário
+function computeEmployeeProductionHistory(codKey){
+  const processed = window.APP_STATE.processed;
+  const rows = processed.p8460.filter(r=>r.tipoos===58 && r.codKey===codKey);
+  const maxDate = Production.maxDataDate();
+  if(!maxDate) return { osDiaAnterior:0, osSemana:0, osMesAnterior:0, mesAnteriorLabel:null, os3Meses:0, ontem:null, maxDate:null };
+
+  const ontem = addDays(dateOnly(maxDate), -1);
+  const inicioSemana = startOfWeekMonday(maxDate);
+  // mês anterior COMPLETO (não confundir com "mês atual até hoje", que é o mesmo período do card "O.S. Atual")
+  const inicioMesAnterior = dateOnly(addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -1));
+  const fimMesAnterior = dateOnly(new Date(maxDate.getFullYear(), maxDate.getMonth(), 0)); // último dia do mês anterior
+  const mesAnteriorLabel = fmtMonthYear(inicioMesAnterior.getFullYear(), inicioMesAnterior.getMonth());
+  const inicio3Meses = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2);
+  const hojeD = dateOnly(maxDate);
+
+  const osDiaAnterior = rows.filter(r=>dateOnly(r.dtinicio).getTime()===ontem.getTime()).length;
+  const osSemana = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicioSemana && d<=hojeD; }).length;
+  const osMesAnterior = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicioMesAnterior && d<=fimMesAnterior; }).length;
+  const os3Meses = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicio3Meses && d<=hojeD; }).length;
+
+  return { osDiaAnterior, osSemana, osMesAnterior, mesAnteriorLabel, os3Meses, ontem, maxDate };
+}
+
+// Reaproveita EXATAMENTE a lógica de Indicadores > Produção (executiveSummary, modeComparison,
+// projection), só que temporariamente restrita a um único funcionário — garante que os números
+// do PDF batem 100% com o que apareceria na tela se esse funcionário fosse filtrado lá.
+function computeEmployeeProductionSnapshot(codKey){
+  const savedState = JSON.parse(JSON.stringify(Production.state));
+  try{
+    Production.state.employees = [codKey];
+    Production.state.quadroAtual = "NAO"; // já restrito a 1 pessoa; não precisa também exigir quadro atual
+    Production.state.mode = "mes";
+    Production.state.mesmaPeriodicidade = "SIM";
+    Production.state.dataInicial = null;
+    Production.state.dataFinal = null;
+    if(!Production.state.projectionBase) Production.state.projectionBase = 3;
+
+    const exec = Production.executiveSummary();
+    const cmp = Production.modeComparison();
+    const proj = Production.projection();
+    return { exec, cmp, proj };
+  } finally {
+    Production.state = savedState;
+  }
+}
+
 const FeedbackDoc = {
-  base64ToUint8Array(base64){
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
+  cargoLabel: { LIDER:"Líder", AUXILIAR:"Auxiliar", REPOSITOR:"Repositor" },
+
+  // Constrói o HTML compacto do documento (1 página) dentro de um container off-screen,
+  // já com os 2 gráficos e os cards de indicadores calculados para o funcionário.
+  buildContainer(employee, hist, snap, idx){
+    idx = idx===undefined ? "" : idx;
+    const logoSrc = "data:image/png;base64," + LOGO_BASE64;
+    const hoje = fmtDateBR(new Date());
+    const exec = snap.exec, cmp = snap.cmp, proj = snap.proj;
+
+    const cardHtml = (label, value, sub, color) => `
+      <div style="flex:1;border:1px solid #dde3ea;border-radius:6px;padding:8px 10px;background:#fff;border-left:3px solid ${color||'#2f6fce'};">
+        <div style="font-size:9px;font-weight:700;color:#7a8798;text-transform:uppercase;letter-spacing:.3px;">${label}</div>
+        <div style="font-size:17px;font-weight:800;color:${color||'#123a6b'};line-height:1.15;">${value}</div>
+        ${sub?`<div style="font-size:8.5px;color:#7a8798;margin-top:1px;">${sub}</div>`:''}
+      </div>`;
+
+    const labelCellHtml = (text, widthPct) => `<td style="width:${widthPct||25}%;background:#eaeef3;border:1px solid #c3ccd6;padding:4px 7px;font-size:10px;font-weight:700;color:#123a6b;">${text}</td>`;
+    const valueCellHtml = (text, widthPct) => `<td style="width:${widthPct||25}%;border:1px solid #c3ccd6;padding:4px 7px;font-size:10.5px;font-weight:700;">${text}</td>`;
+    const blankCellHtml = (widthPct, height) => `<td style="width:${widthPct}%;border:1px solid #c3ccd6;height:${height||22}px;"></td>`;
+    const checkItem = (label) => `<td style="width:${(100/7).toFixed(2)}%;border:1px solid #c3ccd6;padding:4px 4px;font-size:8px;text-align:center;vertical-align:middle;line-height:1.25;">${label}<br><strong>( )</strong></td>`;
+
+    const scaleRowHtml = (color) => {
+      let cells = "";
+      for(let i=0;i<=10;i++){
+        cells += `<td style="border:1px solid ${color};text-align:center;padding:4px 0;font-size:11px;font-weight:800;width:${(100/11).toFixed(2)}%;">${i}</td>`;
+      }
+      return `<table style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr>${cells}</tr></table>`;
+    };
+
+    const el = document.createElement("div");
+    el.id = "feedback-pdf-container-" + idx;
+    el.className = "feedback-pdf-container";
+    el.style.cssText = "position:fixed; left:-99999px; top:0; width:1500px; background:#ffffff; font-family:-apple-system,Segoe UI,Arial,sans-serif; color:#1f2937; padding:20px 26px;";
+
+    el.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+        <tr>
+          <td style="width:110px;border:1px solid #c3ccd6;text-align:center;padding:6px;"><img src="${logoSrc}" style="height:46px;width:auto;"></td>
+          <td style="background:#eaeef3;border:1px solid #c3ccd6;padding:10px 16px;"><span style="font-size:19px;font-weight:800;color:#123a6b;">Ficha Feedback — Núcleo Reposição</span></td>
+        </tr>
+      </table>
+      <div style="font-size:9.5px;color:#7a8798;margin-bottom:8px;">Data de geração: ${hoje}</div>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:6px;">
+        <tr>${labelCellHtml("Cód. Funcionário Avaliado",16)}${valueCellHtml(employee.cod||"-",18)}${labelCellHtml("Nome Funcionário Avaliado",18)}${valueCellHtml(escapeHtml(employee.nome||"-"),48)}</tr>
+      </table>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:10px;">
+        <tr>${labelCellHtml("Cód. Avaliador",16)}${valueCellHtml(AVALIADOR_FIXO.codigo,18)}${labelCellHtml("Nome Avaliador",18)}${valueCellHtml(AVALIADOR_FIXO.nome,48)}</tr>
+      </table>
+
+      <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">📦 Histórico de Produção (O.S. 58)</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        ${cardHtml("O.S. Dia Anterior", fmtNum(hist.osDiaAnterior), hist.ontem?fmtDateBR(hist.ontem):'-')}
+        ${cardHtml("O.S. Última Semana", fmtNum(hist.osSemana))}
+        ${cardHtml("O.S. Mês Anterior", fmtNum(hist.osMesAnterior), hist.mesAnteriorLabel)}
+        ${cardHtml("O.S. Últimos 3 Meses", fmtNum(hist.os3Meses))}
+      </div>
+
+      <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">📈 Indicadores de Desempenho — Comparação Modo Mês</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        ${cardHtml("O.S. Atual", fmtNum(exec?exec.totalAtual:0), cmp?cmp.labelAtual:'')}
+        ${cardHtml("O.S. Mês Anterior (mesmo período)", fmtNum(cmp?cmp.anterior:0), cmp?cmp.labelAnterior:'')}
+        ${cardHtml("Variação", cmp&&cmp.variacao!==null?fmtPct(cmp.variacao,1):'s/ base', null, cmp&&cmp.variacao>0?'#1a9c62':cmp&&cmp.variacao<0?'#d64545':'#7a8798')}
+        ${cardHtml("Média Diária", exec?fmtNum(exec.mediaDiaria,1):'0', 'O.S./dia útil', '#e08a1f')}
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:10px;">
+        <div style="flex:1;border:1px solid #dde3ea;border-radius:6px;padding:6px;">
+          <div style="font-size:9.5px;font-weight:700;color:#123a6b;margin-bottom:3px;">Evolução Real + Projeção — ${proj?proj.mesAtual:''}</div>
+          <canvas id="fbdoc-chart-evo-${idx}" width="680" height="200"></canvas>
+        </div>
+        <div style="flex:1;border:1px solid #dde3ea;border-radius:6px;padding:6px;">
+          <div style="font-size:9.5px;font-weight:700;color:#123a6b;margin-bottom:3px;">Ano Atual — Mês a Mês com Projeção</div>
+          <canvas id="fbdoc-chart-ano-${idx}" width="680" height="200"></canvas>
+        </div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+        <tr>${labelCellHtml("Resumo Assunto Tratado:",100)}</tr>
+        <tr>${blankCellHtml(100,26)}</tr>
+      </table>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;table-layout:fixed;">
+        <tr><td colspan="7" style="width:100%;background:#eaeef3;border:1px solid #c3ccd6;padding:4px 7px;font-size:10px;font-weight:700;color:#123a6b;">Classificação Motivo Feedback:</td></tr>
+        <tr>${checkItem("Má Conduta")}${checkItem("Insubordinação")}${checkItem("Ausência Injustificada")}${checkItem("Atrasos Frequentes")}${checkItem("Desrespeito às Regras")}${checkItem("Violação da Política Moral da Empresa")}${checkItem("Baixa Produção")}</tr>
+      </table>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+        <tr><td colspan="3" style="background:#d8e4f5;border:1px solid #c3ccd6;padding:4px 7px;font-size:10px;font-weight:800;color:#123a6b;">Avaliação Geral</td></tr>
+        <tr>${labelCellHtml("Bom desempenho ( )",34)}${labelCellHtml("Regular, com margem p/ melhoria ( )",33)}${labelCellHtml("Desempenho insatisfatório ( )",33)}</tr>
+        <tr>${blankCellHtml(34,24)}${blankCellHtml(33,24)}${blankCellHtml(33,24)}</tr>
+      </table>
+
+      <div style="background:#1a9c62;padding:5px 10px;margin-bottom:2px;"><span style="color:#fff;font-size:10.5px;font-weight:800;">AUTOAVALIAÇÃO — preenchida pelo Funcionário Avaliado</span></div>
+      <div style="font-size:9px;color:#4a5568;font-style:italic;margin-bottom:3px;">O próprio funcionário avaliado deve marcar, de 0 a 10, a nota que representa sua autoavaliação de desempenho no período.</div>
+      <div style="margin-bottom:8px;">${scaleRowHtml('#1a9c62')}</div>
+
+      <div style="background:#e08a1f;padding:5px 10px;margin-bottom:2px;"><span style="color:#fff;font-size:10.5px;font-weight:800;">AVALIAÇÃO DO AVALIADOR — preenchida por ${AVALIADOR_FIXO.nome}</span></div>
+      <div style="font-size:9px;color:#4a5568;font-style:italic;margin-bottom:3px;">O avaliador deve marcar, de 0 a 10, a nota que representa sua avaliação de desempenho do funcionário no período.</div>
+      <div style="margin-bottom:14px;">${scaleRowHtml('#e08a1f')}</div>
+
+      <div style="display:flex;gap:60px;margin-top:14px;">
+        <div style="flex:1;text-align:center;">
+          <div style="border-bottom:1px solid #333;padding-top:20px;margin-bottom:4px;"></div>
+          <div style="font-size:9.5px;">Assinatura Avaliador</div>
+        </div>
+        <div style="flex:1;text-align:center;">
+          <div style="border-bottom:1px solid #333;padding-top:20px;margin-bottom:4px;"></div>
+          <div style="font-size:9.5px;">Assinatura Funcionário Avaliado</div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(el);
+    return el;
   },
 
-  cellBorders(color){
-    const c = color || "AAAAAA";
-    const side = { style: "single", size: 4, color: c };
-    return { top: side, bottom: side, left: side, right: side };
-  },
+  renderCharts(proj, idx){
+    if(!proj) return;
+    idx = idx===undefined ? "" : idx;
+    const evoCtx = document.getElementById("fbdoc-chart-evo-"+idx);
+    const anoCtx = document.getElementById("fbdoc-chart-ano-"+idx);
+    if(!evoCtx || !anoCtx) return;
 
-  labelCell(text, opts){
-    opts = opts || {};
-    const { Paragraph, TextRun, TableCell, WidthType, ShadingType } = window.docx;
-    return new TableCell({
-      width: { size: opts.width || 25, type: WidthType.PERCENTAGE },
-      shading: { type: ShadingType.CLEAR, fill: opts.fill || "EAEEF3" },
-      borders: this.cellBorders(),
-      margins: { top:80, bottom:80, left:100, right:100 },
-      children: [ new Paragraph({ children:[ new TextRun({ text, bold:true, size:18, color:"123A6B" }) ] }) ]
+    const dr = proj.diasReais;
+    const corProj = proj.projecaoMaior ? "#1a9c62" : "#d64545";
+
+    // índice do último ponto real e do último ponto de projeção (pra rotular só o final da linha,
+    // já que rotular cada dia individualmente ficaria ilegível)
+    let lastRealIdx = -1;
+    dr.forEach((d,i)=>{ if(d.acumReal!==null) lastRealIdx = i; });
+    const lastProjIdx = dr.length - 1;
+
+    new Chart(evoCtx.getContext("2d"), {
+      type:"line",
+      data:{ labels: dr.map(d=>String(d.dia)), datasets:[
+        { label:"Real", data: dr.map(d=>d.acumReal), borderColor:"#2f6fce", backgroundColor:"rgba(47,111,206,0.12)", fill:true, tension:.3, pointRadius:0, borderWidth:2 },
+        { label:"Projeção", data: dr.map(d=>d.acumProj), borderColor: corProj, borderDash:[5,3], borderWidth:2, pointRadius:0, fill:false }
+      ]},
+      options:{ responsive:false, animation:false,
+        plugins:{
+          legend:{ labels:{ font:{size:9} }, position:"bottom" },
+          datalabels:{
+            color:(ctx)=> ctx.datasetIndex===0 ? "#2f6fce" : corProj,
+            font:{ size:9, weight:"800" },
+            align:(ctx)=> ctx.datasetIndex===0 ? "top" : "bottom",
+            offset:4,
+            formatter:(value, ctx)=>{
+              const isLast = (ctx.datasetIndex===0 && ctx.dataIndex===lastRealIdx) || (ctx.datasetIndex===1 && ctx.dataIndex===lastProjIdx);
+              if(!isLast || value===null) return "";
+              return fmtNum(value);
+            }
+          }
+        },
+        scales:{ x:{ ticks:{ font:{size:8}, maxTicksLimit:8 }, grid:{display:false} }, y:{ ticks:{ font:{size:8} }, grid:{color:"#eaeef3"} } }
+      }
     });
-  },
 
-  valueCell(text, opts){
-    opts = opts || {};
-    const { Paragraph, TextRun, TableCell, WidthType } = window.docx;
-    return new TableCell({
-      width: { size: opts.width || 25, type: WidthType.PERCENTAGE },
-      borders: this.cellBorders(),
-      margins: { top:80, bottom:80, left:100, right:100 },
-      children: [ new Paragraph({ children:[ new TextRun({ text: text||"", size:20, bold: !!opts.bold }) ] }) ]
-    });
-  },
+    // marcador de meta: ponto + rótulo mostrando onde a projeção do mês deve terminar
+    const mesAtualIdx = MESES_PT.findIndex((_,m)=> this._monthlyTotalsColors[m] === "#e08a1f");
+    const projecaoPontual = MESES_PT.map((_,m)=> m===mesAtualIdx ? proj.projecao : null);
 
-  blankCell(widthPct, height){
-    const { Paragraph, TableCell, WidthType } = window.docx;
-    return new TableCell({
-      width: { size: widthPct, type: WidthType.PERCENTAGE },
-      borders: this.cellBorders(),
-      margins: { top: height||200, bottom: height||200, left:100, right:100 },
-      children: [ new Paragraph({ children:[] }) ]
-    });
-  },
-
-  sectionTitle(text, color){
-    const { Paragraph, TextRun, ShadingType } = window.docx;
-    return new Paragraph({
-      shading: { type: ShadingType.CLEAR, fill: color || "123A6B" },
-      spacing: { before: 260, after: 100 },
-      children: [ new TextRun({ text, bold:true, size:22, color:"FFFFFF" }) ]
-    });
-  },
-
-  checkboxRow(items){
-    // items: array de rótulos; monta uma linha de tabela com "rótulo ( )" repetido
-    const { Paragraph, TextRun, TableRow, TableCell, WidthType } = window.docx;
-    const cells = items.map(label => new TableCell({
-      width: { size: Math.floor(100/items.length), type: WidthType.PERCENTAGE },
-      borders: this.cellBorders(),
-      margins: { top:70, bottom:70, left:80, right:80 },
-      children: [ new Paragraph({ children:[
-        new TextRun({ text: label + "   ", size:18 }),
-        new TextRun({ text:"( )", size:20, bold:true })
-      ]})]
-    }));
-    return new TableRow({ children: cells });
-  },
-
-  scaleRow(color){
-    // linha com caixas de 0 a 10 para marcar a nota
-    const { Paragraph, TextRun, Table, TableRow, TableCell, WidthType, ShadingType } = window.docx;
-    const cells = [];
-    for(let i=0;i<=10;i++){
-      cells.push(new TableCell({
-        width: { size: Math.floor(100/11), type: WidthType.PERCENTAGE },
-        borders: this.cellBorders(color),
-        shading: { type: ShadingType.CLEAR, fill: "FFFFFF" },
-        margins: { top:120, bottom:120, left:40, right:40 },
-        children: [ new Paragraph({ alignment:"center", children:[ new TextRun({ text:String(i), bold:true, size:22 }) ] }) ]
-      }));
-    }
-    return new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [ new TableRow({ children: cells }) ]
+    new Chart(anoCtx.getContext("2d"), {
+      type:"bar",
+      data:{ labels: MESES_PT, datasets:[
+        { label:"O.S. 58", data: this._monthlyTotalsForChart, backgroundColor: this._monthlyTotalsColors, borderRadius:3 },
+        { type:"line", label:"Projeção fechamento", data: projecaoPontual, borderColor: corProj, backgroundColor:"transparent", borderWidth:2, borderDash:[5,4], pointRadius:4, pointBackgroundColor:corProj }
+      ]},
+      options:{ responsive:false, animation:false,
+        plugins:{
+          legend:{ display:false },
+          datalabels:{
+            font:{ size:8.5, weight:"800" },
+            formatter:(value, ctx)=>{
+              if(value===null || value===undefined) return "";
+              if(ctx.datasetIndex===1) return "🎯 "+fmtNum(value); // rótulo da meta/projeção
+              return fmtNum(value);
+            },
+            color:(ctx)=> ctx.datasetIndex===1 ? corProj : "#123a6b",
+            anchor:(ctx)=> ctx.datasetIndex===1 ? "end" : "end",
+            align:(ctx)=> ctx.datasetIndex===1 ? "top" : "top",
+            offset:3
+          }
+        },
+        scales:{ x:{ ticks:{ font:{size:8} }, grid:{display:false} }, y:{ ticks:{ font:{size:8} }, grid:{color:"#eaeef3"} } }
+      }
     });
   },
 
   async generate(employee){
-    if(typeof window.docx === "undefined"){
-      toast("A biblioteca de geração de Word ainda não carregou. Aguarde alguns segundos e tente novamente.", "error");
+    return this.generateMultiple([employee]);
+  },
+
+  // Gera 1 PDF único com 1 página por funcionário selecionado, cada página com os
+  // indicadores/gráficos calculados individualmente para aquele funcionário.
+  async generateMultiple(employees){
+    if(typeof html2canvas === "undefined" || typeof window.jspdf === "undefined"){
+      toast("As bibliotecas de exportação (html2canvas/jsPDF) ainda não carregaram. Aguarde e tente novamente.", "error");
       return;
     }
-    toast("Gerando Termo de Feedback...");
+    if(!employees || !employees.length){
+      toast("Nenhum funcionário selecionado.", "error");
+      return;
+    }
+    toast(`Gerando Termo de Feedback (PDF) — ${employees.length} funcionário(s)...`);
 
-    const {
-      Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-      WidthType, AlignmentType, ShadingType, ImageRun, HeadingLevel, BorderStyle
-    } = window.docx;
-
-    const logoBytes = this.base64ToUint8Array(LOGO_BASE64);
-    const hoje = fmtDateBR(new Date());
-
-    // ---- Cabeçalho: logo + título ----
-    const headerTable = new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [ new TableRow({ children: [
-        new TableCell({
-          width: { size:22, type: WidthType.PERCENTAGE },
-          borders: this.cellBorders(),
-          margins: { top:100, bottom:100, left:100, right:100 },
-          children: [ new Paragraph({ alignment: AlignmentType.CENTER, children: [
-            new ImageRun({ data: logoBytes, transformation: { width:70, height:54 }, type:"png" })
-          ]})]
-        }),
-        new TableCell({
-          width: { size:78, type: WidthType.PERCENTAGE },
-          shading: { type: ShadingType.CLEAR, fill: "EAEEF3" },
-          borders: this.cellBorders(),
-          margins: { top:180, bottom:180, left:200, right:100 },
-          children: [ new Paragraph({ children:[ new TextRun({ text:"Ficha Feedback — Núcleo Reposição", bold:true, size:30, color:"123A6B" }) ] }) ]
-        })
-      ]})]
-    });
-
-    // ---- Funcionário Avaliado (auto preenchido) ----
-    const funcTable = new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({ children:[ this.labelCell("Cód. Funcionário Avaliado"), this.valueCell(employee.cod||"-", {bold:true}), this.labelCell("Nome Funcionário Avaliado", {width:25}), this.valueCell(employee.nome||"-", {bold:true, width:25}) ]})
-      ]
-    });
-
-    // ---- Avaliador (fixo, auto preenchido) ----
-    const avalTable = new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({ children:[ this.labelCell("Cód. Avaliador"), this.valueCell(AVALIADOR_FIXO.codigo, {bold:true}), this.labelCell("Nome Avaliador", {width:25}), this.valueCell(AVALIADOR_FIXO.nome, {bold:true, width:25}) ]})
-      ]
-    });
-
-    // ---- Resumo Assunto Tratado ----
-    const resumoTable = new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({ children:[ this.labelCell("Resumo Assunto Tratado:", {width:100}) ]}),
-        new TableRow({ children:[ this.blankCell(100, 500) ]})
-      ]
-    });
-
-    // ---- Classificação Motivo Feedback ----
-    const classifTable = new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({ children:[ this.labelCell("Classificação Motivo Feedback:", {width:100}) ]}),
-        this.checkboxRow(["Má Conduta","Insubordinação","Ausência Injustificada","Atrasos Frequentes"]),
-        this.checkboxRow(["Desrespeito às Regras","Violação da Política Moral da Empresa","Baixa Produção"]),
-        this.checkboxRow(["Meta"])
-      ]
-    });
-
-    // ---- Avaliação Geral (3 colunas) ----
-    const avalGeralTable = new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({ children:[ this.labelCell("Avaliação Geral", {width:100, fill:"D8E4F5"}) ]}),
-        new TableRow({ children:[
-          this.labelCell("Bom desempenho ( )", {width:34}),
-          this.labelCell("Regular, com margem p/ melhoria ( )", {width:33}),
-          this.labelCell("Desempenho insatisfatório ( )", {width:33})
-        ]}),
-        new TableRow({ children:[ this.blankCell(34,500), this.blankCell(33,500), this.blankCell(33,500) ]})
-      ]
-    });
-
-    // ---- NOVO: Autoavaliação do Funcionário ----
-    const autoavaliacaoTitle = this.sectionTitle("AUTOAVALIAÇÃO — preenchida pelo Funcionário Avaliado", "1A9C62");
-    const autoavaliacaoNote = new Paragraph({ spacing:{ after:100 }, children:[
-      new TextRun({ text:"O próprio funcionário avaliado deve marcar, de 0 a 10, a nota que representa sua autoavaliação de desempenho no período.", italics:true, size:18, color:"4A5568" })
-    ]});
-    const autoavaliacaoScale = this.scaleRow("1A9C62");
-
-    // ---- NOVO: Avaliação do Avaliador ----
-    const avaliadorTitle = this.sectionTitle("AVALIAÇÃO DO AVALIADOR — preenchida por " + AVALIADOR_FIXO.nome, "E08A1F");
-    const avaliadorNote = new Paragraph({ spacing:{ after:100 }, children:[
-      new TextRun({ text:"O avaliador deve marcar, de 0 a 10, a nota que representa sua avaliação de desempenho do funcionário no período.", italics:true, size:18, color:"4A5568" })
-    ]});
-    const avaliadorScale = this.scaleRow("E08A1F");
-
-    // ---- Assinaturas ----
-    const assinaturasTable = new Table({
-      width: { size:100, type: WidthType.PERCENTAGE },
-      rows: [
-        new TableRow({ children:[
-          new TableCell({ width:{size:50,type:WidthType.PERCENTAGE}, borders:{top:{style:"none"},bottom:{style:"single",size:6,color:"333333"},left:{style:"none"},right:{style:"none"}}, margins:{top:600,bottom:80}, children:[ new Paragraph({ children:[] }) ] }),
-          new TableCell({ width:{size:50,type:WidthType.PERCENTAGE}, borders:{top:{style:"none"},bottom:{style:"single",size:6,color:"333333"},left:{style:"none"},right:{style:"none"}}, margins:{top:600,bottom:80}, children:[ new Paragraph({ children:[] }) ] })
-        ]}),
-        new TableRow({ children:[
-          new TableCell({ width:{size:50,type:WidthType.PERCENTAGE}, borders:{top:{style:"none"},bottom:{style:"none"},left:{style:"none"},right:{style:"none"}}, children:[ new Paragraph({ alignment:AlignmentType.CENTER, children:[ new TextRun({text:"Assinatura Avaliador", size:18}) ] }) ] }),
-          new TableCell({ width:{size:50,type:WidthType.PERCENTAGE}, borders:{top:{style:"none"},bottom:{style:"none"},left:{style:"none"},right:{style:"none"}}, children:[ new Paragraph({ alignment:AlignmentType.CENTER, children:[ new TextRun({text:"Assinatura Funcionário Avaliado", size:18}) ] }) ] })
-        ]})
-      ]
-    });
-
-    const doc = new Document({
-      sections: [{
-        properties: { page: { margin: { top:600, bottom:600, left:700, right:700 } } },
-        children: [
-          headerTable,
-          new Paragraph({ spacing:{ before:120, after:120 }, children:[ new TextRun({ text:"Data de geração: "+hoje, size:16, color:"7A8798" }) ] }),
-          funcTable,
-          new Paragraph({ children:[] }),
-          avalTable,
-          new Paragraph({ children:[] }),
-          resumoTable,
-          new Paragraph({ children:[] }),
-          classifTable,
-          new Paragraph({ children:[] }),
-          avalGeralTable,
-          autoavaliacaoTitle,
-          autoavaliacaoNote,
-          autoavaliacaoScale,
-          avaliadorTitle,
-          avaliadorNote,
-          avaliadorScale,
-          new Paragraph({ spacing:{ before:400 }, children:[] }),
-          assinaturasTable
-        ]
-      }]
-    });
-
+    const containers = [];
+    const savedEmp = Production.state.employees;
     try{
-      const blob = await Packer.toBlob(doc);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const nomeArquivo = "Feedback_" + (employee.nome||"funcionario").replace(/[^a-zA-Z0-9]+/g,"_") + ".docx";
-      a.href = url;
-      a.download = nomeArquivo;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast("Termo de Feedback gerado com sucesso.", "success");
+      for(let i=0; i<employees.length; i++){
+        const employee = employees[i];
+        const hist = computeEmployeeProductionHistory(employee.codKey);
+        const snap = computeEmployeeProductionSnapshot(employee.codKey);
+
+        // pré-calcula os totais mensais do ano atual para o funcionário (pro gráfico "Ano Atual")
+        const maxDate = Production.maxDataDate();
+        const anoAtual = maxDate ? maxDate.getFullYear() : new Date().getFullYear();
+        const mesAtualIdx = maxDate ? maxDate.getMonth() : 0;
+        const rowsEmp = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58 && r.codKey===employee.codKey);
+        this._monthlyTotalsForChart = MESES_PT.map((_,m)=> rowsEmp.filter(r=>r.dtinicio.getFullYear()===anoAtual && r.dtinicio.getMonth()===m).length || null);
+        this._monthlyTotalsColors = MESES_PT.map((_,m)=> m===mesAtualIdx ? "#e08a1f" : "#2f6fce");
+        // garante que Production.state.employees está setado no momento de renderCharts (usa snapshot para o rows filter)
+        Production.state.employees = [employee.codKey];
+
+        const container = this.buildContainer(employee, hist, snap, i);
+        this.renderCharts(snap.proj, i);
+        containers.push(container);
+
+        // dá um tick pro Chart.js terminar de desenhar antes de seguir pro próximo
+        await new Promise(r=>setTimeout(r, 100));
+      }
+      Production.state.employees = savedEmp;
+
+      const filename = employees.length===1
+        ? "Feedback_" + (employees[0].nome||"funcionario").replace(/[^a-zA-Z0-9]+/g,"_")
+        : "Feedback_" + employees.length + "_funcionarios";
+
+      await Export.toPDFMultiPage(containers, filename, "landscape");
     }catch(err){
       console.error(err);
       toast("Falha ao gerar o documento: " + err.message, "error");
+      Production.state.employees = savedEmp;
+    } finally {
+      containers.forEach(c=>{ if(c && c.parentNode) c.parentNode.removeChild(c); });
     }
   }
 };
@@ -1960,6 +2065,79 @@ const Export = {
 
       pdf.save(`${filenamePrefix||'nucleo-reposicao'}-${Date.now()}.pdf`);
       toast("PDF exportado com sucesso.","success");
+    }catch(err){
+      console.error(err);
+      toast("Falha ao exportar PDF: "+err.message,"error");
+    }
+  },
+
+  // Exporta o elemento inteiro ESCALADO para caber em uma única página A4 (encolhe
+  // proporcionalmente, ao contrário de toPDF que pagina mantendo tamanho real).
+  async toPDFSinglePage(targetOverride, filenamePrefix, orientation){
+    const target = targetOverride || this.currentArea();
+    if(!target){ toast("Nada para exportar.","error"); return; }
+    toast("Gerando PDF em 1 página...");
+    try{
+      const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale:2, useCORS:true });
+      const { jsPDF } = window.jspdf;
+      const orient = orientation || "landscape";
+      const pdf = new jsPDF({ orientation: orient, unit:"mm", format:"a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+      const maxW = pageW - margin*2;
+      const maxH = pageH - margin*2;
+
+      // escala proporcional para caber tanto na largura quanto na altura disponíveis
+      const scaleByWidth = maxW / canvas.width;
+      const scaleByHeight = maxH / canvas.height;
+      const scaleFinal = Math.min(scaleByWidth, scaleByHeight);
+
+      const imgW = canvas.width * scaleFinal;
+      const imgH = canvas.height * scaleFinal;
+      const x = margin + (maxW - imgW) / 2; // centraliza horizontalmente
+      const y = margin;
+
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, imgW, imgH);
+      pdf.save(`${filenamePrefix||'nucleo-reposicao'}-${Date.now()}.pdf`);
+      toast("PDF (1 página) exportado com sucesso.","success");
+    }catch(err){
+      console.error(err);
+      toast("Falha ao exportar PDF: "+err.message,"error");
+    }
+  },
+
+  // Gera UM ÚNICO PDF com várias páginas, cada elemento de "targets" vira 1 página inteira
+  // (escalado pra caber sozinho na folha A4, igual toPDFSinglePage, mas tudo no mesmo arquivo).
+  async toPDFMultiPage(targets, filenamePrefix, orientation){
+    if(!targets || !targets.length){ toast("Nada para exportar.","error"); return; }
+    toast(`Gerando PDF com ${targets.length} página(s)...`);
+    try{
+      const { jsPDF } = window.jspdf;
+      const orient = orientation || "landscape";
+      const pdf = new jsPDF({ orientation: orient, unit:"mm", format:"a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+      const maxW = pageW - margin*2;
+      const maxH = pageH - margin*2;
+
+      for(let i=0; i<targets.length; i++){
+        const canvas = await html2canvas(targets[i], { backgroundColor:"#ffffff", scale:2, useCORS:true });
+        const scaleByWidth = maxW / canvas.width;
+        const scaleByHeight = maxH / canvas.height;
+        const scaleFinal = Math.min(scaleByWidth, scaleByHeight);
+        const imgW = canvas.width * scaleFinal;
+        const imgH = canvas.height * scaleFinal;
+        const x = margin + (maxW - imgW) / 2;
+        const y = margin;
+
+        if(i>0) pdf.addPage();
+        pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, imgW, imgH);
+      }
+
+      pdf.save(`${filenamePrefix||'nucleo-reposicao'}-${Date.now()}.pdf`);
+      toast(`PDF com ${targets.length} página(s) exportado com sucesso.`,"success");
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
@@ -2237,7 +2415,11 @@ document.addEventListener("libsError", (e) => {
 function allEmployeesForProduction(){
   const processed = window.APP_STATE.processed;
   const registry = window.APP_STATE.nameRegistry;
-  const codes = uniq(processed.p8460.filter(r=>r.tipoos===58).map(r=>r.codKey));
+  let codes = uniq(processed.p8460.filter(r=>r.tipoos===58).map(r=>r.codKey));
+  if(Production.state.quadroAtual === "SIM"){
+    const currentCodes = window.APP_STATE.currentTeam.codes;
+    codes = codes.filter(c=>currentCodes.has(c));
+  }
   return codes.map(c=>({ codKey:c, nome: registry.get(c)||c })).sort((a,b)=>a.nome.localeCompare(b.nome));
 }
 
@@ -2332,7 +2514,14 @@ function renderProducao(){
   });
   $("#prod-quadro-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
-    st.quadroAtual = b.dataset.v; renderProducao();
+    st.quadroAtual = b.dataset.v;
+    // se o funcionário selecionado não pertence mais à lista válida (ex: saiu do quadro
+    // atual), limpa a seleção para não deixar um filtro "fantasma" aplicado sem aparecer na tela
+    if(st.employees.length){
+      const validCodes = new Set(allEmployeesForProduction().map(e=>e.codKey));
+      if(!validCodes.has(st.employees[0])) st.employees = [];
+    }
+    renderProducao();
   });
   const wc = $("#prod-week-compare"); if(wc) wc.addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
@@ -2392,10 +2581,10 @@ function renderProducaoContent(){
 
   const html = intervaloBadge + `
     <div class="cards-grid">
-      <div class="card"><div class="card-label">O.S. 58 — Mês Atual</div><div class="card-value">${fmtNum(exec.totalAtual)}</div><div class="card-sub">${fmtMonthYear(exec.refYear,exec.refMonth)} (até ${exec.diaAtualDoMes}/${exec.totalDiasMes})</div></div>
+      <div class="card"><div class="card-label">O.S. 58 — Mês Atual</div><div class="card-value">${fmtNum(exec.totalAtual)}</div><div class="card-sub">${fmtMonthYear(exec.refYear,exec.refMonth)} (até ${exec.diaAtualDoMes}/${exec.totalDiasMesCalendario})</div></div>
       <div class="card"><div class="card-label">Mês Anterior</div><div class="card-value">${fmtNum(exec.totalAnterior)}</div><div class="card-sub">${fmtMonthYear.apply(null, addMonthsYM(exec.refYear,exec.refMonth,-1))}${exec.mesmaPeriodicidadeAtiva?' (até dia '+exec.diaCorte+')':''}</div></div>
       <div class="card ${cardClassForVar(exec.variacao)}"><div class="card-label">Variação Mês × Mês</div><div class="card-value ${cardClassForVar(exec.variacao)}">${fmtPct(exec.variacao,1)}</div><div class="card-sub">${exec.mesmaPeriodicidadeAtiva?'mesma periodicidade (até dia '+exec.diaCorte+')':'mês anterior completo'}</div></div>
-      <div class="card"><div class="card-label">Média Diária</div><div class="card-value">${fmtNum(exec.mediaDiaria,1)}</div><div class="card-sub">${exec.diasComDados} dia(s) com produção</div></div>
+      <div class="card"><div class="card-label">Média Diária</div><div class="card-value">${fmtNum(exec.mediaDiaria,1)}</div><div class="card-sub">${exec.diasComDados} dia(s) útil(eis) com produção</div></div>
       <div class="card ${exec.projecaoMaior===true?'pos':exec.projecaoMaior===false?'neg':''}"><div class="card-label">Projeção de Fechamento</div><div class="card-value ${exec.projecaoMaior===true?'pos':exec.projecaoMaior===false?'neg':''}">${fmtNum(exec.projecao,0)}</div><div class="card-sub">base: ${exec.projecaoBaseLabel||'mês atual'} (ajuste no filtro abaixo)</div></div>
       <div class="card ${cardClassForVar(exec.variacaoAnual)}"><div class="card-label">Variação Anual</div><div class="card-value ${cardClassForVar(exec.variacaoAnual)}">${fmtPct(exec.variacaoAnual,1)}</div><div class="card-sub">vs. ${fmtMonthYear(exec.refYear-1,exec.refMonth)}${exec.mesmaPeriodicidadeAtiva?' (até dia '+exec.diaCorte+')':''} (${fmtNum(exec.totalAnoAnterior)})</div></div>
     </div>
@@ -2644,7 +2833,7 @@ function renderProjecaoExpandida(proj){
       <div class="card ${proj.projecaoMaior?'pos':'neg'}">
         <div class="card-label">Projeção de fechamento ${tagProj}</div>
         <div class="card-value ${proj.projecaoMaior?'pos':'neg'}">${fmtNum(proj.projecao,0)}</div>
-        <div class="card-sub">${proj.totalDiasMes} dias × ${fmtNum(proj.mediaBase,1)} O.S./dia</div>
+        <div class="card-sub">${proj.totalDiasMes} dias úteis × ${fmtNum(proj.mediaBase,1)} O.S./dia</div>
       </div>
     </div>
 
@@ -2844,12 +3033,6 @@ function showWeekDrilldown(weekKey, anteriorWeekKey, labelSemana, totalAnterior)
   });
 
   const breakdown = Production.weeklyDayBreakdown(weekKey, anteriorWeekKey);
-  const labelAnterior = anteriorWeekKey
-    ? (() => {
-        const w = Production.weeklyTable().find(w=>w.weekKey===anteriorWeekKey);
-        return w ? w.label : "Semana anterior";
-      })()
-    : null;
 
   const drillEl = document.getElementById("week-drilldown");
   const titleEl = document.getElementById("week-drilldown-title");
@@ -2858,98 +3041,76 @@ function showWeekDrilldown(weekKey, anteriorWeekKey, labelSemana, totalAnterior)
   titleEl.textContent = `Detalhe dia a dia — ${labelSemana}`;
   drillEl.style.display = "block";
 
-  const totalCur  = breakdown.reduce((s,d)=>s+d.totalCur, 0);
+  // "Total da semana" = soma do que já aconteceu de fato (dias ainda não ocorridos contam 0 aqui)
+  const totalCur  = breakdown.reduce((s,d)=>s+(d.totalCur||0), 0);
   const totalPrev = anteriorWeekKey ? breakdown.reduce((s,d)=>s+(d.totalPrev||0), 0) : null;
   const diffTotal = totalPrev !== null ? totalCur - totalPrev : null;
 
+  // "Projeção da semana" = real (dias que já ocorreram) + projetado (dias que ainda não ocorreram)
+  const temDiaFuturo = breakdown.some(d=>!d.occurred);
+  const totalProjetadoSemana = breakdown.reduce((s,d)=> s + (d.occurred ? (d.totalCur||0) : (d.projetado||0)), 0);
+
   contentEl.innerHTML = `
-    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-      <div class="card" style="min-width:140px;flex:0 0 auto;">
-        <div class="card-label">Total da semana</div>
+    <div style="display:flex;gap:12px;flex-wrap:nowrap;margin-bottom:12px;">
+      <div class="card" style="min-width:0;flex:1 1 0;">
+        <div class="card-label">Total da Semana (realizado)</div>
         <div class="card-value">${fmtNum(totalCur)}</div>
       </div>
       ${totalPrev !== null ? `
-      <div class="card" style="min-width:140px;flex:0 0 auto;">
-        <div class="card-label">Semana anterior</div>
+      <div class="card" style="min-width:0;flex:1 1 0;">
+        <div class="card-label">Semana Anterior</div>
         <div class="card-value">${fmtNum(totalPrev)}</div>
       </div>
-      <div class="card ${diffTotal>0?'pos':diffTotal<0?'neg':''}" style="min-width:140px;flex:0 0 auto;">
+      <div class="card ${diffTotal>0?'pos':diffTotal<0?'neg':''}" style="min-width:0;flex:1 1 0;">
         <div class="card-label">Diferença</div>
         <div class="card-value ${diffTotal>0?'pos':diffTotal<0?'neg':''}">${diffTotal>0?'+':''}${fmtNum(diffTotal)}</div>
         <div class="card-sub">${variationTag(pctVariation(totalCur, totalPrev))}</div>
       </div>` : ''}
+      <div class="card warn" style="min-width:0;flex:1 1 0;">
+        <div class="card-label">Projeção da Semana</div>
+        <div class="card-value warn">${fmtNum(totalProjetadoSemana)}</div>
+        <div class="card-sub">${temDiaFuturo ? 'realizado + projetado p/ dias que faltam' : 'semana já totalmente realizada'}</div>
+      </div>
     </div>
 
-    <div class="grid-2">
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Dia</th>
-              <th>Data</th>
-              <th>O.S. 58</th>
-              ${anteriorWeekKey ? `<th>Data (ant.)</th><th>O.S. 58 (ant.)</th><th>Diferença</th>` : ''}
-            </tr>
-          </thead>
-          <tbody>
-            ${breakdown.map(d=>{
-              const diff = d.totalPrev !== null ? d.totalCur - d.totalPrev : null;
-              return `<tr>
-                <td><strong>${d.diaNome}</strong></td>
-                <td>${fmtDateBR(d.dataCur)}</td>
-                <td><strong>${fmtNum(d.totalCur)}</strong></td>
-                ${anteriorWeekKey ? `
-                  <td class="small-muted">${d.dataPrev ? fmtDateBR(d.dataPrev) : '-'}</td>
-                  <td>${d.totalPrev !== null ? fmtNum(d.totalPrev) : '-'}</td>
-                  <td class="${diff>0?'cell-pos':diff<0?'cell-neg':'cell-neutral'}">${diff===null?'-':(diff>0?'+':'')+fmtNum(diff)}</td>
-                ` : ''}
-              </tr>`;
-            }).join("")}
-            <tr style="background:var(--gray-50);font-weight:700;">
-              <td colspan="2">Total</td>
-              <td>${fmtNum(totalCur)}</td>
-              ${anteriorWeekKey ? `<td></td><td>${fmtNum(totalPrev)}</td><td class="${diffTotal>0?'cell-pos':diffTotal<0?'cell-neg':'cell-neutral'}">${diffTotal>0?'+':''}${fmtNum(diffTotal)}</td>` : ''}
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div>
-        <div class="chart-wrap" style="height:220px;"><canvas id="chart-week-drilldown"></canvas></div>
-      </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Dia</th>
+            <th>Data</th>
+            <th>O.S. 58 (feito)</th>
+            <th>Projetado</th>
+            ${anteriorWeekKey ? `<th>Data (ant.)</th><th>O.S. 58 (ant.)</th><th>Diferença</th>` : ''}
+          </tr>
+        </thead>
+        <tbody>
+          ${breakdown.map(d=>{
+            const valorParaDiff = d.occurred ? d.totalCur : d.projetado;
+            const diff = (d.totalPrev !== null && valorParaDiff !== null) ? valorParaDiff - d.totalPrev : null;
+            return `<tr${!d.occurred?' style="background:var(--blue-light);"':''}>
+              <td><strong>${d.diaNome}</strong></td>
+              <td>${fmtDateBR(d.dataCur)}</td>
+              <td>${d.occurred ? `<strong>${fmtNum(d.totalCur)}</strong>` : '<span class="small-muted">— (dia não ocorreu)</span>'}</td>
+              <td>${!d.occurred ? (d.projetado!==null ? `<span class="tag-warn">≈ ${fmtNum(d.projetado,1)}</span>` : '<span class="small-muted">sem histórico</span>') : '<span class="small-muted">—</span>'}</td>
+              ${anteriorWeekKey ? `
+                <td class="small-muted">${d.dataPrev ? fmtDateBR(d.dataPrev) : '-'}</td>
+                <td>${d.totalPrev !== null ? fmtNum(d.totalPrev) : '-'}</td>
+                <td class="${diff>0?'cell-pos':diff<0?'cell-neg':'cell-neutral'}">${diff===null?'-':(diff>0?'+':'')+fmtNum(diff,d.occurred?0:1)}</td>
+              ` : ''}
+            </tr>`;
+          }).join("")}
+          <tr style="background:var(--gray-50);font-weight:700;">
+            <td colspan="2">Total</td>
+            <td>${fmtNum(totalCur)}</td>
+            <td>${temDiaFuturo ? `<span class="tag-warn">≈ ${fmtNum(totalProjetadoSemana - totalCur,1)}</span>` : '—'}</td>
+            ${anteriorWeekKey ? `<td></td><td>${fmtNum(totalPrev)}</td><td class="${diffTotal>0?'cell-pos':diffTotal<0?'cell-neg':'cell-neutral'}">${diffTotal>0?'+':''}${fmtNum(diffTotal)}</td>` : ''}
+          </tr>
+        </tbody>
+      </table>
     </div>
+    <p class="panel-note" style="margin-top:8px;">📘 A coluna <strong>Projetado</strong> só é preenchida para dias que ainda não ocorreram — calculada pela média das demais ocorrências desse mesmo dia da semana no mês. A coluna <strong>O.S. 58 (feito)</strong> só é preenchida quando o dia realmente passa.</p>
   `;
-
-  // gráfico de barras agrupadas por dia
-  Charts.make("chart-week-drilldown", {
-    type:"bar",
-    data:{
-      labels: breakdown.map(d=>d.diaNome),
-      datasets:[
-        {
-          label: labelSemana.split(" (")[0],
-          data: breakdown.map(d=>d.totalCur),
-          backgroundColor: Charts.colors.blue, borderRadius:5
-        },
-        ...(anteriorWeekKey ? [{
-          label: (labelAnterior||"Semana anterior").split(" (")[0],
-          data: breakdown.map(d=>d.totalPrev||0),
-          backgroundColor: Charts.colors.gray, borderRadius:5
-        }] : [])
-      ]
-    },
-    options: Charts.baseOptions({
-      plugins:{
-        legend:{ labels:{font:{size:11}} },
-        tooltip:{ callbacks:{ afterBody:(items)=>{
-          if(items.length<2) return;
-          const idx = items[0].dataIndex;
-          const d = breakdown[idx];
-          const df = d.totalCur - (d.totalPrev||0);
-          return [`Diferença: ${df>0?'+':''}${df}`];
-        }}}
-      }
-    })
-  });
 
   // scroll suave até o detalhe
   drillEl.scrollIntoView({ behavior:"smooth", block:"nearest" });
@@ -3064,7 +3225,10 @@ function renderProjecao(){
 /* ---------------------------------------------------------------------- */
 /* Ranking de Repositores (Gestão > Feedback) — seleção p/ gerar documento */
 /* ---------------------------------------------------------------------- */
-let selectedFeedbackEmployee = null; // codKey selecionado na tabela de ranking
+let selectedFeedbackEmployees = new Set(); // codKeys selecionados na tabela de ranking (seleção múltipla)
+
+let feedbackOnlyQuadroAtual = true; // filtro "apenas quadro atual" no ranking de feedback — inicia SIM
+let feedbackOnlyRepositor = true; // filtro "apenas Cargo=REPOSITOR" no ranking de feedback — inicia SIM
 
 function getFeedbackRankingData(){
   const processed = window.APP_STATE.processed;
@@ -3074,22 +3238,40 @@ function getFeedbackRankingData(){
   const auditByEmp = new Map(Audit.byRepositor().map(e=>[e.codKey,e]));
   const rows58 = processed.p8460.filter(r=>r.tipoos===58);
 
-  let start3m = null, startWeek = null, dayRef = null;
+  // base de funcionários: quadro atual ou todo o histórico, conforme o toggle
+  let baseMembers;
+  if(feedbackOnlyQuadroAtual){
+    baseMembers = currentTeam.members;
+  } else {
+    const codes = uniq(rows58.map(r=>r.codKey));
+    baseMembers = codes.map(c=>{
+      const inTeam = currentTeam.members.find(m=>m.codKey===c);
+      return inTeam || { codKey:c, codigo:null, nome: registry.get(c)||c, cargo:null };
+    });
+  }
+  // filtro "apenas Repositor" — só tem efeito se a coluna CARGO existir no arquivo
+  if(feedbackOnlyRepositor && currentTeam.cargoDisponivel){
+    baseMembers = baseMembers.filter(m=> m.cargo === "REPOSITOR");
+  }
+
+  let start3m = null, startWeek = null, startMonth = null, dayRef = null;
   if(maxDate){
     start3m = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2);
     startWeek = startOfWeekMonday(maxDate);
+    startMonth = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
     dayRef = dateOnly(maxDate);
   }
 
-  return currentTeam.members.map(m=>{
+  return baseMembers.map(m=>{
     const empRows = rows58.filter(r=>r.codKey===m.codKey);
     const os3m = (start3m && maxDate) ? empRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=start3m && d<=dateOnly(maxDate); }).length : 0;
+    const osUltimoMes = (startMonth && maxDate) ? empRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startMonth && d<=dateOnly(maxDate); }).length : 0;
     const osSemana = (startWeek && maxDate) ? empRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startWeek && d<=dateOnly(maxDate); }).length : 0;
     const osDia = dayRef ? empRows.filter(r=>dateOnly(r.dtinicio).getTime()===dayRef.getTime()).length : 0;
     const aud = auditByEmp.get(m.codKey);
     return {
       codKey: m.codKey, cod: m.codigo, nome: registry.get(m.codKey)||m.nome,
-      os3m, osSemana, osDia,
+      os3m, osUltimoMes, osSemana, osDia,
       auditorias: aud ? aud.auditorias : 0,
       qualidade: aud && aud.qualidadeMedia!==null ? aud.qualidadeMedia : null
     };
@@ -3098,52 +3280,84 @@ function getFeedbackRankingData(){
 
 function renderFeedbackRankingPanel(){
   const data = getFeedbackRankingData();
+  const currentTeam = window.APP_STATE.currentTeam;
+  // limpa da seleção quem não está mais na lista filtrada (evita seleção "fantasma")
+  const validCodes = new Set(data.map(e=>e.codKey));
+  Array.from(selectedFeedbackEmployees).forEach(c=>{ if(!validCodes.has(c)) selectedFeedbackEmployees.delete(c); });
+
+  const nSel = selectedFeedbackEmployees.size;
+  const allSelected = data.length>0 && data.every(e=>selectedFeedbackEmployees.has(e.codKey));
+
   return `
     <div class="panel">
       <div class="panel-header">
         <h3>🏆 Ranking de Repositores</h3>
-        <span class="panel-note">Ordenado do pior para o melhor desempenho (O.S. últimos 3 meses) · clique em um repositor para selecioná-lo</span>
+        <div class="panel-actions" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div class="filter-group" style="min-width:auto;">
+            <label style="font-size:10px;">Apenas Quadro Atual?</label>
+            <div class="toggle-group" id="feedback-quadro-toggle">
+              <button data-v="NAO" class="${!feedbackOnlyQuadroAtual?'active':''}">Não</button>
+              <button data-v="SIM" class="${feedbackOnlyQuadroAtual?'active':''}">Sim</button>
+            </div>
+          </div>
+          <div class="filter-group" style="min-width:auto;">
+            <label style="font-size:10px;">Apenas Repositor?</label>
+            <div class="toggle-group" id="feedback-repositor-toggle">
+              <button data-v="NAO" class="${!feedbackOnlyRepositor?'active':''}">Não</button>
+              <button data-v="SIM" class="${feedbackOnlyRepositor?'active':''}">Sim</button>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" id="btn-download-feedback" ${nSel?'':'disabled'}>⬇ Download Feedback (PDF)${nSel>1?` — ${nSel} funcionários`:''}</button>
+        </div>
       </div>
-      <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+        <span class="panel-note">Ordenado do pior para o melhor desempenho (O.S. últimos 3 meses) · marque a caixa de um ou vários repositores para selecioná-los</span>
+        <span class="small-muted" id="feedback-selected-label">
+          ${nSel ? nSel+' funcionário(s) selecionado(s)' : 'Nenhum funcionário selecionado.'}
+        </span>
+      </div>
+      ${feedbackOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
+      <div class="table-wrap" style="margin-top:6px;">
         <table class="data-table" id="feedback-ranking-table">
           <thead><tr>
-            <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Última Semana</th>
+            <th style="width:30px;"><input type="checkbox" id="feedback-select-all" ${allSelected?'checked':''}></th>
+            <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
             <th>O.S. Último Dia</th><th>Auditorias Realizadas</th><th>Qualidade %</th>
           </tr></thead>
           <tbody>
-            ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployee===e.codKey?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="selectFeedbackEmployee('${escapeHtml(e.codKey)}')">
+            ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployees.has(e.codKey)?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="toggleFeedbackEmployee('${escapeHtml(e.codKey)}')">
+              <td><input type="checkbox" class="feedback-row-check" data-codkey="${escapeHtml(e.codKey)}" ${selectedFeedbackEmployees.has(e.codKey)?'checked':''} style="pointer-events:none;"></td>
               <td>${escapeHtml(e.nome)}</td>
               <td>${e.cod||'-'}</td>
               <td>${fmtNum(e.os3m)}</td>
+              <td>${fmtNum(e.osUltimoMes)}</td>
               <td>${fmtNum(e.osSemana)}</td>
               <td>${fmtNum(e.osDia)}</td>
               <td>${fmtNum(e.auditorias)}</td>
               <td>${e.qualidade!==null?fmtNum(e.qualidade,1)+'%':'-'}</td>
-            </tr>`).join("") || '<tr><td colspan="7" class="small-muted">Sem repositores no quadro atual.</td></tr>'}
+            </tr>`).join("") || '<tr><td colspan="9" class="small-muted">Nenhum repositor encontrado para os filtros selecionados.</td></tr>'}
           </tbody>
         </table>
-      </div>
-      <div style="margin-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-        <button class="btn btn-primary" id="btn-download-feedback" ${selectedFeedbackEmployee?'':'disabled'}>⬇ Download Feedback</button>
-        <span class="small-muted" id="feedback-selected-label">
-          ${selectedFeedbackEmployee ? 'Selecionado: <strong>'+escapeHtml((data.find(e=>e.codKey===selectedFeedbackEmployee)||{}).nome||selectedFeedbackEmployee)+'</strong>' : 'Nenhum funcionário selecionado — clique em uma linha da tabela acima.'}
-        </span>
       </div>
     </div>
   `;
 }
 
-function selectFeedbackEmployee(codKey){
-  selectedFeedbackEmployee = codKey;
-  $all("#feedback-ranking-table tbody tr").forEach(tr=>{
-    tr.classList.toggle("row-selected", tr.dataset.codkey===codKey);
-  });
-  const btn = $("#btn-download-feedback");
-  if(btn) btn.disabled = false;
+function toggleFeedbackEmployee(codKey){
+  if(selectedFeedbackEmployees.has(codKey)) selectedFeedbackEmployees.delete(codKey);
+  else selectedFeedbackEmployees.add(codKey);
+  renderFeedbacksContent();
+}
+
+function toggleFeedbackSelectAll(){
   const data = getFeedbackRankingData();
-  const emp = data.find(e=>e.codKey===codKey);
-  const label = $("#feedback-selected-label");
-  if(label && emp) label.innerHTML = `Selecionado: <strong>${escapeHtml(emp.nome)}</strong>`;
+  const allSelected = data.length>0 && data.every(e=>selectedFeedbackEmployees.has(e.codKey));
+  if(allSelected){
+    data.forEach(e=>selectedFeedbackEmployees.delete(e.codKey));
+  } else {
+    data.forEach(e=>selectedFeedbackEmployees.add(e.codKey));
+  }
+  renderFeedbacksContent();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -3212,7 +3426,7 @@ function renderFeedbacksContent(){
     const mp = e.nPessoal ? e.somaPessoal/e.nPessoal : null;
     const mg = e.nGestor  ? e.somaGestor/e.nGestor   : null;
     const mg2 = mp!==null && mg!==null ? (mp+mg)/2 : (mg!==null?mg:mp);
-    return { ...e, mediaPessoal:mp, mediaGestor:mg, mediaGeral:mg2, classificacao: Feedback.classify(mg2) };
+    return { ...e, mediaPessoal:mp, mediaGestor:mg, mediaGeral:mg2, classificacao: Feedback.classify(mg) };
   }).sort((a,b)=>b.feedbacks-a.feedbacks);
 
   const fbDates = filtRows.map(r=>r.data).filter(Boolean);
@@ -3266,10 +3480,26 @@ function renderFeedbacksContent(){
 
   const dlBtn = $("#btn-download-feedback");
   if(dlBtn) dlBtn.addEventListener("click", ()=>{
-    if(!selectedFeedbackEmployee) return;
+    if(!selectedFeedbackEmployees.size) return;
     const data = getFeedbackRankingData();
-    const emp = data.find(e=>e.codKey===selectedFeedbackEmployee);
-    if(emp) FeedbackDoc.generate(emp);
+    const emps = data.filter(e=>selectedFeedbackEmployees.has(e.codKey));
+    if(emps.length) FeedbackDoc.generateMultiple(emps);
+  });
+
+  const selectAllChk = $("#feedback-select-all");
+  if(selectAllChk) selectAllChk.addEventListener("click", ()=> toggleFeedbackSelectAll());
+
+  const fbQuadroToggle = $("#feedback-quadro-toggle");
+  if(fbQuadroToggle) fbQuadroToggle.addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    feedbackOnlyQuadroAtual = b.dataset.v === "SIM";
+    renderFeedbacksContent();
+  });
+  const fbRepositorToggle = $("#feedback-repositor-toggle");
+  if(fbRepositorToggle) fbRepositorToggle.addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    feedbackOnlyRepositor = b.dataset.v === "SIM";
+    renderFeedbacksContent();
   });
 }
 
@@ -3331,6 +3561,7 @@ function renderQuadro(){
     if(r.isAdvertencia) e.advertencias++;
   });
 
+  const cargoOrdem = { LIDER:0, AUXILIAR:1, REPOSITOR:2 };
   const rows = currentTeam.members.map(m=>{
     const fb = fbByEmpFiltrado.get(m.codKey);
     const co = commByEmp.get(m.codKey);
@@ -3344,7 +3575,12 @@ function renderQuadro(){
       pontos: co?co.pontos:0,
       comissao: co?co.comissaoTotal:0
     };
-  }).sort((a,b)=>a.nome.localeCompare(b.nome));
+  }).sort((a,b)=>{
+    const oa = cargoOrdem[a.cargo] !== undefined ? cargoOrdem[a.cargo] : 99;
+    const ob = cargoOrdem[b.cargo] !== undefined ? cargoOrdem[b.cargo] : 99;
+    if(oa !== ob) return oa - ob;
+    return a.nome.localeCompare(b.nome);
+  });
 
   // badge de período
   const filtroAtivo = st.dataInicial || st.dataFinal;
@@ -3390,12 +3626,16 @@ function renderQuadro(){
         ${!temMissoes?`<span class="tag-warn">Aba MISSÕES não encontrada no arquivo</span>`:`<span class="tag-pos">${processed.missoes.length} missão(ões) registrada(s) no total</span>`}
       </div>
     </div>
-    <div class="panel">
-      <div class="panel-header"><h3>Quadro Consolidado</h3></div>
+    <div class="panel" id="quadro-consolidado-panel">
+      <div class="panel-header">
+        <h3>Quadro Consolidado</h3>
+        <div class="panel-actions">
+          <button class="btn btn-outline btn-sm" id="btn-export-quadro-pdf">⬇ Exportar PDF (1 página)</button>
+        </div>
+      </div>
       <div class="table-wrap"><table class="data-table" id="quadro-table">
         <thead><tr>
           <th>Código</th><th>Funcionário</th><th>Cargo</th><th>Status</th><th>Feedbacks</th><th>Advertências</th>
-          <th>O.S. 58</th><th>Missões (O.S. equiv.)</th><th>Pontos</th>
           ${quadroShowComissao?'<th>Comissão</th>':''}
         </tr></thead>
         <tbody>
@@ -3403,15 +3643,16 @@ function renderQuadro(){
             <td>${r.cod||'-'}</td><td>${escapeHtml(r.nome)}</td><td>${cargoTag(r.cargo)}</td><td>${escapeHtml(r.status)}</td>
             <td>${r.feedbacks}</td>
             <td class="${r.advertencias>0?'cell-neg':''}">${r.advertencias}</td>
-            <td>${fmtNum(r.os58)}</td>
-            <td>${fmtNum(r.missoes)}</td>
-            <td>${fmtNum(r.pontos)}</td>
             ${quadroShowComissao?`<td><strong>${fmtBRL(r.comissao)}</strong></td>`:''}
           </tr>`).join("")}
         </tbody>
       </table></div>
     </div>
   `;
+
+  $("#btn-export-quadro-pdf").addEventListener("click", ()=>{
+    Export.toPDFSinglePage(document.getElementById("quadro-consolidado-panel"), "quadro-consolidado", "portrait");
+  });
 
   $("#btn-toggle-comissao").addEventListener("click", ()=>{
     quadroShowComissao = !quadroShowComissao;
