@@ -74,7 +74,7 @@ if(document.readyState === "loading"){
 /* CONFIG                                                                  */
 /* ---------------------------------------------------------------------- */
 const REQUIRED_SHEETS = ["AUDITORIA REP","FEEDBACK REP","QUADRO REP","8271","8460"];
-const OPTIONAL_SHEETS = ["MISSÕES"]; // carregada se existir, não causa erro se faltar
+const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA"]; // carregadas se existirem, não causam erro se faltarem
 
 const REQUIRED_COLUMNS = {
   "AUDITORIA REP": ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"],
@@ -143,16 +143,28 @@ function getFieldFlexible(row, aliases){
 
 // Converte um valor de horário (Date, número de série do Excel, ou string "HH:MM")
 // em minutos totais desde 00:00. Retorna null se não for possível interpretar.
+// isDateLike usa duck-typing (Object.prototype.toString) em vez de "instanceof Date"
+// para funcionar mesmo com objetos Date vindos de outro realm/iframe/worker.
+function isDateLike(v){
+  return v!==null && typeof v==="object" && Object.prototype.toString.call(v)==="[object Date]";
+}
 function parseTimeToMinutes(v){
   if(v===null || v===undefined || v==="") return null;
-  if(v instanceof Date){
+  if(isDateLike(v)){
     if(isNaN(v.getTime())) return null;
     return v.getHours()*60 + v.getMinutes() + v.getSeconds()/60;
   }
   if(typeof v === "number"){
     // fração de dia (padrão Excel para células de hora): 0.5 = 12:00
     if(v >= 0 && v < 1) return v*24*60;
-    // já pode vir como número de minutos ou horas — fallback improvável
+    // hora decimal (ex: 17.5 = 17:30) — comum quando a célula não está formatada como hora
+    if(v >= 1 && v <= 24) return v*60;
+    // formato HHMM (ex: 1730 = 17:30)
+    if(v >= 100 && v <= 2359 && v%100 < 60){
+      const h = Math.floor(v/100), m = v%100;
+      return h*60 + m;
+    }
+    // já em minutos (fallback)
     return v;
   }
   if(typeof v === "string"){
@@ -164,7 +176,7 @@ function parseTimeToMinutes(v){
 
 function toDate(v){
   if(v===null||v===undefined||v==="") return null;
-  if(v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if(isDateLike(v)) return isNaN(v.getTime()) ? null : v;
   if(typeof v === "number"){
     // excel serial fallback
     const d = XLSX.SSF.parse_date_code(v);
@@ -514,8 +526,28 @@ const DataProcessor = {
         regra
       };
     }).filter(r=>r.codKey && r.tempoTotalHoras!==null) : [];
-    out.missoesDispo = missaoRaw !== null; // true = aba existe, false = não existe
+    out.missoesDispo = missaoRaw !== null && missaoRaw !== undefined; // true = aba existe, false = não existe
     out.missoesTotalBruto = missaoRaw ? missaoRaw.length : 0; // total de linhas na aba, antes de filtrar
+
+    // ---- CRONOGRAMA (opcional) ----
+    // Colunas aceitas com flexibilidade de nome/acentos: NOME/ATIVIDADE, HORA INICIO,
+    // HORA FIM, PRIORIDADE (1/2/3)
+    const cronogramaRaw = raw["CRONOGRAMA"];
+    out.cronogramaSheet = cronogramaRaw ? cronogramaRaw.map((r,idx)=>{
+      const nome = trimStr(getFieldFlexible(r, ["ATIVIDADE","NOME","Nome","Atividade","Nome Atividade"]));
+      const horaInicioRaw = getFieldFlexible(r, ["HORA INICIO","HORA INÍCIO","Hora Inicio","Hora Início"]);
+      const horaFimRaw = getFieldFlexible(r, ["HORA FIM","Hora Fim"]);
+      const prioridadeRaw = getFieldFlexible(r, ["PRIORIDADE","Prioridade"]);
+      const minIni = parseTimeToMinutes(horaInicioRaw);
+      const minFim = parseTimeToMinutes(horaFimRaw);
+      const prioridade = Number(prioridadeRaw);
+      return {
+        _row: idx, nome,
+        horaInicioMin: minIni, horaFimMin: minFim,
+        prioridade: [1,2,3].includes(prioridade) ? prioridade : 2
+      };
+    }).filter(r=>r.nome && r.horaInicioMin!==null && r.horaFimMin!==null) : [];
+    out.cronogramaDispo = cronogramaRaw !== null && cronogramaRaw !== undefined;
 
     return out;
   }
@@ -2251,7 +2283,8 @@ const UI = {
       { id:"quadro", label:"Quadro" },
       { id:"chamada", label:"Chamada" },
       { id:"auditoria", label:"Auditoria" },
-      { id:"comissao", label:"Comissão" }
+      { id:"comissao", label:"Comissão" },
+      { id:"cronograma", label:"Cronograma" }
     ]
   },
   currentView: "indicadores",
@@ -2298,6 +2331,12 @@ const UI = {
       window.APP_STATE.nameRegistry = nameRegistry;
       window.APP_STATE.commissionConfig = JSON.parse(JSON.stringify(DEFAULT_COMMISSION_CONFIG));
       window.APP_STATE.ready = true;
+
+      // inicializa o Cronograma a partir da sheet CRONOGRAMA (se existir) — continua 100% editável na tela depois
+      CronogramaState.activities = processed.cronogramaSheet.map(r=>({
+        id: "cr_"+r._row+"_"+Date.now(),
+        nome: r.nome, horaInicioMin: r.horaInicioMin, horaFimMin: r.horaFimMin, prioridade: r.prioridade
+      }));
 
       let badgeText = "Quadro atual: " + (currentTeam.date ? fmtDateBR(currentTeam.date) : "-") +
         "  •  " + currentTeam.repositorCodes.size + " repositores";
@@ -2375,7 +2414,8 @@ const UI = {
     if(!window.APP_STATE.ready) return;
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
-      quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao
+      quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
+      cronograma: renderCronograma
     };
     if(fns[pane]) fns[pane]();
   },
@@ -3611,14 +3651,6 @@ function renderQuadro(){
 
     ${!currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna <strong>CARGO</strong> não foi encontrada na aba QUADRO REP. Adicione essa coluna (valores: LIDER, AUXILIAR ou REPOSITOR) para os cards abaixo e a contagem de repositores refletirem os cargos reais da equipe. Até lá, todo o quadro atual é contado como repositor.</div>` : ``}
 
-    <div class="cards-grid">
-      <div class="card"><div class="card-label">👑 Líder</div><div class="card-value">${fmtNum(currentTeam.cargoCounts.LIDER)}</div></div>
-      <div class="card"><div class="card-label">🛠️ Auxiliar</div><div class="card-value">${fmtNum(currentTeam.cargoCounts.AUXILIAR)}</div></div>
-      <div class="card pos"><div class="card-label">📦 Repositor</div><div class="card-value pos">${fmtNum(currentTeam.cargoCounts.REPOSITOR)}</div></div>
-      ${currentTeam.cargoCounts.OUTRO>0 ? `<div class="card warn"><div class="card-label">Outro Cargo</div><div class="card-value warn">${fmtNum(currentTeam.cargoCounts.OUTRO)}</div></div>` : ``}
-      ${currentTeam.cargoCounts.NAO_INFORMADO>0 ? `<div class="card"><div class="card-label">Sem Cargo Informado</div><div class="card-value">${fmtNum(currentTeam.cargoCounts.NAO_INFORMADO)}</div></div>` : ``}
-    </div>
-
     <div class="hint-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
       <span>Quadro atual: <strong>${currentTeam.date?fmtDateBR(currentTeam.date):'-'}</strong> · ${currentTeam.repositorCodes.size} repositores${currentTeam.cargoDisponivel && currentTeam.members.length!==currentTeam.repositorCodes.size ? ' ('+currentTeam.members.length+' pessoas no quadro total)' : ' ativos'}</span>
       <div style="display:flex;gap:8px;">
@@ -3627,6 +3659,13 @@ function renderQuadro(){
       </div>
     </div>
     <div class="panel" id="quadro-consolidado-panel">
+      <div class="cards-grid">
+        <div class="card"><div class="card-label">👑 Líder</div><div class="card-value">${fmtNum(currentTeam.cargoCounts.LIDER)}</div></div>
+        <div class="card"><div class="card-label">🛠️ Auxiliar</div><div class="card-value">${fmtNum(currentTeam.cargoCounts.AUXILIAR)}</div></div>
+        <div class="card pos"><div class="card-label">📦 Repositor</div><div class="card-value pos">${fmtNum(currentTeam.cargoCounts.REPOSITOR)}</div></div>
+        ${currentTeam.cargoCounts.OUTRO>0 ? `<div class="card warn"><div class="card-label">Outro Cargo</div><div class="card-value warn">${fmtNum(currentTeam.cargoCounts.OUTRO)}</div></div>` : ``}
+        ${currentTeam.cargoCounts.NAO_INFORMADO>0 ? `<div class="card"><div class="card-label">Sem Cargo Informado</div><div class="card-value">${fmtNum(currentTeam.cargoCounts.NAO_INFORMADO)}</div></div>` : ``}
+      </div>
       <div class="panel-header">
         <h3>Quadro Consolidado</h3>
         <div class="panel-actions">
@@ -3719,6 +3758,112 @@ function showEmployeeSummary(codKey){
 /* ---------------------------------------------------------------------- */
 /* RENDER: Chamada                                                         */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* Relatório estilizado de Presença — Quadro Atual (export PDF/PNG)        */
+/* ---------------------------------------------------------------------- */
+function buildQuadroAtualReportContainer(quadroAtualRows, scounts, maxDate, registry){
+  const DIAS_SEMANA_ABREV = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+  const MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+  const dataLabel = maxDate ? `${DIAS_SEMANA_ABREV[maxDate.getDay()]}, ${String(maxDate.getDate()).padStart(2,'0')}/${MESES_ABREV[maxDate.getMonth()]}/${maxDate.getFullYear()}` : "-";
+  const dataCurta = maxDate ? fmtDateBR(maxDate) : "-";
+
+  const total = quadroAtualRows.length;
+  const presentesTotal = (scounts.PRESENTE||0) + (scounts.SEGUNDO_TURNO||0);
+
+  const statusLabelMap = { PRESENTE:"PRESENTE", SEGUNDO_TURNO:"SEG. TURNO", FALTA:"FALTA", FOLGA:"FOLGA", FERIAS:"FÉRIAS", ATESTADO:"ATESTADO" };
+  const pillColorMap = { PRESENTE:"#1a9c62", SEGUNDO_TURNO:"#2f6fce", FALTA:"#d64545", FOLGA:"#7a8798", FERIAS:"#9c6ade", ATESTADO:"#e08a1f" };
+
+  const nomesPorBucket = (bucket) => quadroAtualRows.filter(r=>r.bucket===bucket)
+    .map(r=>escapeHtml(registry.get(r.codKey)||r.nome))
+    .sort((a,b)=>a.localeCompare(b));
+
+  const ausenciaBox = (label, bucket, color) => {
+    const nomes = nomesPorBucket(bucket);
+    return `
+      <div style="flex:1;border:1px solid #dde3ea;border-radius:8px;padding:12px 14px;background:#fff;">
+        <div style="font-size:11px;font-weight:800;color:#123a6b;letter-spacing:.3px;margin-bottom:8px;">${label} <span style="color:${color};">(${nomes.length})</span></div>
+        ${nomes.length
+          ? nomes.map(n=>`<div style="font-size:11px;color:#2f6fce;padding:3px 0;border-bottom:1px solid #f4f6f9;">${n}</div>`).join("")
+          : `<div style="font-size:11px;color:#9aa5b1;font-style:italic;">Nenhum</div>`}
+      </div>`;
+  };
+
+  const statCard = (label, value) => `
+    <div style="flex:1;background:#123a6b;border-radius:8px;padding:16px 8px;text-align:center;">
+      <div style="font-size:26px;font-weight:800;color:#e08a1f;line-height:1;">${value}</div>
+      <div style="font-size:9px;font-weight:700;color:#cfe3fb;letter-spacing:.5px;margin-top:6px;">${label}</div>
+    </div>`;
+
+  const listaOrdenada = [...quadroAtualRows].sort((a,b)=>(registry.get(a.codKey)||a.nome).localeCompare(registry.get(b.codKey)||b.nome));
+
+  const el = document.createElement("div");
+  el.id = "quadroatual-report-container";
+  el.style.cssText = "position:fixed; left:-99999px; top:0; width:1100px; background:#f4f6f9; font-family:-apple-system,Segoe UI,Arial,sans-serif; color:#1f2937;";
+
+  el.innerHTML = `
+    <div style="background:#0b2647;padding:28px 32px 22px;border-bottom:3px solid #e08a1f;">
+      <div style="font-size:30px;font-weight:800;color:#fff;">Núcleo Reposição</div>
+      <div style="font-size:13px;color:#9db8dd;margin-top:6px;">Relatório de presença — ${dataLabel}</div>
+    </div>
+
+    <div style="padding:22px 32px 4px;">
+      <div style="display:flex;gap:10px;margin-bottom:22px;">
+        ${statCard("TOTAL", fmtNum(total))}
+        ${statCard("PRESENTES", fmtNum(presentesTotal))}
+        ${statCard("SEG. TURNO", fmtNum(scounts.SEGUNDO_TURNO||0))}
+        ${statCard("FALTAS", fmtNum(scounts.FALTA||0))}
+        ${statCard("FOLGAS", fmtNum(scounts.FOLGA||0))}
+        ${statCard("FÉRIAS", fmtNum(scounts.FERIAS||0))}
+        ${statCard("ATESTADOS", fmtNum(scounts.ATESTADO||0))}
+      </div>
+
+      <div style="font-size:13px;font-weight:800;color:#123a6b;letter-spacing:.3px;margin-bottom:10px;">AUSÊNCIAS DO DIA</div>
+      <div style="display:flex;gap:10px;margin-bottom:22px;">
+        ${ausenciaBox("FÉRIAS", "FERIAS", "#9c6ade")}
+        ${ausenciaBox("FOLGA", "FOLGA", "#7a8798")}
+        ${ausenciaBox("FALTA", "FALTA", "#d64545")}
+        ${ausenciaBox("ATESTADO", "ATESTADO", "#e08a1f")}
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="width:10px;height:10px;border-radius:50%;background:#1a9c62;display:inline-block;"></span>
+        <span style="font-size:13px;font-weight:800;color:#123a6b;">REGISTRO DE PRESENÇA (${presentesTotal})</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;margin-bottom:0;">
+        <thead>
+          <tr style="background:#0b2647;">
+            <th style="text-align:left;padding:9px 14px;font-size:10px;font-weight:800;color:#cfe3fb;letter-spacing:.4px;">CÓDIGO</th>
+            <th style="text-align:left;padding:9px 14px;font-size:10px;font-weight:800;color:#cfe3fb;letter-spacing:.4px;">NOME</th>
+            <th style="text-align:left;padding:9px 14px;font-size:10px;font-weight:800;color:#cfe3fb;letter-spacing:.4px;">STATUS</th>
+            <th style="text-align:left;padding:9px 14px;font-size:10px;font-weight:800;color:#cfe3fb;letter-spacing:.4px;">DATA</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${listaOrdenada.filter(r=>r.bucket==="PRESENTE"||r.bucket==="SEGUNDO_TURNO").map((r,i)=>{
+            const nome = escapeHtml(registry.get(r.codKey)||r.nome);
+            const pillColor = pillColorMap[r.bucket];
+            const pillLabel = statusLabelMap[r.bucket];
+            return `<tr style="background:${i%2===0?'#fff':'#f7f9fb'};">
+              <td style="padding:8px 14px;font-size:11.5px;color:#2f6fce;font-weight:700;border-top:1px solid #eef1f4;">${r.codigo||'-'}</td>
+              <td style="padding:8px 14px;font-size:11.5px;color:#123a6b;font-weight:700;border-top:1px solid #eef1f4;">${nome}</td>
+              <td style="padding:8px 14px;border-top:1px solid #eef1f4;"><span style="background:${pillColor}22;color:${pillColor};font-size:9.5px;font-weight:800;padding:3px 10px;border-radius:10px;">${pillLabel}</span></td>
+              <td style="padding:8px 14px;font-size:11.5px;color:#7a8798;border-top:1px solid #eef1f4;">${dataCurta}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;padding:14px 32px;margin-top:14px;font-size:10px;color:#9aa5b1;border-top:1px solid #dde3ea;">
+      <span>Núcleo Reposição — Painel de Gestão</span>
+      <span>Gerado em ${fmtDateBR(new Date())}</span>
+    </div>
+  `;
+
+  document.body.appendChild(el);
+  return el;
+}
+
 function renderChamada(){
   const pane = $("#pane-chamada");
   const processed = window.APP_STATE.processed;
@@ -3789,7 +3934,13 @@ function renderChamada(){
   pane.innerHTML = `
     <!-- ===== BLOCO 1: RESUMO ESTÁTICO DO QUADRO ATUAL ===== -->
     <div class="panel" style="border-left:4px solid var(--blue-med);">
-      <div class="panel-header"><h3>📋 Quadro Atual — ${fmtDateBR(maxDate)} (estático)</h3></div>
+      <div class="panel-header">
+        <h3>📋 Quadro Atual — ${fmtDateBR(maxDate)} (estático)</h3>
+        <div class="panel-actions">
+          <button class="btn btn-outline btn-sm" id="btn-export-quadroatual-pdf">⬇ PDF</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-quadroatual-png">⬇ PNG</button>
+        </div>
+      </div>
       <div class="cards-grid" style="margin-bottom:16px;">
         <div class="card ${spresPct>=90?'pos':spresPct<80?'neg':'warn'}">
           <div class="card-label">% Presença hoje</div>
@@ -3802,20 +3953,23 @@ function renderChamada(){
         <div class="card"><div class="card-label">Férias</div><div class="card-value">${scounts.FERIAS}</div></div>
         <div class="card"><div class="card-label">Atestados</div><div class="card-value">${scounts.ATESTADO}</div></div>
       </div>
-      <div class="chart-wrap"><canvas id="chart-status-atual"></canvas></div>
 
-      <div class="panel-header" style="margin-top:18px;"><h3 style="font-size:14px;">Lista de Funcionários — Quadro Atual</h3></div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Código</th><th>Funcionário</th><th>Status</th></tr></thead>
-          <tbody>
-            ${listaAtual.map(r=>`<tr>
-              <td>${r.codigo||'-'}</td>
-              <td>${escapeHtml(registry.get(r.codKey)||r.nome)}</td>
-              <td><span style="color:${statusColor[r.bucket]};font-weight:700;">${r.statusRaw||statusLabel[r.bucket]}</span></td>
-            </tr>`).join("")}
-          </tbody>
-        </table>
+      <div id="quadroatual-export-area">
+        <div class="chart-wrap"><canvas id="chart-status-atual"></canvas></div>
+
+        <div class="panel-header" style="margin-top:18px;"><h3 style="font-size:14px;">Lista de Funcionários — Quadro Atual</h3></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Código</th><th>Funcionário</th><th>Status</th></tr></thead>
+            <tbody>
+              ${listaAtual.map(r=>`<tr>
+                <td>${r.codigo||'-'}</td>
+                <td>${escapeHtml(registry.get(r.codKey)||r.nome)}</td>
+                <td><span style="color:${statusColor[r.bucket]};font-weight:700;">${r.statusRaw||statusLabel[r.bucket]}</span></td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -3899,6 +4053,23 @@ function renderChamada(){
   $("#cham-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderChamada(); });
   $("#cham-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderChamada(); });
   $("#cham-clear").addEventListener("click", ()=>{ Attendance.state = {dataInicial:null,dataFinal:null}; renderChamada(); });
+
+  $("#btn-export-quadroatual-pdf").addEventListener("click", async ()=>{
+    const container = buildQuadroAtualReportContainer(quadroAtualRows, scounts, maxDate, registry);
+    try{
+      await Export.toPDFSinglePage(container, "quadro-atual-presenca", "portrait");
+    } finally {
+      if(container.parentNode) container.parentNode.removeChild(container);
+    }
+  });
+  $("#btn-export-quadroatual-png").addEventListener("click", async ()=>{
+    const container = buildQuadroAtualReportContainer(quadroAtualRows, scounts, maxDate, registry);
+    try{
+      await Export.toPNG(container, "quadro-atual-presenca");
+    } finally {
+      if(container.parentNode) container.parentNode.removeChild(container);
+    }
+  });
 
   // Gráfico pizza estático
   Charts.make("chart-status-atual", {
@@ -4465,6 +4636,278 @@ function exportComissaoToExcel(){
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Comissao Calculada");
     XLSX.writeFile(wb, `comissao-calculada-${Date.now()}.xlsx`);
+    toast("Excel exportado com sucesso.", "success");
+  }catch(err){
+    console.error(err);
+    toast("Falha ao exportar Excel: " + err.message, "error");
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Cronograma (Gestão > Cronograma)                                */
+/* ---------------------------------------------------------------------- */
+const CronogramaState = { activities: [] }; // {id, nome, horaInicioMin, horaFimMin, prioridade}
+
+const PRIORIDADE_COLORS = { 1:"#d64545", 2:"#4a72c4", 3:"#f5b400" };
+const PRIORIDADE_LABELS = { 1:"Prioridade 1 (vermelho)", 2:"Prioridade 2 (azul)", 3:"Prioridade 3 (amarelo)" };
+
+function minutesToHHMM(min){
+  if(min===null || min===undefined || isNaN(min)) return "";
+  const h = Math.floor(min/60), m = Math.round(min%60);
+  return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+}
+function hhmmToMinutes(str){
+  if(!str) return null;
+  const parts = String(str).split(":");
+  const h = Number(parts[0]), m = Number(parts[1]);
+  if(isNaN(h) || isNaN(m)) return null;
+  return h*60 + m;
+}
+
+// Empacota atividades em "linhas" (como um calendário) para que atividades com
+// horários sobrepostos fiquem em linhas diferentes, e as que não se sobrepõem
+// dividam a mesma linha — igual à referência visual enviada.
+function packCronogramaRows(activities){
+  const sorted = [...activities].sort((a,b)=>a.horaInicioMin-b.horaInicioMin);
+  const rowEnds = [];
+  const positioned = [];
+  sorted.forEach(act=>{
+    let placedRow = -1;
+    for(let i=0;i<rowEnds.length;i++){
+      if(act.horaInicioMin >= rowEnds[i]){ placedRow = i; break; }
+    }
+    if(placedRow===-1){
+      rowEnds.push(act.horaFimMin);
+      placedRow = rowEnds.length-1;
+    } else {
+      rowEnds[placedRow] = act.horaFimMin;
+    }
+    positioned.push({ ...act, row: placedRow });
+  });
+  return { positioned, numRows: rowEnds.length || 1 };
+}
+
+// Constrói o HTML do quadro-horário (usado tanto na tela quanto na exportação —
+// mesma função garante que o que você vê é exatamente o que é exportado).
+function buildCronogramaHtml(activities){
+  if(!activities.length){
+    return `
+      <div style="background:#0b2647;border-radius:10px 10px 0 0;padding:14px;text-align:center;">
+        <span style="color:#fff;font-weight:800;font-size:15px;">Cronograma Dia / Reposição</span>
+      </div>
+      <div style="border:4px solid #4a72c4;border-radius:0 0 14px 14px;padding:40px;background:#fff;text-align:center;">
+        <span style="color:#7a8798;font-size:13px;">Nenhuma atividade cadastrada. Adicione atividades abaixo para montar o cronograma.</span>
+      </div>`;
+  }
+
+  const minStart = Math.min(...activities.map(a=>a.horaInicioMin));
+  const maxEnd = Math.max(...activities.map(a=>a.horaFimMin));
+  const startHour = Math.floor(minStart/60);
+  const endHour = Math.ceil(maxEnd/60);
+
+  const { positioned, numRows } = packCronogramaRows(activities);
+  const headerHeight = 42;
+  const rowHeight = 56;
+  const chartHeight = headerHeight + numRows*rowHeight + 14;
+
+  // O intervalo total do gráfico é sempre em horas cheias (ex: 08:00 a 18:00) — isso é
+  // o que faz uma barra terminando exatamente às 18:00 preencher 100% da largura, sem
+  // sobrar espaço fantasma.
+  const chartStart = startHour*60;
+  const chartEnd = endHour*60;
+  const totalMin = Math.max(1, chartEnd - chartStart);
+
+  // Cabeçalho: SEMPRE e SÓ hora cheia (8:00, 9:00 ... 18:00) — nunca mostra horário
+  // fracionário de atividade (mesmo que uma atividade comece às 17:30, o cabeçalho
+  // continua só com horas cheias). Todas as colunas têm exatamente a mesma largura.
+  // As barras (abaixo) continuam usando os horários reais/proporcionais das
+  // atividades, totalmente independente de como o cabeçalho está dividido — então
+  // uma atividade de 17:30–18:00 preenche certinho a metade da última coluna.
+  const numCols = endHour - startHour;
+  const colWidthPct = 100 / numCols;
+  const hourHeaderHtml = Array.from({length:numCols}).map((_,i)=>{
+    const h = startHour + i;
+    const leftPct = i * colWidthPct;
+    const isLast = i === numCols - 1;
+    if(isLast){
+      // última coluna: mostra hora de início E hora de fim na mesma caixa (uma em
+      // cada ponta) — evita qualquer sobreposição entre os dois rótulos.
+      return `<div style="position:absolute;left:${leftPct}%;width:${colWidthPct}%;top:0;height:${headerHeight}px;background:#4a72c4;display:flex;align-items:center;justify-content:space-between;overflow:hidden;">
+        <span style="color:#fff;font-weight:800;font-size:12.5px;white-space:nowrap;padding-left:8px;">${String(h).padStart(2,"0")}:00</span>
+        <span style="color:#fff;font-weight:800;font-size:12.5px;white-space:nowrap;padding-right:8px;">${String(endHour).padStart(2,"0")}:00</span>
+      </div>`;
+    }
+    return `<div style="position:absolute;left:${leftPct}%;width:${colWidthPct}%;top:0;height:${headerHeight}px;background:#4a72c4;border-right:1px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:flex-start;overflow:hidden;">
+      <span style="color:#fff;font-weight:800;font-size:12.5px;white-space:nowrap;padding-left:8px;">${String(h).padStart(2,"0")}:00</span>
+    </div>`;
+  }).join("");
+
+  const gridLinesHtml = Array.from({length:numCols+1}).map((_,i)=>{
+    const leftPct = i * colWidthPct;
+    return `<div style="position:absolute;left:${leftPct}%;top:${headerHeight}px;bottom:0;width:1px;background:rgba(255,255,255,.6);"></div>`;
+  }).join("");
+
+  const rowStripesHtml = Array.from({length:numRows}).map((_,r)=>{
+    const top = headerHeight + r*rowHeight;
+    return `<div style="position:absolute;left:0;right:0;top:${top}px;height:${rowHeight}px;background:${r%2===0?'#e4e9f5':'#dbe1f0'};"></div>`;
+  }).join("");
+
+  const barsHtml = positioned.map(act=>{
+    const leftPct = ((act.horaInicioMin - chartStart) / totalMin) * 100;
+    const widthPct = ((act.horaFimMin - act.horaInicioMin) / totalMin) * 100;
+    const top = headerHeight + act.row*rowHeight + 8;
+    const color = PRIORIDADE_COLORS[act.prioridade] || PRIORIDADE_COLORS[2];
+    return `<div style="position:absolute;left:calc(${leftPct}% + 1.5px);width:calc(${widthPct}% - 3px);top:${top}px;height:${rowHeight-16}px;background:${color};border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 6px;box-shadow:0 2px 4px rgba(0,0,0,.18);overflow:hidden;">
+      <span style="color:#fff;font-weight:800;font-size:11.5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(act.nome)} (${minutesToHHMM(act.horaInicioMin)}–${minutesToHHMM(act.horaFimMin)})">${escapeHtml(act.nome)}</span>
+    </div>`;
+  }).join("");
+
+  return `
+    <div style="background:#0b2647;border-radius:10px 10px 0 0;padding:14px;text-align:center;">
+      <span style="color:#fff;font-weight:800;font-size:15px;">Cronograma Dia / Reposição</span>
+    </div>
+    <div style="border:4px solid #4a72c4;border-radius:0 0 14px 14px;padding:14px;background:#fff;">
+      <div style="position:relative;height:${chartHeight}px;background:#dde3f0;border-radius:8px;overflow:hidden;">
+        ${rowStripesHtml}
+        ${hourHeaderHtml}
+        ${gridLinesHtml}
+        ${barsHtml}
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:#4a72c4;font-weight:700;">Obs: Agenda pode ser alterada sem aviso prévio para atender a operação.</div>
+    <div style="margin-top:8px;display:flex;gap:16px;font-size:11px;color:#4a5568;">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PRIORIDADE_COLORS[1]};margin-right:4px;"></span>Prioridade 1</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PRIORIDADE_COLORS[2]};margin-right:4px;"></span>Prioridade 2</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PRIORIDADE_COLORS[3]};margin-right:4px;"></span>Prioridade 3</span>
+    </div>
+  `;
+}
+
+function renderCronograma(){
+  const pane = $("#pane-cronograma");
+  const processed = window.APP_STATE.processed;
+
+  pane.innerHTML = `
+    ${processed && !processed.cronogramaDispo ? `<div class="hint-box">A aba <strong>CRONOGRAMA</strong> não foi encontrada no arquivo — sem problema, você pode cadastrar as atividades manualmente abaixo. Se adicionar essa aba ao arquivo (colunas: Atividade, Hora Início, Hora Fim, Prioridade) ela será usada para pré-popular esta tela na próxima vez que carregar o arquivo.</div>` : ``}
+
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📅 Cronograma Dia / Reposição</h3>
+        <div class="panel-actions">
+          <button class="btn btn-outline btn-sm" id="btn-export-cronograma-pdf">⬇ PDF</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-cronograma-png">⬇ PNG</button>
+          <button class="btn btn-primary btn-sm" id="btn-export-cronograma-xlsx">⬇ Excel</button>
+        </div>
+      </div>
+      <div id="cronograma-timeline-area">
+        ${buildCronogramaHtml(CronogramaState.activities)}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>+ Adicionar Nova Atividade</h3></div>
+      <div class="toolbar" style="margin-bottom:0;">
+        <div class="filter-group" style="flex:2;">
+          <label>Nome da Atividade</label>
+          <input type="text" id="cron-nome" placeholder="Ex: Validação Picking">
+        </div>
+        <div class="filter-group">
+          <label>Hora Início</label>
+          <input type="time" id="cron-hora-inicio">
+        </div>
+        <div class="filter-group">
+          <label>Hora Fim</label>
+          <input type="time" id="cron-hora-fim">
+        </div>
+        <div class="filter-group">
+          <label>Prioridade</label>
+          <select id="cron-prioridade">
+            <option value="1">1 — Vermelho</option>
+            <option value="2" selected>2 — Azul</option>
+            <option value="3">3 — Amarelo</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="btn-add-cronograma">+ Adicionar</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Atividades Cadastradas</h3></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Atividade</th><th>Início</th><th>Fim</th><th>Prioridade</th><th></th></tr></thead>
+          <tbody>
+            ${[...CronogramaState.activities].sort((a,b)=>a.horaInicioMin-b.horaInicioMin).map(act=>`<tr>
+              <td>${escapeHtml(act.nome)}</td>
+              <td>${minutesToHHMM(act.horaInicioMin)}</td>
+              <td>${minutesToHHMM(act.horaFimMin)}</td>
+              <td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:3px;background:${PRIORIDADE_COLORS[act.prioridade]};display:inline-block;"></span>${act.prioridade}</span></td>
+              <td><button class="icon-btn" onclick="removeCronogramaActivity('${act.id}')">✕</button></td>
+            </tr>`).join("") || `<tr><td colspan="5" class="small-muted">Nenhuma atividade cadastrada ainda.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  $("#btn-add-cronograma").addEventListener("click", addCronogramaActivity);
+  $("#btn-export-cronograma-pdf").addEventListener("click", ()=>{
+    Export.toPDFSinglePage(document.getElementById("cronograma-timeline-area"), "cronograma", "landscape");
+  });
+  $("#btn-export-cronograma-png").addEventListener("click", ()=>{
+    Export.toPNG(document.getElementById("cronograma-timeline-area"), "cronograma");
+  });
+  $("#btn-export-cronograma-xlsx").addEventListener("click", exportCronogramaToExcel);
+}
+
+function addCronogramaActivity(){
+  const nome = $("#cron-nome").value.trim();
+  const horaInicio = $("#cron-hora-inicio").value;
+  const horaFim = $("#cron-hora-fim").value;
+  const prioridade = Number($("#cron-prioridade").value);
+
+  if(!nome){ toast("Informe o nome da atividade.", "error"); return; }
+  const horaInicioMin = hhmmToMinutes(horaInicio);
+  const horaFimMin = hhmmToMinutes(horaFim);
+  if(horaInicioMin===null || horaFimMin===null){ toast("Informe hora de início e hora de fim válidas.", "error"); return; }
+  if(horaFimMin <= horaInicioMin){ toast("A hora de fim deve ser depois da hora de início.", "error"); return; }
+
+  CronogramaState.activities.push({
+    id: "cr_" + Date.now() + "_" + Math.random().toString(36).slice(2,7),
+    nome, horaInicioMin, horaFimMin, prioridade: [1,2,3].includes(prioridade) ? prioridade : 2
+  });
+  toast("Atividade adicionada.", "success");
+  renderCronograma();
+}
+
+function removeCronogramaActivity(id){
+  CronogramaState.activities = CronogramaState.activities.filter(a=>a.id!==id);
+  renderCronograma();
+}
+
+function exportCronogramaToExcel(){
+  if(typeof XLSX === "undefined"){
+    toast("A biblioteca de exportação (SheetJS) ainda não carregou. Aguarde e tente novamente.", "error");
+    return;
+  }
+  const activities = [...CronogramaState.activities].sort((a,b)=>a.horaInicioMin-b.horaInicioMin);
+  const header = ["Atividade", "Hora Início", "Hora Fim", "Prioridade"];
+  const aoa = [
+    ["Cronograma Dia / Reposição — Núcleo Reposição"],
+    ["Gerado em:", fmtDateBR(new Date())],
+    [],
+    header
+  ];
+  activities.forEach(act=>{
+    aoa.push([act.nome, minutesToHHMM(act.horaInicioMin), minutesToHHMM(act.horaFimMin), act.prioridade]);
+  });
+
+  try{
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{wch:28},{wch:12},{wch:12},{wch:12}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Cronograma");
+    XLSX.writeFile(wb, `cronograma-${Date.now()}.xlsx`);
     toast("Excel exportado com sucesso.", "success");
   }catch(err){
     console.error(err);
