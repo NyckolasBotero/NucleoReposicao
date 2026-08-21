@@ -618,7 +618,7 @@ const Production = {
     quadroAtual: "SIM",
     weekCompareMode: "anterior", // anterior | mesCorrespondente
     mesmaPeriodicidade: "SIM",
-    projectionBase: 3
+    projectionBase: 0
   },
 
   getBaseRows(){
@@ -1025,14 +1025,30 @@ const Production = {
 
     // mês atual = último da série
     const last = evo[evo.length-1];
-    // meses de base = os N meses imediatamente anteriores ao atual
-    const base = evo.slice(Math.max(0, evo.length-1-n), evo.length-1);
-    const mediaBase = base.length ? avg(base.map(b=>b.mediaDiaria)) : last.mediaDiaria;
     const totalDiasMesCalendario = new Date(last.year, last.month+1, 0).getDate();
     const totalDiasMes = countWeekdaysInMonth(last.year, last.month); // dias ÚTEIS do mês
+
+    let mediaBase, baseMeses, avisoHistoricoInsuficiente;
+
+    if(n === 0){
+      // "Mês Atual": base = média diária real dos dias já passados neste mês
+      // (igual ao que a aba Produção já exibe no card "Média Diária")
+      mediaBase = last.mediaDiaria;
+      baseMeses = [last.label + " (mês atual)"];
+      avisoHistoricoInsuficiente = null;
+    } else {
+      // meses de base = os N meses imediatamente anteriores ao atual
+      const base = evo.slice(Math.max(0, evo.length-1-n), evo.length-1);
+      mediaBase = base.length ? avg(base.map(b=>b.mediaDiaria)) : last.mediaDiaria;
+      baseMeses = base.map(b=>b.label);
+      avisoHistoricoInsuficiente = base.length < n
+        ? `Foram utilizados apenas ${base.length} mês(es) de histórico (solicitado: ${n}). Carregue arquivos com mais histórico para usar ${n} meses como base.`
+        : null;
+    }
+
     const projecao = mediaBase * totalDiasMes;
     const mediaDiariaAtual = last.mediaDiaria;
-    // Verde quando o ritmo atual >= média base histórica (mês atual está igual ou melhor que a referência)
+    // Verde quando o ritmo atual >= média base histórica
     const projecaoMaior = mediaDiariaAtual >= mediaBase;
 
     // serie diária do mês atual (dados reais) — mostra todos os dias corridos (inclusive fins de
@@ -1074,16 +1090,14 @@ const Production = {
     }).sort((a,b)=>b.projecaoFechamento-a.projecaoFechamento);
 
     return {
-      baseMeses: base.map(b=>b.label),
-      mesesDisponiveisBase: base.length,
+      baseMeses,
+      mesesDisponiveisBase: baseMeses.length,
       mesesSolicitados: n,
       mediaBase, projecao, mediaDiariaAtual, totalDiasMes, totalDiasMesCalendario,
       mesAtual: last.label, projecaoMaior,
       ultimoDia, ultimoDiaReal,
       diasReais, empProj,
-      avisoHistoricoInsuficiente: base.length < n
-        ? `Foram utilizados apenas ${base.length} mês(es) de histórico (solicitado: ${n}). Carregue arquivos com mais histórico para usar ${n} meses como base.`
-        : null
+      avisoHistoricoInsuficiente
     };
   },
 
@@ -1689,7 +1703,7 @@ function computeEmployeeProductionSnapshot(codKey){
     Production.state.mesmaPeriodicidade = "SIM";
     Production.state.dataInicial = null;
     Production.state.dataFinal = null;
-    if(!Production.state.projectionBase) Production.state.projectionBase = 3;
+    if(Production.state.projectionBase === undefined || Production.state.projectionBase === null) Production.state.projectionBase = 0;
 
     const exec = Production.executiveSummary();
     const cmp = Production.modeComparison();
@@ -2577,7 +2591,7 @@ function renderProducao(){
     st.employees = e.target.value ? [e.target.value] : []; renderProducao();
   });
   $("#prod-clear").addEventListener("click", ()=>{
-    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"SIM", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:3 };
+    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"SIM", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:0 };
     renderProducao();
   });
 
@@ -2602,6 +2616,17 @@ function renderProducaoContent(){
   const yearCmp = Production.yearComparison();
   const ytd = Production.ytd();
   const daily = Production.dailySeries();
+
+  // Duas projeções fixas — sempre presentes no topo independente do filtro "Base" do painel:
+  //   projMesAtual  → base = média dos dias úteis já passados neste mês (projectionBase=0)
+  //   projMesAnterior → base = média completa do mês anterior (projectionBase=1)
+  // Salva e restaura o projectionBase do usuário para não alterar o estado selecionado.
+  const savedBase = Production.state.projectionBase;
+  Production.state.projectionBase = 0;
+  const projMesAtual = Production.projection();
+  Production.state.projectionBase = 1;
+  const projMesAnterior = Production.projection();
+  Production.state.projectionBase = savedBase;
   const weekly = Production.weeklyTable();
   const proj = Production.projection();
 
@@ -2625,7 +2650,16 @@ function renderProducaoContent(){
       <div class="card"><div class="card-label">Mês Anterior</div><div class="card-value">${fmtNum(exec.totalAnterior)}</div><div class="card-sub">${fmtMonthYear.apply(null, addMonthsYM(exec.refYear,exec.refMonth,-1))}${exec.mesmaPeriodicidadeAtiva?' (até dia '+exec.diaCorte+')':''}</div></div>
       <div class="card ${cardClassForVar(exec.variacao)}"><div class="card-label">Variação Mês × Mês</div><div class="card-value ${cardClassForVar(exec.variacao)}">${fmtPct(exec.variacao,1)}</div><div class="card-sub">${exec.mesmaPeriodicidadeAtiva?'mesma periodicidade (até dia '+exec.diaCorte+')':'mês anterior completo'}</div></div>
       <div class="card"><div class="card-label">Média Diária</div><div class="card-value">${fmtNum(exec.mediaDiaria,1)}</div><div class="card-sub">${exec.diasComDados} dia(s) útil(eis) com produção</div></div>
-      <div class="card ${exec.projecaoMaior===true?'pos':exec.projecaoMaior===false?'neg':''}"><div class="card-label">Projeção de Fechamento</div><div class="card-value ${exec.projecaoMaior===true?'pos':exec.projecaoMaior===false?'neg':''}">${fmtNum(exec.projecao,0)}</div><div class="card-sub">base: ${exec.projecaoBaseLabel||'mês atual'} (ajuste no filtro abaixo)</div></div>
+      <div class="card ${projMesAtual&&projMesAtual.projecaoMaior?'pos':projMesAtual&&projMesAtual.projecaoMaior===false?'neg':''}">
+        <div class="card-label">📈 Projeção — Ritmo Atual</div>
+        <div class="card-value ${projMesAtual&&projMesAtual.projecaoMaior?'pos':projMesAtual&&projMesAtual.projecaoMaior===false?'neg':''}">${projMesAtual?fmtNum(projMesAtual.projecao,0):'-'}</div>
+        <div class="card-sub">base: média atual ${projMesAtual?fmtNum(projMesAtual.mediaBase,1):'-'} O.S./dia</div>
+      </div>
+      <div class="card">
+        <div class="card-label">📊 Projeção — Base Mês Anterior</div>
+        <div class="card-value">${projMesAnterior?fmtNum(projMesAnterior.projecao,0):'-'}</div>
+        <div class="card-sub">base: ${projMesAnterior&&projMesAnterior.baseMeses.length?projMesAnterior.baseMeses[0]:'-'} — ${projMesAnterior?fmtNum(projMesAnterior.mediaBase,1):'-'} O.S./dia</div>
+      </div>
       <div class="card ${cardClassForVar(exec.variacaoAnual)}"><div class="card-label">Variação Anual</div><div class="card-value ${cardClassForVar(exec.variacaoAnual)}">${fmtPct(exec.variacaoAnual,1)}</div><div class="card-sub">vs. ${fmtMonthYear(exec.refYear-1,exec.refMonth)}${exec.mesmaPeriodicidadeAtiva?' (até dia '+exec.diaCorte+')':''} (${fmtNum(exec.totalAnoAnterior)})</div></div>
     </div>
 
@@ -2743,6 +2777,7 @@ function renderProducaoContent(){
         <div class="panel-actions">
           <label class="small-muted">Base:</label>
           <select id="proj-base-select">
+            <option value="0" ${Production.state.projectionBase===0?'selected':''}>Mês Atual</option>
             <option value="1" ${Production.state.projectionBase===1?'selected':''}>Último mês</option>
             <option value="2" ${Production.state.projectionBase===2?'selected':''}>Últimos 2 meses</option>
             <option value="3" ${Production.state.projectionBase===3?'selected':''}>Últimos 3 meses</option>
@@ -2867,7 +2902,7 @@ function renderProjecaoExpandida(proj){
     ${proj.avisoHistoricoInsuficiente ? `<div class="warn-box">${escapeHtml(proj.avisoHistoricoInsuficiente)}</div>` : ''}
     <div class="cards-grid" style="margin-bottom:14px;">
       <div class="card"><div class="card-label">Mês de referência</div><div class="card-value">${proj.mesAtual}</div></div>
-      <div class="card"><div class="card-label">Base utilizada</div><div class="card-value" style="font-size:15px;">${proj.baseMeses.join(", ")||'Mês atual'}</div><div class="card-sub">${proj.mesesDisponiveisBase}/${proj.mesesSolicitados} mese(s) disponíveis</div></div>
+      <div class="card"><div class="card-label">Base utilizada</div><div class="card-value" style="font-size:15px;">${proj.baseMeses.join(", ")||'Mês atual'}</div><div class="card-sub">${proj.mesesSolicitados===0 ? 'Média dos dias úteis já passados neste mês' : `${proj.mesesDisponiveisBase}/${proj.mesesSolicitados} mese(s) disponíveis`}</div></div>
       <div class="card"><div class="card-label">Média diária base</div><div class="card-value">${fmtNum(proj.mediaBase,1)}</div></div>
       <div class="card"><div class="card-label">Média diária atual</div><div class="card-value">${fmtNum(proj.mediaDiariaAtual,1)}</div></div>
       <div class="card ${proj.projecaoMaior?'pos':'neg'}">
@@ -4287,6 +4322,7 @@ let commissionConsiderarMissoes = "SIM"; // se missões entram no cálculo de Po
 let commissionShowMissoes = true; // visibilidade da coluna Missões
 let commissionShowValorPonto = true; // visibilidade da coluna Valor/Ponto
 let commissionShowComissaoTotal = true; // visibilidade da coluna Comissão Total
+let commissionShowRegra = true; // visibilidade da coluna Regra
 const CommissionState = { dataInicial: null, dataFinal: null };
 
 function renderComissao(){
@@ -4357,6 +4393,7 @@ function renderComissao(){
           </div>
           <button class="btn btn-outline btn-sm" id="btn-toggle-col-missoes">${commissionShowMissoes?'Ocultar':'Mostrar'} Missões</button>
           <button class="btn btn-outline btn-sm" id="btn-toggle-col-valorponto">${commissionShowValorPonto?'Ocultar':'Mostrar'} Valor/Ponto</button>
+          <button class="btn btn-outline btn-sm" id="btn-toggle-col-regra">${commissionShowRegra?'Ocultar':'Mostrar'} Regra</button>
           <button class="btn btn-outline btn-sm" id="btn-toggle-col-comissao">${commissionShowComissaoTotal?'Ocultar':'Mostrar'} Comissão</button>
           <button class="btn btn-outline btn-sm" id="btn-export-comissao-pdf">⬇ PDF</button>
           <button class="btn btn-outline btn-sm" id="btn-export-comissao-png">⬇ PNG</button>
@@ -4406,6 +4443,7 @@ function renderComissao(){
   });
   $("#btn-toggle-col-missoes").addEventListener("click", ()=>{ commissionShowMissoes = !commissionShowMissoes; renderComissao(); });
   $("#btn-toggle-col-valorponto").addEventListener("click", ()=>{ commissionShowValorPonto = !commissionShowValorPonto; renderComissao(); });
+  $("#btn-toggle-col-regra").addEventListener("click", ()=>{ commissionShowRegra = !commissionShowRegra; renderComissao(); });
   $("#btn-toggle-col-comissao").addEventListener("click", ()=>{ commissionShowComissaoTotal = !commissionShowComissaoTotal; renderComissao(); });
   $("#btn-export-comissao-xlsx").addEventListener("click", exportComissaoToExcel);
   $("#btn-export-comissao-pdf").addEventListener("click", ()=>{
@@ -4560,7 +4598,7 @@ function renderCommissionTable(){
     ${commissionShowMissoes?'<th>Missões (O.S. equiv.)</th>':''}
     <th>Pontos</th>
     ${commissionShowValorPonto?'<th>Valor/Ponto</th>':''}
-    <th>Regra</th>
+    ${commissionShowRegra?'<th>Regra</th>':''}
     ${commissionShowComissaoTotal?'<th>Comissão Total</th>':''}
   </tr>`;
   $("#commission-thead").innerHTML = theadHtml;
@@ -4571,7 +4609,7 @@ function renderCommissionTable(){
       ${commissionShowMissoes?`<td>${e.missoesOs>0?`<span class="tag-pos">+${fmtNum(e.missoesOs)}</span>`:'-'}</td>`:''}
       <td><strong>${fmtNum(e.pontos)}</strong></td>
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
-      <td>${e.regra==='Exceção Individual'?`<span class="tag-warn">${e.regra}</span>`:e.regra==='Regra Normal'?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>
+      ${commissionShowRegra?`<td>${e.regra==='Exceção Individual'?`<span class="tag-warn">${e.regra}</span>`:e.regra==='Regra Normal'?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
       ${commissionShowComissaoTotal?`<td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
     </tr>`).join("") || `<tr><td colspan="8" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
 
@@ -4603,7 +4641,7 @@ function exportComissaoToExcel(){
   if(commissionShowMissoes) header.push("Missões (O.S. equiv.)");
   header.push("Pontos");
   if(commissionShowValorPonto) header.push("Valor/Ponto (R$)");
-  header.push("Regra");
+  if(commissionShowRegra) header.push("Regra");
   if(commissionShowComissaoTotal) header.push("Comissão Total (R$)");
 
   const periodoLabel = (st.dataInicial || st.dataFinal)
@@ -4625,7 +4663,7 @@ function exportComissaoToExcel(){
     if(commissionShowMissoes) row.push(e.missoesOs);
     row.push(e.pontos);
     if(commissionShowValorPonto) row.push(+e.valorPonto.toFixed(2));
-    row.push(e.regra);
+    if(commissionShowRegra) row.push(e.regra);
     if(commissionShowComissaoTotal) row.push(+e.comissaoTotal.toFixed(2));
     aoa.push(row);
   });
