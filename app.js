@@ -1719,7 +1719,7 @@ const FeedbackDoc = {
 
   // Constrói o HTML compacto do documento (1 página) dentro de um container off-screen,
   // já com os 2 gráficos e os cards de indicadores calculados para o funcionário.
-  buildContainer(employee, hist, snap, idx){
+  buildContainer(employee, hist, snap, idx, indData){
     idx = idx===undefined ? "" : idx;
     const logoSrc = "data:image/png;base64," + LOGO_BASE64;
     const hoje = fmtDateBR(new Date());
@@ -1792,6 +1792,57 @@ const FeedbackDoc = {
           <canvas id="fbdoc-chart-ano-${idx}" width="680" height="200"></canvas>
         </div>
       </div>
+
+      ${(()=>{
+        const ind = indData; // pré-calculado antes de alterar Production.state.employees
+        if(!ind) return '';
+        const meta = individualState.meta;
+        const corte = individualState.linhaDeCorteMes;
+        const metaDia = fmtNum(ind.metaDia,1);
+        const necFmt = ind.mediaNecessaria!==null ? fmtNum(ind.mediaNecessaria,1) : '—';
+        const necColor = ind.mediaNecessaria===null?'#7a8798'
+          :ind.mediaNecessaria<=ind.metaDia?'#1a9c62'
+          :ind.mediaNecessaria<=ind.mediaHistorica*1.5?'#e08a1f':'#2f6fce';
+        // Texto motivacional baseado no status — sem palavras negativas
+        const msgMeta = ind.projetadoRitmoAtual>=meta
+          ? `🎯 No ritmo atual, já está projetando <strong style="color:#1a9c62;">${fmtNum(ind.projetadoRitmoAtual)} O.S.</strong> no mês — acima da meta! Continue assim.`
+          : ind.projetadoRitmoAtual>=corte
+          ? `💪 Você está acima da linha de corte. Com um esforço adicional de <strong style="color:#e08a1f;">${necFmt} O.S./dia</strong> nos próximos ${ind.diasRestantes} dias, você alcança a meta de ${fmtNum(meta)} O.S.!`
+          : `🚀 Você tem ${ind.diasRestantes} dias úteis restantes. Mantendo <strong style="color:#2f6fce;">${necFmt} O.S./dia</strong>, você chegará à meta de ${fmtNum(meta)} O.S.!`;
+
+        return `
+        <div style="background:#f0f6ff;border:1px solid #c3d6f5;border-left:4px solid #2f6fce;border-radius:6px;padding:10px 14px;margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:800;color:#123a6b;margin-bottom:6px;">📋 Acompanhamento da Meta — ${ind.nome}</div>
+          <div style="display:flex;gap:8px;margin-bottom:6px;">
+            <div style="flex:1;background:#fff;border-radius:5px;padding:6px 8px;text-align:center;">
+              <div style="font-size:8px;color:#7a8798;font-weight:700;text-transform:uppercase;">O.S. Atual</div>
+              <div style="font-size:16px;font-weight:800;color:#123a6b;">${fmtNum(ind.osAtual)}</div>
+              <div style="font-size:7.5px;color:#7a8798;">de ${fmtNum(meta)} na meta</div>
+            </div>
+            <div style="flex:1;background:#fff;border-radius:5px;padding:6px 8px;text-align:center;">
+              <div style="font-size:8px;color:#7a8798;font-weight:700;text-transform:uppercase;">Dias Rest.</div>
+              <div style="font-size:16px;font-weight:800;color:#123a6b;">${ind.diasRestantes}</div>
+              <div style="font-size:7.5px;color:#7a8798;">de ${ind.diasUteisMes} úteis</div>
+            </div>
+            <div style="flex:1;background:#fff;border-radius:5px;padding:6px 8px;text-align:center;">
+              <div style="font-size:8px;color:#7a8798;font-weight:700;text-transform:uppercase;">Ritmo Atual</div>
+              <div style="font-size:16px;font-weight:800;color:#2f6fce;">${fmtNum(ind.mediaDiaMesAtual,1)}</div>
+              <div style="font-size:7.5px;color:#7a8798;">O.S./dia</div>
+            </div>
+            <div style="flex:1;background:#fff;border-radius:5px;padding:6px 8px;text-align:center;">
+              <div style="font-size:8px;color:#7a8798;font-weight:700;text-transform:uppercase;">Projeção</div>
+              <div style="font-size:16px;font-weight:800;color:#2f6fce;">${fmtNum(ind.projetadoRitmoAtual)}</div>
+              <div style="font-size:7.5px;color:#7a8798;">no ritmo atual</div>
+            </div>
+            <div style="flex:1;background:#fff;border-radius:5px;padding:6px 8px;text-align:center;">
+              <div style="font-size:8px;color:#7a8798;font-weight:700;text-transform:uppercase;">⚡ Para a Meta</div>
+              <div style="font-size:16px;font-weight:800;color:${necColor};">${necFmt}</div>
+              <div style="font-size:7.5px;color:#7a8798;">O.S./dia nos próx. ${ind.diasRestantes}d</div>
+            </div>
+          </div>
+          <div style="font-size:10px;color:#2f4e7a;background:#fff;border-radius:4px;padding:6px 10px;">${msgMeta}</div>
+        </div>`;
+      })()}
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
         <tr>${labelCellHtml("Resumo Assunto Tratado:",100)}</tr>
@@ -1937,10 +1988,15 @@ const FeedbackDoc = {
         const rowsEmp = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58 && r.codKey===employee.codKey);
         this._monthlyTotalsForChart = MESES_PT.map((_,m)=> rowsEmp.filter(r=>r.dtinicio.getFullYear()===anoAtual && r.dtinicio.getMonth()===m).length || null);
         this._monthlyTotalsColors = MESES_PT.map((_,m)=> m===mesAtualIdx ? "#e08a1f" : "#2f6fce");
+
+        // computeIndividual DEVE ser chamado ANTES de setar Production.state.employees —
+        // caso contrário maxDataDate() filtra só aquele funcionário, distorcendo diasRestantes.
+        const indData = computeIndividual(employee.codKey, individualState.meta);
+
         // garante que Production.state.employees está setado no momento de renderCharts (usa snapshot para o rows filter)
         Production.state.employees = [employee.codKey];
 
-        const container = this.buildContainer(employee, hist, snap, i);
+        const container = this.buildContainer(employee, hist, snap, i, indData);
         this.renderCharts(snap.proj, i);
         containers.push(container);
 
@@ -2290,7 +2346,8 @@ const UI = {
   subnavConfig: {
     indicadores: [
       { id:"producao", label:"Produção" },
-      { id:"projecao", label:"Projeção" }
+      { id:"projecao", label:"Projeção" },
+      { id:"individual", label:"Acompanhamento Individual" }
     ],
     gestao: [
       { id:"feedbacks", label:"Feedbacks" },
@@ -2406,11 +2463,13 @@ const UI = {
     this.currentView = view;
     $all(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===view));
     $all(".view").forEach(v=>v.classList.remove("active"));
+    $all(".pane").forEach(p=>p.classList.remove("active")); // limpa panes de QUALQUER view
     $("#view-"+view).classList.add("active");
     const items = this.subnavConfig[view];
     this.currentPane = items[0].id;
     this.buildSubnav();
     this.renderPane(this.currentPane);
+    $("#pane-"+this.currentPane).classList.add("active");
   },
 
   switchPane(pane){
@@ -2429,7 +2488,7 @@ const UI = {
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
-      cronograma: renderCronograma
+      cronograma: renderCronograma, individual: renderIndividual
     };
     if(fns[pane]) fns[pane]();
   },
@@ -2928,16 +2987,63 @@ function renderProjecaoExpandida(proj){
         <div style="font-size:13px;font-weight:700;color:var(--blue-dark);">Projeção por Funcionário — ${proj.mesAtual}</div>
         ${producaoOnlyRepositor ? `<span class="tag-neutral">somente cargo Repositor</span>` : ``}
       </div>
-      <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>#</th><th>Funcionário</th><th>O.S. até dia ${proj.ultimoDia}</th><th>Média Diária</th><th>Projeção Fechamento</th></tr></thead>
-        <tbody>
-          ${empProjFiltrado.map((e,i)=>`<tr>
-            <td>${i+1}</td><td>${escapeHtml(e.nome)}</td><td>${fmtNum(e.totalAtual)}</td>
-            <td>${fmtNum(e.mediaDiariaEmp,1)}</td>
-            <td><strong>${fmtNum(e.projecaoFechamento)}</strong></td>
-          </tr>`).join("") || '<tr><td colspan="5" class="small-muted">Sem dados no mês atual.</td></tr>'}
-        </tbody>
-      </table></div>
+      ${(()=>{
+        // Calcula meta/corte do estado de acompanhamento individual (compartilha os mesmos parâmetros)
+        const meta = individualState.meta;
+        const corte = individualState.linhaDeCorteMes;
+        // Enriquecer cada linha com dados de acompanhamento individual
+        const empEnriquecido = empProjFiltrado.map(e=>{
+          const ind = computeIndividual(e.codKey, meta);
+          return ind ? { ...e, ...ind } : { ...e, mediaNecessaria:null, projetadoRitmoAtual:e.projecaoFechamento, osAtual:e.totalAtual, mediaDiaMesAtual:e.mediaDiariaEmp, diasRestantes:'?' };
+        });
+        const total = empEnriquecido.length;
+        const counts = empEnriquecido.reduce((acc,e)=>{
+          const proj = e.projecaoFechamento||e.projetadoRitmoAtual;
+          if(proj>=meta) acc.meta++; else if(proj>=corte) acc.corte++; else acc.abaixo++;
+          return acc;
+        },{abaixo:0,corte:0,meta:0});
+        const pill = (proj) => {
+          const c = proj>=meta?'#1a9c62':proj>=corte?'#e08a1f':'#d64545';
+          const t = proj>=meta?'Meta ✅':proj>=corte?'Corte ⚠️':'Abaixo ❌';
+          return `<span style="background:${c}22;color:${c};font-size:9px;font-weight:800;padding:2px 8px;border-radius:10px;white-space:nowrap;">${t}</span>`;
+        };
+        const pct = (n) => total>0?fmtNum(n/total*100,1)+'%':'0%';
+        // ordena: menor projeção primeiro (quem mais precisa de atenção no topo)
+        const sorted = [...empEnriquecido].sort((a,b)=>(a.projecaoFechamento||a.projetadoRitmoAtual)-(b.projecaoFechamento||b.projetadoRitmoAtual));
+        return `
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <div class="card neg" style="flex:1;min-width:130px;"><div class="card-label">❌ Abaixo do Corte</div><div class="card-value neg">${counts.abaixo}</div><div class="card-sub">${pct(counts.abaixo)} · proj. &lt; ${fmtNum(corte)}</div></div>
+            <div class="card warn" style="flex:1;min-width:130px;"><div class="card-label">⚠️ Corte, abaixo da Meta</div><div class="card-value warn">${counts.corte}</div><div class="card-sub">${pct(counts.corte)} · ${fmtNum(corte)}–${fmtNum(meta)}</div></div>
+            <div class="card pos" style="flex:1;min-width:130px;"><div class="card-label">✅ Atingindo a Meta</div><div class="card-value pos">${counts.meta}</div><div class="card-sub">${pct(counts.meta)} · proj. ≥ ${fmtNum(meta)}</div></div>
+            <div class="card" style="flex:1;min-width:130px;"><div class="card-label">👥 Total</div><div class="card-value">${total}</div><div class="card-sub">Meta: ${fmtNum(meta)} · Corte: ${fmtNum(corte)}</div></div>
+          </div>
+          <div class="table-wrap"><table class="data-table">
+            <thead><tr>
+              <th>#</th><th>Funcionário</th>
+              <th>O.S. até dia ${proj.ultimoDia}</th>
+              <th>Média/Dia</th><th>Projeção</th>
+              <th>Dias Rest.</th>
+              <th>⚡ Média Nec. P.Meta</th>
+              <th>Status</th>
+            </tr></thead>
+            <tbody>
+              ${sorted.map((e,i)=>{
+                const projVal = e.projecaoFechamento||e.projetadoRitmoAtual;
+                const necColor = e.mediaNecessaria===null?'#7a8798':e.mediaNecessaria<=meta/e.diasUteisMes*1.05?'#1a9c62':e.mediaNecessaria<=e.mediaHistorica*1.5?'#e08a1f':'#d64545';
+                return `<tr class="clickable" onclick="selectIndividualFromTable('${escapeHtml(e.codKey)}')">
+                  <td style="color:#7a8798;">${i+1}</td>
+                  <td>${escapeHtml(e.nome)}</td>
+                  <td>${fmtNum(e.totalAtual||e.osAtual)}</td>
+                  <td>${fmtNum(e.mediaDiariaEmp||e.mediaDiaMesAtual,1)}</td>
+                  <td style="font-weight:700;">${fmtNum(projVal)}</td>
+                  <td style="color:${String(e.diasRestantes)<=3?'#d64545':'#123a6b'};">${e.diasRestantes}</td>
+                  <td style="font-weight:800;color:${necColor};">${e.mediaNecessaria!==null?fmtNum(e.mediaNecessaria,1):'—'}</td>
+                  <td>${pill(projVal)}</td>
+                </tr>`;
+              }).join("") || '<tr><td colspan="8" class="small-muted">Sem dados no mês atual.</td></tr>'}
+            </tbody>
+          </table></div>`;
+      })()}
     </div>
   `;
 
@@ -4951,4 +5057,363 @@ function exportCronogramaToExcel(){
     console.error(err);
     toast("Falha ao exportar Excel: " + err.message, "error");
   }
+}
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Acompanhamento Individual (Indicadores > Acompanhamento)       */
+/* ---------------------------------------------------------------------- */
+let individualState = {
+  codKey: null,
+  meta: 660,           // Meta mensal de O.S. (editável)
+  metaDia: 30,         // Meta diária (calculada automaticamente ou editável)
+  linhaDeCorteMes: 550 // Linha de corte mensal
+};
+
+// Calcula todos os indicadores de um colaborador para o mês atual
+function computeIndividual(codKey, meta){
+  const processed = window.APP_STATE.processed;
+  const registry = window.APP_STATE.nameRegistry;
+  // Usa maxDate GLOBAL (de todos os funcionários) — nunca o maxDate filtrado pelo
+  // Production.state.employees, que varia por pessoa e causa divergência de valores.
+  const allRows8460 = processed.p8460.filter(r=>r.tipoos===58);
+  const maxDate = allRows8460.length ? new Date(Math.max(...allRows8460.map(r=>r.dtinicio.getTime()))) : null;
+  if(!maxDate || !codKey) return null;
+
+  const y = maxDate.getFullYear(), m = maxDate.getMonth();
+  const rows58emp = processed.p8460.filter(r=>r.tipoos===58 && r.codKey===codKey);
+
+  // Dias úteis totais do mês e dias corridos (úteis já passados)
+  const diasUteisMes = countWeekdaysInMonth(y, m);
+  const diasCorridosUteis = countWeekdaysUpToDay(y, m, maxDate.getDate());
+  const diasRestantes = diasUteisMes - diasCorridosUteis;
+
+  // O.S. acumuladas no mês até hoje
+  const inicioMes = new Date(y, m, 1);
+  const hojeD = dateOnly(maxDate);
+  const rowsMesAtual = rows58emp.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicioMes && d<=hojeD; });
+  const osAtual = rowsMesAtual.length;
+
+  // Médias
+  const mediaDiaMesAtual = diasCorridosUteis > 0 ? osAtual / diasCorridosUteis : 0;
+  const mediaHistorica = Production.employeeHistoricalDailyAverage(codKey);
+
+  // Média da SEMANA ANTERIOR (não a semana atual) — da segunda até sexta da semana passada
+  const inicioSemanaAtual = startOfWeekMonday(maxDate);
+  const inicioSemanaAnterior = addDays(inicioSemanaAtual, -7);
+  const fimSemanaAnterior = addDays(inicioSemanaAtual, -1); // sexta-feira da semana passada
+  const rowsSemAnt = rows58emp.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicioSemanaAnterior && d<=fimSemanaAnterior && isWeekday(r.dtinicio); });
+  const diasSemAnt = uniq(rowsSemAnt.map(r=>ymdKey(r.dtinicio))).length || 1;
+  const osSemana = rowsSemAnt.length;
+  const mediaDiaSemanaAtual = osSemana / diasSemAnt;
+
+  // Projeções (cada média × dias úteis do mês)
+  const projetadoRitmoAtual = Math.round(mediaDiaMesAtual * diasUteisMes);
+  const projetadoHistorico = Math.round(mediaHistorica * diasUteisMes);
+  const projetadoSemana = Math.round(mediaDiaSemanaAtual * diasUteisMes);
+
+  // Meta diária implícita para bater a meta mensal
+  const metaDia = meta / diasUteisMes;
+
+  // Média necessária a partir de hoje para atingir a meta
+  const osFaltam = meta - osAtual;
+  const mediaNecessaria = diasRestantes > 0 ? osFaltam / diasRestantes : null;
+
+  // Dif % do projetado em relação à meta
+  const difPct = (v) => v > 0 ? ((v - meta) / meta) * 100 : null;
+
+  return {
+    nome: registry.get(codKey) || codKey,
+    diasUteisMes, diasCorridosUteis, diasRestantes,
+    osAtual,
+    mediaDiaMesAtual, mediaHistorica, mediaDiaSemanaAtual, metaDia,
+    projetadoRitmoAtual, projetadoHistorico, projetadoSemana,
+    osFaltam, mediaNecessaria,
+    meta,
+    difPct
+  };
+}
+
+// Calcula o resumo de acompanhamento individual para todos os repositores da lista.
+// Retorna: { rows (ordenados por mediaNecessaria desc), counts: {abaixo,corte,meta}, total }
+function computeResumoTodos(empList, meta, corte){
+  const rows = empList.map(e=>{
+    const d = computeIndividual(e.codKey, meta);
+    return d ? { ...d, codKey: e.codKey } : null;
+  }).filter(Boolean).sort((a,b)=>{
+    if(a.mediaNecessaria===null && b.mediaNecessaria===null) return 0;
+    if(a.mediaNecessaria===null) return 1;
+    if(b.mediaNecessaria===null) return -1;
+    return b.mediaNecessaria - a.mediaNecessaria;
+  });
+  const total = rows.length;
+  const meta_ = meta, corte_ = corte;
+  const counts = rows.reduce((acc,d)=>{
+    if(d.projetadoRitmoAtual >= meta_) acc.meta++;
+    else if(d.projetadoRitmoAtual >= corte_) acc.corte++;
+    else acc.abaixo++;
+    return acc;
+  }, { abaixo:0, corte:0, meta:0 });
+  return { rows, counts, total };
+}
+
+// HTML dos cards de contagem (Abaixo / Corte / Meta) — reutilizado nos dois painéis
+function buildStatusCountCards(counts, total, meta, corte){
+  const pct = (n) => total > 0 ? fmtNum(n/total*100,1)+'%' : '0%';
+  return `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      <div class="card neg" style="flex:1;min-width:140px;">
+        <div class="card-label">❌ Abaixo da Linha de Corte</div>
+        <div class="card-value neg">${counts.abaixo}</div>
+        <div class="card-sub">${pct(counts.abaixo)} do total · proj. &lt; ${fmtNum(corte)}</div>
+      </div>
+      <div class="card warn" style="flex:1;min-width:140px;">
+        <div class="card-label">⚠️ Acima do Corte, Abaixo da Meta</div>
+        <div class="card-value warn">${counts.corte}</div>
+        <div class="card-sub">${pct(counts.corte)} do total · ${fmtNum(corte)}–${fmtNum(meta)}</div>
+      </div>
+      <div class="card pos" style="flex:1;min-width:140px;">
+        <div class="card-label">✅ Atingindo a Meta</div>
+        <div class="card-value pos">${counts.meta}</div>
+        <div class="card-sub">${pct(counts.meta)} do total · proj. ≥ ${fmtNum(meta)}</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;">
+        <div class="card-label">👥 Total de Repositores</div>
+        <div class="card-value">${total}</div>
+        <div class="card-sub">Meta: ${fmtNum(meta)} · Corte: ${fmtNum(corte)}</div>
+      </div>
+    </div>`;
+}
+
+// HTML da tabela de visão geral (reutilizado nos dois painéis)
+function buildResumoTable(rows, meta, corte){
+  const pill = (proj) => {
+    const c = proj>=meta?'#1a9c62':proj>=corte?'#e08a1f':'#d64545';
+    const t = proj>=meta?'Meta ✅':proj>=corte?'Corte ⚠️':'Abaixo ❌';
+    return `<span style="background:${c}22;color:${c};font-size:9px;font-weight:800;padding:2px 8px;border-radius:10px;white-space:nowrap;">${t}</span>`;
+  };
+  return `
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th><th>Funcionário</th><th>O.S. Atual</th>
+          <th>Média/Dia (mês)</th><th>Projeção</th>
+          <th>Dias Rest.</th><th>⚡ Média Nec. P.Meta</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((d,i)=>{
+          const necColor = d.mediaNecessaria===null?'#7a8798'
+            :d.mediaNecessaria<=meta/d.diasUteisMes*1.05?'#1a9c62'
+            :d.mediaNecessaria<=d.mediaHistorica*1.5?'#e08a1f':'#d64545';
+          const isClickable = typeof selectIndividualFromTable !== 'undefined';
+          return `<tr class="clickable" onclick="selectIndividualFromTable('${escapeHtml(d.codKey)}')">
+            <td style="color:#7a8798;">${i+1}</td>
+            <td><strong>${escapeHtml(d.nome)}</strong></td>
+            <td>${fmtNum(d.osAtual)}</td>
+            <td>${fmtNum(d.mediaDiaMesAtual,1)}</td>
+            <td style="font-weight:700;">${fmtNum(d.projetadoRitmoAtual)}</td>
+            <td style="color:${d.diasRestantes<=3?'#d64545':'#123a6b'};font-weight:${d.diasRestantes<=3?'700':'400'};">${d.diasRestantes}</td>
+            <td style="font-weight:800;color:${necColor};">${d.mediaNecessaria!==null?fmtNum(d.mediaNecessaria,1):'—'}</td>
+            <td>${pill(d.projetadoRitmoAtual)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderIndividual(){
+  const pane = $("#pane-individual");
+  const all = allEmployeesForProduction();
+  const meta = individualState.meta;
+  const corte = individualState.linhaDeCorteMes;
+
+  const { rows: resumoTodos, counts, total } = computeResumoTodos(all, meta, corte);
+
+  pane.innerHTML = `
+    <div class="panel">
+      <div class="panel-header"><h3>🔍 Acompanhamento Individual — Selecionar Funcionário</h3></div>
+      <div class="toolbar">
+        <div class="filter-group" style="flex:2;">
+          <label>Funcionário</label>
+          <select id="ind-emp-select">
+            <option value="">— selecione —</option>
+            ${all.map(e=>`<option value="${escapeHtml(e.codKey)}" ${individualState.codKey===e.codKey?'selected':''}>${escapeHtml(e.nome)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Meta Mensal (O.S.)</label>
+          <input type="number" id="ind-meta" value="${meta}" min="1" style="width:110px;">
+        </div>
+        <div class="filter-group">
+          <label>Linha de Corte (O.S./mês)</label>
+          <input type="number" id="ind-corte" value="${corte}" min="1" style="width:110px;">
+        </div>
+        <button class="btn btn-primary" id="ind-btn-calcular">Ver Detalhe</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📊 Visão Geral — Todos os Repositores</h3>
+        <div class="panel-actions">
+          <span class="panel-note">Meta: ${fmtNum(meta)} O.S. · Corte: ${fmtNum(corte)} O.S. · Ordenado por maior esforço necessário</span>
+          <button class="btn btn-outline btn-sm" id="btn-export-individual-pdf">⬇ PDF</button>
+        </div>
+      </div>
+      <div id="ind-visao-geral-panel">
+        ${buildStatusCountCards(counts, total, meta, corte)}
+        <div class="table-wrap">
+          ${buildResumoTable(resumoTodos, meta, corte)}
+        </div>
+      </div>
+    </div>
+
+    <div id="ind-resultado"></div>
+  `;
+
+  $("#ind-emp-select").addEventListener("change", e=>{ individualState.codKey = e.target.value || null; });
+  $("#ind-meta").addEventListener("change", e=>{ individualState.meta = Number(e.target.value)||660; renderIndividual(); });
+  $("#ind-corte").addEventListener("change", e=>{ individualState.linhaDeCorteMes = Number(e.target.value)||550; renderIndividual(); });
+  $("#ind-btn-calcular").addEventListener("click", ()=>{
+    individualState.codKey = $("#ind-emp-select").value || null;
+    individualState.meta = Number($("#ind-meta").value)||660;
+    individualState.linhaDeCorteMes = Number($("#ind-corte").value)||550;
+    renderIndividualResult();
+    setTimeout(()=>{ const el=$("#ind-resultado"); if(el) el.scrollIntoView({behavior:"smooth",block:"start"}); }, 100);
+  });
+
+  $("#btn-export-individual-pdf").addEventListener("click", ()=>{
+    Export.toPDFSinglePage(document.getElementById("ind-visao-geral-panel"), "acompanhamento-individual", "landscape");
+  });
+
+  if(individualState.codKey) renderIndividualResult();
+}
+
+// Clicando numa linha da tabela geral vai direto para o detalhe daquele funcionário
+function selectIndividualFromTable(codKey){
+  individualState.codKey = codKey;
+  const sel = $("#ind-emp-select");
+  if(sel) sel.value = codKey;
+  renderIndividualResult();
+  setTimeout(()=>{ const el=$("#ind-resultado"); if(el) el.scrollIntoView({behavior:"smooth",block:"start"}); }, 100);
+}
+
+function renderIndividualResult(){
+  const el = $("#ind-resultado");
+  if(!el) return;
+  if(!individualState.codKey){ el.innerHTML = `<div class="hint-box">Selecione um funcionário acima e clique em <strong>Calcular</strong>.</div>`; return; }
+
+  const d = computeIndividual(individualState.codKey, individualState.meta);
+  if(!d){ el.innerHTML = `<div class="warn-box">Sem dados suficientes para este funcionário.</div>`; return; }
+
+  const corte = individualState.linhaDeCorteMes;
+  const metaDiaFmt = fmtNum(d.metaDia,1);
+  const mediaNecFmt = d.mediaNecessaria !== null ? fmtNum(d.mediaNecessaria,1) : '—';
+
+  // cor para "média necessária": verde se viável (<= 1.5× histórico), laranja se difícil, vermelho se inatingível
+  const mediaNecColor = d.mediaNecessaria === null ? '#7a8798'
+    : d.mediaNecessaria <= d.metaDia ? '#1a9c62'
+    : d.mediaNecessaria <= d.mediaHistorica * 1.5 ? '#e08a1f' : '#d64545';
+
+  // status da linha de corte
+  const atingeCorte = d.projetadoRitmoAtual >= corte;
+  const atingeMeta = d.projetadoRitmoAtual >= d.meta;
+
+  const statusCard = (label, value, sub, color='#123a6b', bg='#fff') =>
+    `<div class="card" style="border-left:4px solid ${color};background:${bg};">
+      <div class="card-label">${label}</div>
+      <div class="card-value" style="color:${color};">${value}</div>
+      ${sub?`<div class="card-sub">${sub}</div>`:''}
+    </div>`;
+
+  const tagStatus = (v, meta) => {
+    const cor = v >= meta ? '#1a9c62' : v >= corte ? '#e08a1f' : '#d64545';
+    const txt = v >= meta ? 'Atingirá a meta' : v >= corte ? 'Acima da linha de corte' : 'Abaixo da linha de corte';
+    return `<span style="background:${cor}22;color:${cor};font-size:9.5px;font-weight:800;padding:3px 10px;border-radius:10px;">${txt}</span>`;
+  };
+
+  el.innerHTML = `
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📋 ${escapeHtml(d.nome)}</h3>
+        <span class="panel-note">Referência: ${fmtDateBR(Production.maxDataDate())} · Meta: ${fmtNum(d.meta)} O.S./mês · ${fmtNum(d.metaDia,1)} O.S./dia · Corte: ${fmtNum(corte)}</span>
+      </div>
+
+      <div class="cards-grid" style="margin-bottom:16px;">
+        ${statusCard("📅 Dias Úteis no Mês", fmtNum(d.diasUteisMes))}
+        ${statusCard("✅ Dias Úteis Passados", fmtNum(d.diasCorridosUteis))}
+        ${statusCard("⏳ Dias Úteis Restantes", fmtNum(d.diasRestantes), null, d.diasRestantes <= 3 ? '#d64545' : '#123a6b')}
+        ${statusCard("📦 O.S. Atual", fmtNum(d.osAtual), `faltam ${fmtNum(Math.max(0,d.osFaltam))} para a meta`)}
+        ${statusCard("🎯 Média Diária Necessária", mediaNecFmt+" O.S./dia", d.mediaNecessaria === null ? 'mês encerrado' : d.mediaNecessaria <= d.metaDia ? 'viável ✅' : d.mediaNecessaria <= d.mediaHistorica*1.5 ? 'difícil ⚠️' : 'praticamente inatingível ❌', mediaNecColor)}
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr style="background:#0b2647;">
+              <th style="color:#fff;padding:10px 12px;text-align:left;"></th>
+              <th style="color:#cfe3fb;padding:10px 12px;text-align:center;">O.S./dia</th>
+              <th style="color:#cfe3fb;padding:10px 12px;text-align:center;">Projetado no Mês</th>
+              <th style="color:#cfe3fb;padding:10px 12px;text-align:center;">Dif % da Meta</th>
+              <th style="color:#cfe3fb;padding:10px 12px;text-align:center;">Dif Qtd O.S.</th>
+              <th style="color:#cfe3fb;padding:10px 12px;text-align:center;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${[
+              { label:"Média Dia Mês Atual", media:d.mediaDiaMesAtual, proj:d.projetadoRitmoAtual },
+              { label:"Média Dia Histórica", media:d.mediaHistorica, proj:d.projetadoHistorico },
+              { label:"Média Dia Semana Anterior", media:d.mediaDiaSemanaAtual, proj:d.projetadoSemana },
+            ].map(row=>{
+              const dif = d.difPct(row.proj);
+              const difQtd = row.proj - d.meta;
+              const difColor = difQtd >= 0 ? '#1a9c62' : difQtd >= (corte - d.meta) ? '#e08a1f' : '#d64545';
+              return `<tr>
+                <td style="font-weight:700;padding:10px 12px;">${row.label}</td>
+                <td style="text-align:center;padding:10px 12px;">${fmtNum(row.media,1)}</td>
+                <td style="text-align:center;padding:10px 12px;font-weight:700;">${fmtNum(row.proj)}</td>
+                <td style="text-align:center;padding:10px 12px;color:${difColor};">${dif!==null?(dif>=0?'+':'')+fmtNum(dif,0)+'%':'—'}</td>
+                <td style="text-align:center;padding:10px 12px;color:${difColor};">${(difQtd>=0?'+':'')+fmtNum(difQtd)}</td>
+                <td style="text-align:center;padding:10px 12px;">${tagStatus(row.proj, d.meta)}</td>
+              </tr>`;
+            }).join("")}
+            <tr style="background:#f0f4f8;border-top:2px solid #2f6fce;">
+              <td style="font-weight:800;color:#123a6b;padding:10px 12px;">🎯 Ideal (Meta)</td>
+              <td style="text-align:center;font-weight:800;padding:10px 12px;">${metaDiaFmt}</td>
+              <td style="text-align:center;font-weight:800;color:#1a9c62;padding:10px 12px;">${fmtNum(d.meta)}</td>
+              <td style="text-align:center;padding:10px 12px;">—</td>
+              <td style="text-align:center;padding:10px 12px;">—</td>
+              <td style="text-align:center;padding:10px 12px;"><span style="background:#1a9c6222;color:#1a9c62;font-size:9.5px;font-weight:800;padding:3px 10px;border-radius:10px;">Meta</span></td>
+            </tr>
+            <tr style="background:#fff8e1;">
+              <td style="font-weight:800;color:#e08a1f;padding:10px 12px;">⚡ Média Necessária P.Meta</td>
+              <td style="text-align:center;font-weight:800;color:${mediaNecColor};padding:10px 12px;">${mediaNecFmt}</td>
+              <td colspan="4" style="padding:10px 12px;font-size:12px;color:#7a8798;">
+                Para atingir ${fmtNum(d.meta)} O.S. com ${fmtNum(d.diasRestantes)} dias úteis restantes, precisa de <strong style="color:${mediaNecColor};">${mediaNecFmt} O.S./dia</strong> a partir de amanhã.
+                ${d.mediaNecessaria !== null && d.mediaNecessaria > d.mediaHistorica * 2 ? '<br><span style="color:#d64545;">⚠️ Mais que o dobro do histórico — meta praticamente inatingível.</span>' : ''}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+        <div style="flex:1;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:14px 18px;min-width:200px;">
+          <div style="font-size:11px;font-weight:700;color:#7a8798;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px;">Linha de Corte (${fmtNum(corte)} O.S./mês)</div>
+          <div style="font-size:22px;font-weight:800;color:${atingeCorte?'#1a9c62':'#d64545'};">${atingeCorte?'✅ Acima':'❌ Abaixo'}</div>
+          <div style="font-size:11px;color:#7a8798;margin-top:2px;">Projeção atual: ${fmtNum(d.projetadoRitmoAtual)} O.S.</div>
+        </div>
+        <div style="flex:1;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:14px 18px;min-width:200px;">
+          <div style="font-size:11px;font-weight:700;color:#7a8798;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px;">Meta Mensal (${fmtNum(d.meta)} O.S.)</div>
+          <div style="font-size:22px;font-weight:800;color:${atingeMeta?'#1a9c62':'#d64545'};">${atingeMeta?'✅ Atingirá':'❌ Não atingirá'}</div>
+          <div style="font-size:11px;color:#7a8798;margin-top:2px;">Faltam ${fmtNum(Math.max(0,d.osFaltam))} O.S. · ${fmtNum(d.diasRestantes)} dia(s) útil(eis)</div>
+        </div>
+        <div style="flex:2;background:#fff8e1;border:1px solid #f5b400;border-radius:8px;padding:14px 18px;min-width:260px;">
+          <div style="font-size:11px;font-weight:700;color:#e08a1f;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px;">⚡ Média Necessária para a Meta</div>
+          <div style="font-size:28px;font-weight:800;color:${mediaNecColor};">${mediaNecFmt} <span style="font-size:14px;font-weight:600;">O.S./dia</span></div>
+          <div style="font-size:11px;color:#7a8798;margin-top:2px;">nos próximos ${fmtNum(d.diasRestantes)} dia(s) útil(eis)</div>
+        </div>
+      </div>
+    </div>
+  `;
 }
