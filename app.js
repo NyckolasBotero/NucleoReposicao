@@ -74,7 +74,7 @@ if(document.readyState === "loading"){
 /* CONFIG                                                                  */
 /* ---------------------------------------------------------------------- */
 const REQUIRED_SHEETS = ["AUDITORIA REP","FEEDBACK REP","QUADRO REP","8271","8460"];
-const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA"]; // carregadas se existirem, não causam erro se faltarem
+const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA", "TURNOVER"]; // carregadas se existirem, não causam erro se faltarem
 
 const REQUIRED_COLUMNS = {
   "AUDITORIA REP": ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"],
@@ -548,6 +548,38 @@ const DataProcessor = {
       };
     }).filter(r=>r.nome && r.horaInicioMin!==null && r.horaFimMin!==null) : [];
     out.cronogramaDispo = cronogramaRaw !== null && cronogramaRaw !== undefined;
+
+    // ---- TURNOVER (opcional) ----
+    // Colunas: MATRIC/CODIGO, NOME, ATIVO, TIPO, MOTIVO, OBS, DATA CONTRATA(ÇÃO), DATA DESLIGAMENTO
+    const turnoverRaw = raw["TURNOVER"];
+    const DATA_INVALIDA = new Date(1900,0,1); // serial Excel 1 = 01/01/1900
+    out.turnover = turnoverRaw ? turnoverRaw.map((r,i)=>{
+      const matric   = trimStr(getFieldFlexible(r,["MATRIC","MATRICULA","CÓDIGO","CODIGO","COD"]));
+      const nome     = trimStr(getFieldFlexible(r,["NOME","Nome"]));
+      const ativoRaw = trimStr(getFieldFlexible(r,["ATIVO","Ativo"])||"");
+      const ativo    = ativoRaw.toUpperCase() === "SIM";
+      const tipo     = trimStr(getFieldFlexible(r,["TIPO","Tipo"])||"");
+      const motivo   = trimStr(getFieldFlexible(r,["MOTIVO","Motivo"])||"");
+      const obs      = trimStr(getFieldFlexible(r,["OBS","Obs","OBSERVAÇÃO","Observação"])||"");
+      const dtAdmRaw = getFieldFlexible(r,["DATA CONTRATA","DATA CONTRATAÇÃO","DATA ADMISSÃO","DT ADMISSAO","DATA_ADMISSAO","Admissão","ADMISSAO"]);
+      const dtDeslRaw= getFieldFlexible(r,["DATA DESLIGAMENTO","DT DESLIGAMENTO","DEMISSÃO","DESLIGAMENTO"]);
+
+      const dtAdm  = toDate(dtAdmRaw);
+      const dtDesl = toDate(dtDeslRaw);
+
+      // detecta data inválida (00/01/1900 = serial 0 ou 1 no Excel → Java 1900-01-00/01)
+      const dtAdmInvalida = !dtAdm || dtAdm.getFullYear()<=1900;
+
+      if(!matric && !nome) return null;
+      return {
+        matric, nome, ativo, tipo, motivo, obs,
+        dtAdm: dtAdmInvalida ? null : dtAdm,
+        dtAdmInvalida,
+        dtDesl: dtDesl && dtDesl.getFullYear()>1900 ? dtDesl : null,
+        codKey: matric ? normStr(matric) : null
+      };
+    }).filter(Boolean) : [];
+    out.turnoverDispo = turnoverRaw !== null && turnoverRaw !== undefined;
 
     return out;
   }
@@ -2355,7 +2387,8 @@ const UI = {
       { id:"chamada", label:"Chamada" },
       { id:"auditoria", label:"Auditoria" },
       { id:"comissao", label:"Comissão" },
-      { id:"cronograma", label:"Cronograma" }
+      { id:"cronograma", label:"Cronograma" },
+      { id:"turnover", label:"Turnover" }
     ]
   },
   currentView: "indicadores",
@@ -2488,7 +2521,7 @@ const UI = {
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
-      cronograma: renderCronograma, individual: renderIndividual
+      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover
     };
     if(fns[pane]) fns[pane]();
   },
@@ -3828,7 +3861,39 @@ function renderQuadro(){
         </tbody>
       </table></div>
     </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <h3>🔍 Validador de Quadro — RH</h3>
+        <span class="panel-note">Cole a lista enviada pelo RH e compare com o seu quadro atual</span>
+      </div>
+      <div class="hint-box">
+        Formatos aceitos por linha: <strong>Código&nbsp;&nbsp;Nome</strong> (Tab) &nbsp;·&nbsp;
+        <strong>Código,&nbsp;Nome</strong> &nbsp;·&nbsp; <strong>Código;Nome</strong> &nbsp;·&nbsp;
+        Apenas <strong>Código</strong> &nbsp;·&nbsp; Apenas <strong>Nome</strong>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:10px;">
+        <textarea id="rh-quadro-input" rows="9"
+          placeholder="Cole aqui o quadro do RH — um funcionário por linha. Exemplos:
+10003932	ALICE KAUANE PEREIRA SILVA
+10003928	KETNEY CRISTINE ALVES DOS SANTOS"
+          style="flex:1;font-family:monospace;font-size:12px;padding:8px;border:1px solid #dde3ea;border-radius:6px;resize:vertical;"></textarea>
+        <div style="display:flex;flex-direction:column;gap:8px;justify-content:flex-start;padding-top:4px;">
+          <button class="btn btn-primary" id="btn-rh-validar">🔍 Validar</button>
+          <button class="btn btn-outline btn-sm" id="btn-rh-limpar">Limpar</button>
+        </div>
+      </div>
+      <div id="rh-resultado"></div>
+    </div>
   `;
+
+  $("#btn-rh-validar").addEventListener("click", ()=> validarQuadroRH());
+  $("#btn-rh-limpar").addEventListener("click", ()=>{
+    const inp = document.getElementById("rh-quadro-input");
+    const res = document.getElementById("rh-resultado");
+    if(inp) inp.value = "";
+    if(res) res.innerHTML = "";
+  });
 
   $("#btn-export-quadro-pdf").addEventListener("click", ()=>{
     Export.toPDFSinglePage(document.getElementById("quadro-consolidado-panel"), "quadro-consolidado", "portrait");
@@ -3856,6 +3921,114 @@ function renderQuadro(){
     }
     renderQuadro();
   });
+}
+
+function validarQuadroRH(){
+  const textarea = document.getElementById("rh-quadro-input");
+  const resultado = document.getElementById("rh-resultado");
+  if(!textarea || !resultado) return;
+
+  const texto = textarea.value.trim();
+  if(!texto){ resultado.innerHTML = `<div class="warn-box">Cole a lista do RH antes de validar.</div>`; return; }
+
+  const currentTeam = window.APP_STATE.currentTeam;
+  const registry = window.APP_STATE.nameRegistry;
+
+  // Parsing da lista do RH — aceita Tab, vírgula, ponto-e-vírgula ou linha só com código/nome
+  const rhRows = texto.split('\n').map(l=>l.trim()).filter(Boolean).map(linha=>{
+    // tenta separar por Tab, vírgula ou ponto-e-vírgula
+    const sep = linha.includes('\t') ? '\t' : linha.includes(';') ? ';' : linha.includes(',') ? ',' : null;
+    if(sep){
+      const parts = linha.split(sep).map(p=>p.trim());
+      const codRaw = parts[0], nomeRaw = parts.slice(1).join(' ').trim();
+      // verifica se a primeira parte parece ser um código numérico
+      if(/^\d+$/.test(codRaw)) return { codigo: codRaw, codKey: normStr(codRaw), nome: nomeRaw.toUpperCase() };
+      // pode ser nome, código (ordem invertida)
+      if(/^\d+$/.test(parts[parts.length-1])) return { codigo: parts[parts.length-1], codKey: normStr(parts[parts.length-1]), nome: parts.slice(0,-1).join(' ').trim().toUpperCase() };
+    }
+    // linha com apenas código ou apenas nome
+    if(/^\d{5,}$/.test(linha)) return { codigo: linha, codKey: normStr(linha), nome: null };
+    return { codigo: null, codKey: null, nome: linha.toUpperCase() };
+  });
+
+  // Quadro atual do sistema (codKey → { codigo, nome })
+  const sistemaMap = new Map(currentTeam.members.map(m=>[ m.codKey, { codigo: m.codigo, nome: registry.get(m.codKey)||m.nome } ]));
+  const sistemaNomeMap = new Map(currentTeam.members.map(m=>[ normStr(registry.get(m.codKey)||m.nome), m.codKey ]));
+
+  // Mapa RH para lookup
+  const rhCodMap = new Map(rhRows.filter(r=>r.codKey).map(r=>[r.codKey, r]));
+  const rhNomeMap = new Map(rhRows.filter(r=>r.nome).map(r=>[normStr(r.nome), r]));
+
+  // Categorias de resultado
+  const ok = [];           // batem por código
+  const nomeOkCodDiv = []; // mesmo nome, código diferente ou ausente
+  const rhNaoNoSistema = []; // RH tem, sistema não tem
+  const sistemaNaoNoRH = []; // sistema tem, RH não tem
+
+  // 1. Verifica cada linha do RH
+  rhRows.forEach(r=>{
+    if(r.codKey && sistemaMap.has(r.codKey)){
+      const sis = sistemaMap.get(r.codKey);
+      const nomeRHNorm = r.nome ? normStr(r.nome) : null;
+      const nomeSisNorm = normStr(sis.nome);
+      if(!nomeRHNorm || nomeSisNorm === nomeRHNorm || nomeSisNorm.includes(nomeRHNorm) || nomeRHNorm.includes(nomeSisNorm)){
+        ok.push({ codigo: r.codigo||sis.codigo, nome: sis.nome, obs: '' });
+      } else {
+        // código bate mas nome diferente
+        nomeOkCodDiv.push({ tipo:'nome_diferente', rhCodigo: r.codigo, rhNome: r.nome||'—', sisCodigo: sis.codigo, sisNome: sis.nome });
+      }
+    } else if(r.nome && sistemaNomeMap.has(normStr(r.nome))){
+      // nome bate mas código ausente/diferente no RH
+      const codSis = sistemaNomeMap.get(normStr(r.nome));
+      const sis = sistemaMap.get(codSis);
+      nomeOkCodDiv.push({ tipo:'cod_divergente', rhCodigo: r.codigo||'—', rhNome: r.nome, sisCodigo: sis.codigo, sisNome: sis.nome });
+    } else if(r.codKey || r.nome){
+      rhNaoNoSistema.push({ codigo: r.codigo||'—', nome: r.nome||'—' });
+    }
+  });
+
+  // 2. Verifica quem do sistema não apareceu no RH
+  currentTeam.members.forEach(m=>{
+    const inRHByCod = rhCodMap.has(m.codKey);
+    const inRHByNome = sistemaNomeMap.has(normStr(registry.get(m.codKey)||m.nome)) && rhNomeMap.has(normStr(registry.get(m.codKey)||m.nome));
+    if(!inRHByCod && !inRHByNome){
+      sistemaNaoNoRH.push({ codigo: m.codigo, nome: registry.get(m.codKey)||m.nome });
+    }
+  });
+
+  // Renderizar resultado
+  const total = currentTeam.members.length;
+  const totalRH = rhRows.length;
+
+  const secao = (titulo, cor, lista, cols, fn) => lista.length === 0 ? '' : `
+    <div style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <span style="background:${cor}22;color:${cor};font-size:11px;font-weight:800;padding:3px 12px;border-radius:10px;">${titulo} (${lista.length})</span>
+      </div>
+      <div class="table-wrap"><table class="data-table"><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+      <tbody>${lista.map(fn).join('')}</tbody></table></div>
+    </div>`;
+
+  resultado.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+      <div class="card pos" style="flex:1;min-width:120px;"><div class="card-label">✅ Batem</div><div class="card-value pos">${ok.length}</div><div class="card-sub">de ${totalRH} do RH</div></div>
+      <div class="card ${nomeOkCodDiv.length?'warn':''}" style="flex:1;min-width:120px;"><div class="card-label">⚠️ Divergência de Código/Nome</div><div class="card-value ${nomeOkCodDiv.length?'warn':''}">${nomeOkCodDiv.length}</div><div class="card-sub">mesmo colaborador, dados diferentes</div></div>
+      <div class="card ${rhNaoNoSistema.length?'neg':''}" style="flex:1;min-width:120px;"><div class="card-label">❌ No RH, falta no Sistema</div><div class="card-value ${rhNaoNoSistema.length?'neg':''}">${rhNaoNoSistema.length}</div><div class="card-sub">presentes no RH, ausentes aqui</div></div>
+      <div class="card ${sistemaNaoNoRH.length?'neg':''}" style="flex:1;min-width:120px;"><div class="card-label">⚠️ No Sistema, falta no RH</div><div class="card-value ${sistemaNaoNoRH.length?'warn':''}">${sistemaNaoNoRH.length}</div><div class="card-sub">presentes aqui, ausentes no RH</div></div>
+      <div class="card" style="flex:1;min-width:120px;"><div class="card-label">👥 Quadro Sistema</div><div class="card-value">${total}</div><div class="card-sub">vs RH: ${totalRH}</div></div>
+    </div>
+
+    ${secao('❌ No RH mas NÃO encontrado no Sistema','#d64545',rhNaoNoSistema,['Código RH','Nome RH'],r=>`<tr><td>${escapeHtml(r.codigo)}</td><td>${escapeHtml(r.nome)}</td></tr>`)}
+    ${secao('⚠️ No Sistema mas NÃO encontrado no RH','#e08a1f',sistemaNaoNoRH,['Código Sistema','Nome Sistema'],r=>`<tr><td>${escapeHtml(r.codigo||'—')}</td><td>${escapeHtml(r.nome)}</td></tr>`)}
+    ${secao('⚠️ Divergência de Código ou Nome','#9c6ade',nomeOkCodDiv,['Código RH','Nome RH','Código Sistema','Nome Sistema','Tipo'],r=>`<tr>
+      <td>${escapeHtml(r.rhCodigo||'—')}</td><td>${escapeHtml(r.rhNome||'—')}</td>
+      <td>${escapeHtml(r.sisCodigo||'—')}</td><td>${escapeHtml(r.sisNome||'—')}</td>
+      <td><span class="tag-warn">${r.tipo==='nome_diferente'?'Nome diferente':'Código divergente'}</span></td>
+    </tr>`)}
+    ${ok.length && !rhNaoNoSistema.length && !sistemaNaoNoRH.length && !nomeOkCodDiv.length
+      ? `<div class="card pos" style="padding:14px 18px;text-align:center;"><div class="card-label">🎉 Quadros Idênticos!</div><div style="font-size:13px;color:#1a9c62;margin-top:4px;">Todos os ${ok.length} colaboradores do RH batem com o sistema. Nenhuma divergência encontrada.</div></div>`
+      : ''}
+  `;
 }
 
 function showEmployeeSummary(codKey){
@@ -5416,4 +5589,289 @@ function renderIndividualResult(){
       </div>
     </div>
   `;
+}
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Turnover (Gestão → Turnover)                                    */
+/* ---------------------------------------------------------------------- */
+const TurnoverState = { periodoMeses: 3 }; // quantos meses atrás calcular
+
+function computeTurnover(){
+  const processed = window.APP_STATE.processed;
+  const currentTeam = window.APP_STATE.currentTeam;
+  const registry = window.APP_STATE.nameRegistry;
+  const tv = processed.turnover || [];
+  const hoje = Production.maxDataDate() || new Date();
+
+  // --- Ativos no Turnover ---
+  const ativos = tv.filter(r=>r.ativo);
+  const quadroCadastrado = ativos.length;
+
+  // --- Período de análise ---
+  const meses = TurnoverState.periodoMeses || 3;
+  const periodoFim = hoje;
+  const periodoIni = addMonths(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -meses+1);
+  periodoIni.setDate(1);
+
+  const noPeriodo = (dt) => dt && dt >= periodoIni && dt <= periodoFim;
+
+  // --- Contratações / Desligamentos / Transferências no período ---
+  const contratacoes = tv.filter(r=>noPeriodo(r.dtAdm));
+  const desligamentos = tv.filter(r=>r.dtDesl && noPeriodo(r.dtDesl) && normStr(r.tipo||"") !== normStr("transferencia"));
+  const transferencias = tv.filter(r=>r.dtDesl && noPeriodo(r.dtDesl) && normStr(r.tipo||"").includes("transfer"));
+
+  // --- Quadro médio para Turnover ---
+  const quadroInicial = tv.filter(r=>{
+    const admAntes = r.dtAdm && r.dtAdm < periodoIni;
+    const naoDesligadoAntes = !r.dtDesl || r.dtDesl >= periodoIni;
+    return admAntes && naoDesligadoAntes;
+  }).length;
+  const quadroFinal = ativos.length;
+  const quadroMedio = (quadroInicial + quadroFinal) / 2 || 1;
+
+  // --- Turnover % ---
+  const turnoverTotal = ((contratacoes.length + desligamentos.length) / 2) / quadroMedio * 100;
+  const turnoverEntrada = contratacoes.length / quadroMedio * 100;
+  const turnoverSaida = desligamentos.length / quadroMedio * 100;
+
+  // --- Período probatório (90 dias) ---
+  const probatorio = ativos.filter(r=>{
+    if(!r.dtAdm) return false;
+    const diasAdmitido = Math.floor((hoje - r.dtAdm) / 86400000);
+    return diasAdmitido < 90;
+  }).map(r=>{
+    const diasAdmitido = Math.floor((hoje - r.dtAdm) / 86400000);
+    const diasRestantes = 90 - diasAdmitido;
+    return { ...r, diasAdmitido, diasRestantes };
+  });
+  const efetivados = ativos.filter(r=>{
+    if(!r.dtAdm) return false;
+    return Math.floor((hoje - r.dtAdm) / 86400000) >= 90;
+  });
+  const alertas = probatorio.filter(r=>r.diasRestantes<=10 && r.diasRestantes>5);
+  const urgencias = probatorio.filter(r=>r.diasRestantes<=5);
+
+  // --- Revisão de data ---
+  const semData = tv.filter(r=>r.dtAdmInvalida);
+
+  // --- Conferência com Chamada ---
+  // Usa currentTeam.date (data do último quadro) para comparar, não maxDataDate()
+  // que vem com hora (HH:MM:SS) da 8460 e nunca bate com as datas 00:00:00 do quadro.
+  const quadroDate = currentTeam.date || dateOnly(hoje);
+  const quadroDateMs = dateOnly(quadroDate).getTime();
+  const quadroRows = processed.quadro.filter(r=>dateOnly(r.data).getTime()===quadroDateMs);
+  const quadroChamada = quadroRows.length;
+
+  // Ativos no Turnover vs Chamada
+  const ativosCodKeys = new Set(ativos.filter(r=>r.codKey).map(r=>r.codKey));
+  const chamadaCodKeys = new Set(quadroRows.filter(r=>r.codKey).map(r=>r.codKey));
+
+  const noTurnoverNaoChamada = ativos.filter(r=>r.codKey && !chamadaCodKeys.has(r.codKey));
+  const naChamadaNaoTurnover = quadroRows.filter(r=>r.codKey && !ativosCodKeys.has(r.codKey));
+
+  const conciliados = ativos.filter(r=>r.codKey && chamadaCodKeys.has(r.codKey)).length;
+  const pctConferencia = quadroCadastrado > 0 ? (conciliados / quadroCadastrado * 100) : 100;
+
+  // Presença do dia na chamada
+  const scounts = { PRESENTE:0, SEGUNDO_TURNO:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0 };
+  quadroRows.forEach(r=>{ scounts[r.bucket] = (scounts[r.bucket]||0)+1; });
+
+  return {
+    hoje, periodoIni, periodoFim, meses,
+    quadroCadastrado, quadroChamada, quadroInicial, quadroFinal, quadroMedio,
+    contratacoes, desligamentos, transferencias,
+    turnoverTotal, turnoverEntrada, turnoverSaida,
+    probatorio, efetivados, alertas, urgencias, semData,
+    noTurnoverNaoChamada, naChamadaNaoTurnover,
+    conciliados, pctConferencia,
+    scounts, ativos
+  };
+}
+
+function renderTurnover(){
+  const pane = $("#pane-turnover");
+  const processed = window.APP_STATE.processed;
+  if(!processed.turnoverDispo){
+    pane.innerHTML = `<div class="warn-box">A aba <strong>TURNOVER</strong> não foi encontrada no arquivo.<br>
+      Adicione uma aba chamada <strong>TURNOVER</strong> com as colunas: <strong>MATRIC, NOME, ATIVO, TIPO, MOTIVO, OBS, DATA CONTRATA, DATA DESLIGAMENTO</strong>.</div>`;
+    return;
+  }
+
+  const d = computeTurnover();
+  const hoje = d.hoje;
+  const tv = processed.turnover || [];
+  const meses = TurnoverState.periodoMeses || 3;
+
+  // ---- helpers visuais ----
+  const mc = (label, value, sub='', color='#123a6b', bg='#fff', border='#dde3ea') =>
+    `<div style="flex:1;min-width:120px;background:${bg};border:1px solid ${border};border-radius:8px;padding:11px 14px;">
+      <div style="font-size:9.5px;font-weight:700;color:#7a8798;text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px;">${label}</div>
+      <div style="font-size:22px;font-weight:800;color:${color};line-height:1;">${value}</div>
+      ${sub?`<div style="font-size:9.5px;color:#7a8798;margin-top:3px;">${sub}</div>`:''}
+    </div>`;
+
+  const pill = (txt, cor) =>
+    `<span style="background:${cor}22;color:${cor};font-size:9px;font-weight:800;padding:2px 9px;border-radius:10px;white-space:nowrap;">${txt}</span>`;
+
+  // statusProb — cobre TODOS os funcionários sem exceção
+  const statusProb = (r) => {
+    if(r.dtAdmInvalida || !r.dtAdm){
+      return { tag:'⚠️ Revisar data', cor:'#7a8798', dtEfetivacao: null };
+    }
+    const diasAdmitido = Math.floor((hoje - r.dtAdm) / 86400000);
+    const diasRestantes = 90 - diasAdmitido;
+    const dtEfetivacao = new Date(r.dtAdm.getTime() + 90*86400000);
+
+    if(!r.ativo){
+      // inativo: só mostra o motivo de saída, sem probatório
+      const motivo = r.motivo && normStr(r.motivo).includes('transfer') ? 'Transferido' : 'Desligado';
+      return { tag: motivo, cor:'#7a8798', dtEfetivacao, diasAdmitido, diasRestantes };
+    }
+
+    // ativo: efetivado ou probatório
+    if(diasAdmitido >= 90) return { tag:'✅ Efetivado', cor:'#1a9c62', diasAdmitido, diasRestantes:0, dtEfetivacao };
+    if(diasRestantes <= 5)  return { tag:'🚨 Urgência — '+diasRestantes+'d', cor:'#d64545', diasAdmitido, diasRestantes, dtEfetivacao };
+    if(diasRestantes <= 10) return { tag:'⚠️ Alerta — '+diasRestantes+'d', cor:'#e08a1f', diasAdmitido, diasRestantes, dtEfetivacao };
+    return { tag:'🕐 Probatório — '+diasRestantes+'d rest.', cor:'#2f6fce', diasAdmitido, diasRestantes, dtEfetivacao };
+  };
+
+  const corTurnover = d.turnoverTotal<=5?'#1a9c62':d.turnoverTotal<=10?'#e08a1f':'#d64545';
+  const statusConf = d.noTurnoverNaoChamada.length===0 && d.naChamadaNaoTurnover.length===0;
+
+  pane.innerHTML = `
+    <!-- ======================== RESUMO + CARDS ======================== -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📊 Turnover — Painel de Controle</h3>
+        <div class="panel-actions">
+          <label style="font-size:11px;color:#7a8798;">Período de análise:</label>
+          <select id="tv-periodo-select" style="font-size:12px;padding:4px 8px;border:1px solid #dde3ea;border-radius:6px;">
+            <option value="1" ${meses===1?'selected':''}>Mês atual</option>
+            <option value="3" ${meses===3?'selected':''}>Últimos 3 meses</option>
+            <option value="6" ${meses===6?'selected':''}>Últimos 6 meses</option>
+            <option value="12" ${meses===12?'selected':''}>Últimos 12 meses</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- linha 1: quadro + chamada + turnover -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        ${mc('👥 Quadro Ativo', d.quadroCadastrado, 'ATIVO = SIM na sheet')}
+        ${mc('➕ Contratações', d.contratacoes.length, 'no período')}
+        ${mc('➖ Desligamentos', d.desligamentos.length, 'excl. transferências', '#d64545','#fef2f2','#d64545')}
+        ${mc('🔀 Transferências', d.transferencias.length, 'para outro setor', '#2f6fce','#eff6ff','#2f6fce')}
+        <div style="flex:1;min-width:140px;background:#0b2647;border-radius:8px;padding:11px 14px;">
+          <div style="font-size:9.5px;font-weight:700;color:#9db8dd;text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px;">Turnover Total</div>
+          <div style="font-size:26px;font-weight:800;color:${corTurnover};line-height:1;">${fmtNum(d.turnoverTotal,1)}%</div>
+          <div style="font-size:9.5px;color:#9db8dd;margin-top:3px;">Entrada: ${fmtNum(d.turnoverEntrada,1)}% · Saída: ${fmtNum(d.turnoverSaida,1)}%</div>
+        </div>
+      </div>
+
+      <!-- linha 2: probatório -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        ${mc('⏳ Prob. Ativos', d.probatorio.length, 'dentro dos 90 dias')}
+        ${mc('✅ Efetivados', d.efetivados.length, 'completaram 90 dias', '#1a9c62','#f0fdf4','#1a9c62')}
+        ${mc('⚠️ Alerta (≤10d)', d.alertas.length, 'até vencer os 90 dias', d.alertas.length?'#e08a1f':'#7a8798', d.alertas.length?'#fffbeb':'#fff', d.alertas.length?'#e08a1f':'#dde3ea')}
+        ${mc('🚨 Urgência (≤5d)', d.urgencias.length, 'decisão urgente', d.urgencias.length?'#d64545':'#7a8798', d.urgencias.length?'#fef2f2':'#fff', d.urgencias.length?'#d64545':'#dde3ea')}
+        ${mc('📊 Conferência', fmtNum(d.pctConferencia,1)+'%', statusConf?'✅ Quadro conferido':'⚠️ Divergência', statusConf?'#1a9c62':'#e08a1f', statusConf?'#f0fdf4':'#fffbeb', statusConf?'#1a9c62':'#e08a1f')}
+      </div>
+
+      ${d.semData.length ? `<div class="warn-box">⚠️ ${d.semData.length} funcionário(s) com <strong>data de admissão inválida (00/01/1900)</strong> — revise no arquivo: ${d.semData.map(r=>`<strong>${escapeHtml(r.nome)}</strong>`).join(', ')}</div>` : ''}
+      ${d.urgencias.length ? `<div class="warn-box" style="background:#fef2f2;border-color:#d64545;color:#b91c1c;">🚨 Decisão urgente: <strong>${d.urgencias.map(r=>escapeHtml(r.nome)).join(' · ')}</strong> — 5 dias ou menos para vencer o período probatório!</div>` : ''}
+      ${!statusConf ? `<div class="warn-box">⚠️ ATENÇÃO: O quadro da Reposição não está 100% conciliado com a chamada. ${d.noTurnoverNaoChamada.length} no Turnover sem chamada · ${d.naChamadaNaoTurnover.length} na chamada sem Turnover.</div>` : ''}
+    </div>
+
+    <!-- ======================== TABELA GERAL ======================== -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📋 Quadro Geral — Todos os Funcionários</h3>
+        <span class="panel-note">${tv.length} registros · ${d.quadroCadastrado} ativos</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Matrícula</th>
+              <th>Nome</th>
+              <th>Ativo</th>
+              <th>Tipo / Motivo</th>
+              <th>Data Contratação</th>
+              <th>Data Desligamento</th>
+              <th>Data Efetivação (virtual)</th>
+              <th>⏳ Período Probatório</th>
+              <th>Obs</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tv.map(r=>{
+              const prob = statusProb(r);
+
+              // Data contratação
+              const celAdm = r.dtAdmInvalida
+                ? `<span style="color:#e08a1f;font-weight:700;">Revisar data contratação</span>`
+                : r.dtAdm ? fmtDateBR(r.dtAdm) : '—';
+
+              // Data efetivação virtual (D.Contratação + 90d) — para todos com data válida
+              const celEfet = prob && prob.dtEfetivacao
+                ? (r.ativo && prob.diasAdmitido>=90
+                    ? `<strong style="color:#1a9c62;">${fmtDateBR(prob.dtEfetivacao)}</strong>`
+                    : `<span style="color:#7a8798;">${fmtDateBR(prob.dtEfetivacao)}</span>`)
+                : '—';
+
+              // Célula de status probatório — sempre preenchida
+              const celProb = prob ? pill(prob.tag, prob.cor) : '—';
+
+              return `<tr>
+                <td style="font-weight:700;color:#2f6fce;">${escapeHtml(r.matric||'—')}</td>
+                <td><strong>${escapeHtml(r.nome)}</strong></td>
+                <td><span style="color:${r.ativo?'#1a9c62':'#7a8798'};font-weight:700;">${r.ativo?'SIM':'NÃO'}</span></td>
+                <td>${escapeHtml((r.tipo?r.tipo+(r.motivo?' · ':''):'')+''+(r.motivo||''))||'—'}</td>
+                <td>${celAdm}</td>
+                <td>${r.dtDesl?fmtDateBR(r.dtDesl):'—'}</td>
+                <td style="font-size:11px;">${celEfet}</td>
+                <td>${celProb}</td>
+                <td style="font-size:11px;color:#7a8798;">${escapeHtml(r.obs||'—')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ======================== CONFERÊNCIA ======================== -->
+    ${d.noTurnoverNaoChamada.length || d.naChamadaNaoTurnover.length ? `
+    <div class="panel">
+      <div class="panel-header"><h3>🔎 Conferência — Turnover × Chamada</h3></div>
+      ${d.noTurnoverNaoChamada.length ? `
+        <div style="font-size:12px;font-weight:700;color:#d64545;margin-bottom:6px;">❌ Ativo no Turnover mas NÃO encontrado na Chamada (${d.noTurnoverNaoChamada.length})</div>
+        <div class="table-wrap" style="margin-bottom:14px;">
+          <table class="data-table"><thead><tr><th>Matrícula</th><th>Nome</th><th>Admissão</th><th>Situação</th></tr></thead>
+          <tbody>${d.noTurnoverNaoChamada.map(r=>`<tr>
+            <td>${escapeHtml(r.matric||'—')}</td><td><strong>${escapeHtml(r.nome)}</strong></td>
+            <td>${r.dtAdm?fmtDateBR(r.dtAdm):'<span style="color:#e08a1f;">Revisar data</span>'}</td>
+            <td>${pill('Não localizado na Chamada','#d64545')}</td>
+          </tr>`).join('')}</tbody></table>
+        </div>` : ''}
+      ${d.naChamadaNaoTurnover.length ? `
+        <div style="font-size:12px;font-weight:700;color:#e08a1f;margin-bottom:6px;">⚠️ Na Chamada mas NÃO encontrado no Turnover (${d.naChamadaNaoTurnover.length})</div>
+        <div class="table-wrap">
+          <table class="data-table"><thead><tr><th>Matrícula</th><th>Nome</th><th>Status Chamada</th><th>Situação</th></tr></thead>
+          <tbody>${d.naChamadaNaoTurnover.map(r=>{
+            const registry = window.APP_STATE.nameRegistry;
+            return `<tr>
+              <td>${escapeHtml(r.codigo||r.codKey||'—')}</td>
+              <td><strong>${escapeHtml(registry.get(r.codKey)||r.nome||'—')}</strong></td>
+              <td>${escapeHtml(r.statusRaw||r.bucket||'—')}</td>
+              <td>${pill('Não localizado no Turnover','#e08a1f')}</td>
+            </tr>`;
+          }).join('')}</tbody></table>
+        </div>` : ''}
+    </div>` : ''}
+  `;
+
+  const selPeriodo = document.getElementById("tv-periodo-select");
+  if(selPeriodo) selPeriodo.addEventListener("change", e=>{
+    TurnoverState.periodoMeses = Number(e.target.value);
+    renderTurnover();
+  });
 }
