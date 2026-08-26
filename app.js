@@ -2379,7 +2379,8 @@ const UI = {
     indicadores: [
       { id:"producao", label:"Produção" },
       { id:"projecao", label:"Projeção" },
-      { id:"individual", label:"Acompanhamento Individual" }
+      { id:"individual", label:"Acompanhamento Individual" },
+      { id:"avaria", label:"Avaria XML" }
     ],
     gestao: [
       { id:"feedbacks", label:"Feedbacks" },
@@ -2521,7 +2522,7 @@ const UI = {
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
-      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover
+      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover, avaria: renderAvaria
     };
     if(fns[pane]) fns[pane]();
   },
@@ -5874,4 +5875,857 @@ function renderTurnover(){
     TurnoverState.periodoMeses = Number(e.target.value);
     renderTurnover();
   });
+}
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Avaria XML (Indicadores → Avaria XML)                          */
+/* ---------------------------------------------------------------------- */
+const AvState = {
+  notas: [],        // todas as notas parsed
+  filtro: { ini: null, fim: null, categoria: null, busca: '' },
+  detalheNota: null,
+  alertas: [],
+  CNPJ_ESPERADO: '15464658000202'
+};
+
+// ---- Normalização de motivos baseada nos XMLs reais analisados ----
+function avNormalizarCategoria(textoOriginal) {
+  if(!textoOriginal) return 'Outros';
+  const t = textoOriginal.toUpperCase().replace(/\s+/g,' ').trim();
+  if(/VALE\s*MOTOR/.test(t))          return 'Vale Motorista';
+  if(/VALE\s*RECEB/.test(t))          return 'Vale Recebimento';
+  if(/COMPRA\s*DE\s*FU[CN][CN]?IONARI/.test(t)) return 'Compra de Funcionário';
+  if(/BAIXA\s*TF/.test(t))            return 'Baixa TF';
+  if(/BAIXA\s*COZ/.test(t))           return 'Baixa Cozinha';
+  if(/BAIXA/.test(t))                 return 'Baixa Estoque';
+  if(/AVARIA/.test(t))                return 'Avaria';
+  if(/VALE/.test(t))                  return 'Vale (outros)';
+  return 'Outros';
+}
+
+// ---- Detecta se uma linha do infCpl é o motivo principal vs info técnica/nome ----
+function avIsLinhaMotivo(linha) {
+  const t = linha.trim().toUpperCase();
+  if(!t) return false;
+  if(/^BASE ST BCR/.test(t)) return false;
+  if(/^VALOR TOTAL DO IPI/.test(t)) return false;
+  if(/^ICMS\s+\d/.test(t)) return false;   // ex: ICMS 29% CONF...
+  // linha de identificação de pessoa (matrícula - nome ou nome - matrícula)
+  if(/^\d{4,}\s*[-–]\s*[A-Z]/.test(t)) return false;
+  if(/^[A-Z].+[-–]\s*\d{3,}/.test(t) && !/BAIXA|VALE|NOTA|AVARIA|COMPRA/.test(t)) return false;
+  if(/^REF:\s*\d/.test(t)) return false;
+  if(/^VW\s*[-–]/.test(t)) return false;    // apelido de funcionário
+  if(/^APJR\s*[-–]/.test(t)) return false;
+  if(/^DGIRO\s*[-–]/.test(t)) return false;
+  return true;
+}
+
+function avExtrairMotivo(infCplTxt) {
+  if(!infCplTxt) return { motivo: '', categoria: 'Outros', linhas: [] };
+  const partes = infCplTxt.split('//').map(p=>p.trim()).filter(Boolean);
+  const linhasMotivo = partes.filter(avIsLinhaMotivo);
+  const motivo = linhasMotivo[0] || '';
+  return { motivo, categoria: avNormalizarCategoria(motivo), linhas: partes };
+}
+
+// ---- Parser principal de um XML NF-e ----
+function avParseXML(xmlStr, nomeArquivo) {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlStr, 'application/xml');
+    const parseErr = doc.querySelector('parsererror');
+    if(parseErr) throw new Error('XML inválido: ' + parseErr.textContent.slice(0,100));
+
+    const ns = 'http://www.portalfiscal.inf.br/nfe';
+    const g = (parent, ...tags) => {
+      let cur = parent;
+      for(const tag of tags){
+        if(!cur) return null;
+        cur = cur.querySelector(`:scope > ${tag}`) || cur.getElementsByTagNameNS(ns, tag)[0] || null;
+      }
+      return cur;
+    };
+    const gv = (parent, ...tags) => { const el = g(parent, ...tags); return el ? (el.textContent||'').trim() : ''; };
+
+    const nfe    = doc.getElementsByTagNameNS(ns,'NFe')[0];
+    const inf    = nfe?.getElementsByTagNameNS(ns,'infNFe')[0];
+    if(!inf) throw new Error('infNFe não encontrado');
+
+    const ide    = inf.getElementsByTagNameNS(ns,'ide')[0];
+    const emit   = inf.getElementsByTagNameNS(ns,'emit')[0];
+    const infad  = inf.getElementsByTagNameNS(ns,'infAdic')[0];
+    const tot    = inf.getElementsByTagNameNS(ns,'total')[0];
+    const ictot  = tot?.getElementsByTagNameNS(ns,'ICMSTot')[0];
+
+    // Validação CNPJ
+    const cnpjEmit = gv(emit,'CNPJ');
+    const cnpjDivergente = cnpjEmit !== AvState.CNPJ_ESPERADO;
+
+    // Dados da nota
+    const nNF   = gv(ide,'nNF');
+    const serie = gv(ide,'serie');
+    const dhEmi = gv(ide,'dhEmi');
+    const natOp = gv(ide,'natOp');
+
+    // Data de emissão → Date
+    let dtEmissao = null;
+    if(dhEmi) { try { dtEmissao = new Date(dhEmi); } catch(e){} }
+
+    // infAdic / infCpl
+    const infCplTxt = gv(infad,'infCpl') || (infad ? (infad.textContent||'').trim() : '');
+    const { motivo, categoria } = avExtrairMotivo(infCplTxt);
+
+    // Totais da nota
+    const fv = (el, tag) => parseFloat(gv(el, tag)||'0') || 0;
+    const vProd   = fv(ictot,'vProd');
+    const vDesc   = fv(ictot,'vDesc');
+    const vFrete  = fv(ictot,'vFrete');
+    const vSeg    = fv(ictot,'vSeg');
+    const vOutro  = fv(ictot,'vOutro');
+    const vIPI    = fv(ictot,'vIPI');
+    const vICMS   = fv(ictot,'vICMS');
+    const vBC     = fv(ictot,'vBC');
+    const vBCST   = fv(ictot,'vBCST');
+    const vPIS    = fv(ictot,'vPIS');
+    const vCOFINS = fv(ictot,'vCOFINS');
+    const vNF     = fv(ictot,'vNF');
+    const vImpostos = vICMS + vPIS + vCOFINS + vIPI;
+
+    // Itens / produtos
+    const dets = Array.from(inf.getElementsByTagNameNS(ns,'det'));
+    const itens = dets.map(det => {
+      const prod = det.getElementsByTagNameNS(ns,'prod')[0];
+      const imp  = det.getElementsByTagNameNS(ns,'imposto')[0];
+      const pv = (t) => parseFloat(gv(prod,t)||'0') || 0;
+      // ICMS — pode ser ICMS00, ICMS10, ICMS20, ICMS60, ICMS70...
+      const icmsBlock = imp?.getElementsByTagNameNS(ns,'ICMS')[0];
+      let icmsTag='', vICMSItem=0, pICMS=0, vBCItem=0;
+      if(icmsBlock) {
+        const sub = icmsBlock.children[0] || icmsBlock.firstElementChild;
+        if(sub) {
+          icmsTag = sub.localName||sub.tagName;
+          vICMSItem = parseFloat((sub.getElementsByTagNameNS(ns,'vICMS')[0]?.textContent||'0').trim())||0;
+          pICMS     = parseFloat((sub.getElementsByTagNameNS(ns,'pICMS')[0]?.textContent||'0').trim())||0;
+          vBCItem   = parseFloat((sub.getElementsByTagNameNS(ns,'vBC')[0]?.textContent||'0').trim())||0;
+        }
+      }
+      const vPISItem    = parseFloat((imp?.getElementsByTagNameNS(ns,'vPIS')[0]?.textContent||'0').trim())||0;
+      const vCOFINSItem = parseFloat((imp?.getElementsByTagNameNS(ns,'vCOFINS')[0]?.textContent||'0').trim())||0;
+      return {
+        nItem: det.getAttribute('nItem')||'',
+        cProd: gv(prod,'cProd'), xProd: gv(prod,'xProd'), NCM: gv(prod,'NCM'),
+        CFOP: gv(prod,'CFOP'), uCom: gv(prod,'uCom'),
+        qCom: pv('qCom'), vUnCom: pv('vUnCom'), vProd: pv('vProd'),
+        vDesc: pv('vDesc'), vFrete: pv('vFrete'), vOutro: pv('vOutro'),
+        icmsTag, vBC: vBCItem, pICMS, vICMS: vICMSItem,
+        vPIS: vPISItem, vCOFINS: vCOFINSItem
+      };
+    });
+
+    return {
+      ok: true, nomeArquivo, cnpjEmit, cnpjDivergente,
+      nNF, serie, dhEmi, dtEmissao, natOp,
+      infCplTxt, motivo, categoria,
+      vProd, vDesc, vFrete, vSeg, vOutro, vIPI,
+      vICMS, vBC, vBCST, vPIS, vCOFINS, vNF, vImpostos,
+      itens
+    };
+  } catch(e) {
+    return { ok: false, nomeArquivo, erro: e.message };
+  }
+}
+
+// ---- Filtro ----
+function avNotasFiltradas() {
+  const { ini, fim, categoria, busca } = AvState.filtro;
+  return AvState.notas.filter(n=>{
+    if(!n.ok) return false;
+    if(ini && n.dtEmissao && n.dtEmissao < ini) return false;
+    if(fim && n.dtEmissao && n.dtEmissao > fim) return false;
+    if(categoria && n.categoria !== categoria) return false;
+    if(busca){
+      const b = busca.toLowerCase();
+      if(!( n.nNF.includes(b) || n.motivo.toLowerCase().includes(b) ||
+            n.nomeArquivo.toLowerCase().includes(b) || n.natOp.toLowerCase().includes(b) )) return false;
+    }
+    return true;
+  });
+}
+
+// Série mensal: [{label, anoMes, notas, itens, vNF, vProd, vImpostos}]
+function avSerieMensal(notas) {
+  const map = new Map();
+  notas.forEach(n=>{
+    if(!n.dtEmissao) return;
+    const y = n.dtEmissao.getFullYear(), m = n.dtEmissao.getMonth();
+    const key = `${y}-${String(m+1).padStart(2,'0')}`;
+    const label = MESES_PT[m]+'/'+String(y).slice(2);
+    const ex = map.get(key) || {key, label, ano:y, mes:m, notas:0, itens:0, vNF:0, vProd:0, vImpostos:0};
+    ex.notas++; ex.itens+=n.itens.length; ex.vNF+=n.vNF; ex.vProd+=n.vProd; ex.vImpostos+=n.vImpostos;
+    map.set(key, ex);
+  });
+  return [...map.values()].sort((a,b)=>a.key.localeCompare(b.key));
+}
+
+// Série anual
+function avSerieAnual(notas) {
+  const map = new Map();
+  notas.forEach(n=>{
+    if(!n.dtEmissao) return;
+    const y = n.dtEmissao.getFullYear();
+    const ex = map.get(y) || {ano:y, notas:0, itens:0, vNF:0, vProd:0, vImpostos:0};
+    ex.notas++; ex.itens+=n.itens.length; ex.vNF+=n.vNF; ex.vProd+=n.vProd; ex.vImpostos+=n.vImpostos;
+    map.set(y, ex);
+  });
+  return [...map.values()].sort((a,b)=>a.ano-b.ano);
+}
+
+// Comparativo: mês atual vs anterior (usando todas as notas, sem filtro de período)
+function avComparativoMes() {
+  const todasOk = AvState.notas.filter(n=>n.ok && n.dtEmissao);
+  const { categoria } = AvState.filtro;
+  const notas = categoria ? todasOk.filter(n=>n.categoria===categoria) : todasOk;
+  const serie = avSerieMensal(notas);
+  if(serie.length < 1) return null;
+  const ult = serie[serie.length-1];
+  const ant = serie.length>=2 ? serie[serie.length-2] : null;
+  const diffVNF = ant ? ((ult.vNF - ant.vNF)/Math.max(ant.vNF,0.01)*100) : null;
+  const diffNotas = ant ? ult.notas - ant.notas : null;
+  return { ult, ant, diffVNF, diffNotas };
+}
+
+// Semanas do mês mais recente
+function avSemanasDoMes(notas) {
+  const serie = avSerieMensal(notas);
+  if(!serie.length) return [];
+  const last = serie[serie.length-1];
+  const mes = last.mes, ano = last.ano;
+  const doMes = notas.filter(n=>n.dtEmissao && n.dtEmissao.getMonth()===mes && n.dtEmissao.getFullYear()===ano);
+  // agrupa por semana ISO dentro do mês
+  const wmap = new Map();
+  doMes.forEach(n=>{
+    const d = n.dtEmissao;
+    const weekStart = new Date(d); weekStart.setDate(d.getDate() - d.getDay()); // domingo da semana
+    const wk = weekStart.toISOString().slice(0,10);
+    const ex = wmap.get(wk) || {semana:wk, label:'Sem '+weekStart.getDate()+'/'+MESES_PT[weekStart.getMonth()], notas:0, itens:0, vNF:0};
+    ex.notas++; ex.itens+=n.itens.length; ex.vNF+=n.vNF;
+    wmap.set(wk, ex);
+  });
+  return [...wmap.values()].sort((a,b)=>a.semana.localeCompare(b.semana));
+}
+
+// Paleta exclusiva tons azuis/escuros sólidos — sem transparência nas barras
+const AV_CORES = ['#0b2647','#1a4480','#2f6fce','#5b92e5','#8db4f0','#bcd4f8','#1b3a5e','#3d5f8a'];
+
+const AV_TICK_Y_BRL = v => {
+  if(v>=1000) return 'R$ '+Number(v/1000).toLocaleString('pt-BR',{minimumFractionDigits:0})+'k';
+  return 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:0});
+};
+const AV_LABEL_BRL = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0}).replace(/\./g,'.');
+const AV_LABEL_BRL2 = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+const AV_BASE_OPTS = (hasDataLabels=true, isBarHoriz=false) => ({
+  responsive:true, maintainAspectRatio:false,
+  layout:{ padding:{ top: hasDataLabels?32:10, right:10, bottom:4, left:4 } },
+  plugins:{
+    legend:{ display:true, position:'bottom', labels:{color:'#123a6b',font:{size:11},padding:16,usePointStyle:true} },
+    tooltip:{ mode:'index', intersect:false, callbacks:{
+      label: ctx => ' '+ctx.dataset.label+': '+AV_LABEL_BRL2(ctx.parsed[isBarHoriz?'x':'y'])
+    }},
+    datalabels: hasDataLabels ? {
+      anchor:'end', align:'end', offset:4, clamp:true,
+      color:'#1a4480', font:{size:9.5, weight:'700'},
+      formatter: v => v>0 ? AV_LABEL_BRL(v) : ''
+    } : { display:false }
+  },
+  scales:{
+    x:{ ticks:{color:'#7a8798',font:{size:10}}, grid:{color:'#eef1f4'} },
+    y:{ ticks:{color:'#7a8798',font:{size:10}, callback: AV_TICK_Y_BRL}, grid:{color:'#eef1f4'}, beginAtZero:true }
+  }
+});
+
+function avRenderChart(id, type, labels, datasets, extraOpts={}) {
+  const canvas = document.getElementById(id);
+  if(!canvas) return;
+  if(canvas._chartInstance){ canvas._chartInstance.destroy(); canvas._chartInstance=null; }
+  const ctx = canvas.getContext('2d');
+  const opts = JSON.parse(JSON.stringify(AV_BASE_OPTS(true)));
+  // merge profundo de scales se extraOpts tiver
+  if(extraOpts.scales){ Object.assign(opts.scales, extraOpts.scales); }
+  if(extraOpts.plugins){ Object.assign(opts.plugins, extraOpts.plugins); }
+  if(extraOpts.layout){ Object.assign(opts.layout, extraOpts.layout); }
+  canvas._chartInstance = new Chart(ctx, { type, data:{labels,datasets}, options:opts });
+}
+
+if(!window.avMesmaPeriodicidade) window.avMesmaPeriodicidade = true;
+function avTogglePeriodo(val){ window.avMesmaPeriodicidade = val; avRenderGraficos(); }
+
+// Calcula % diferença entre dois valores
+function avDiffPct(atual, anterior){
+  if(!anterior || anterior===0) return null;
+  return ((atual - anterior)/anterior)*100;
+}
+
+function avTabelaMensal(serie){
+  if(!serie.length) return '';
+  const fBRL = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const diffTag = (v) => {
+    if(v===null) return '<span style="color:#7a8798;">—</span>';
+    const cor = v>=0?'#d64545':'#1a9c62';
+    const seta = v>=0?'▲':'▼';
+    return `<span style="color:${cor};font-weight:700;">${seta} ${Math.abs(v).toFixed(1)}%</span>`;
+  };
+  const rows = serie.map((s,i)=>{
+    const ant = i>0?serie[i-1]:null;
+    const dvnf = ant?avDiffPct(s.vNF,ant.vNF):null;
+    const dnotas = ant?avDiffPct(s.notas,ant.notas):null;
+    return `<tr>
+      <td><strong>${s.label}</strong></td>
+      <td style="text-align:right;font-weight:700;">${fBRL(s.vNF)}</td>
+      <td style="text-align:center;">${diffTag(dvnf)}</td>
+      <td style="text-align:right;">${fBRL(s.vProd)}</td>
+      <td style="text-align:right;">${fBRL(s.vImpostos)}</td>
+      <td style="text-align:center;">${s.notas}</td>
+      <td style="text-align:center;">${diffTag(dnotas)}</td>
+      <td style="text-align:right;">${s.itens.toLocaleString('pt-BR')}</td>
+      <td style="text-align:right;">${fBRL(s.notas?s.vNF/s.notas:0)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-wrap" style="margin-top:14px;">
+    <table class="data-table" style="font-size:11.5px;">
+      <thead><tr>
+        <th>Mês</th><th>Valor Total</th><th>Δ Val.%</th>
+        <th>Valor Prod.</th><th>Impostos</th>
+        <th>Notas</th><th>Δ Notas%</th><th>Itens</th><th>Média/Nota</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function avTabelaAnual(anos){
+  if(!anos.length) return '';
+  const fBRL = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const diffTag = (v) => {
+    if(v===null) return '<span style="color:#7a8798;">—</span>';
+    const cor = v>=0?'#d64545':'#1a9c62';
+    const seta = v>=0?'▲':'▼';
+    return `<span style="color:${cor};font-weight:700;">${seta} ${Math.abs(v).toFixed(1)}%</span>`;
+  };
+  const rows = anos.map((a,i)=>{
+    const ant = i>0?anos[i-1]:null;
+    const dv = ant?avDiffPct(a.vNF,ant.vNF):null;
+    return `<tr>
+      <td><strong>${a.ano}</strong></td>
+      <td style="text-align:right;font-weight:700;">${fBRL(a.vNF)}</td>
+      <td style="text-align:center;">${diffTag(dv)}</td>
+      <td style="text-align:center;">${a.notas}</td>
+      <td style="text-align:right;">${fBRL(a.notas?a.vNF/a.notas:0)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-wrap" style="margin-top:14px;">
+    <table class="data-table" style="font-size:11.5px;">
+      <thead><tr><th>Ano</th><th>Valor Total</th><th>Δ%</th><th>Notas</th><th>Média/Nota</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function avTabelaSemanas(semanas){
+  if(!semanas.length) return '';
+  const fBRL = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const diffTag = (v) => {
+    if(v===null) return '<span style="color:#7a8798;">—</span>';
+    const cor = v>=0?'#d64545':'#1a9c62';
+    const seta = v>=0?'▲':'▼';
+    return `<span style="color:${cor};font-weight:700;">${seta} ${Math.abs(v).toFixed(1)}%</span>`;
+  };
+  const rows = semanas.map((s,i)=>{
+    const ant = i>0?semanas[i-1]:null;
+    const dv = ant?avDiffPct(s.vNF,ant.vNF):null;
+    return `<tr>
+      <td><strong>${s.label}</strong></td>
+      <td style="text-align:right;font-weight:700;">${fBRL(s.vNF)}</td>
+      <td style="text-align:center;">${diffTag(dv)}</td>
+      <td style="text-align:center;">${s.notas}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-wrap" style="margin-top:14px;">
+    <table class="data-table" style="font-size:11.5px;">
+      <thead><tr><th>Semana</th><th>Valor Total</th><th>Δ%</th><th>Notas</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function avRenderGraficos() {
+  const notas = avNotasFiltradas();
+  const serie = avSerieMensal(notas);
+  const anos  = avSerieAnual(notas);
+  const semanas = avSemanasDoMes(notas);
+  const comp = avComparativoMes();
+  const fBRL2 = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  const PLUGIN_NOLABELS = { datalabels:{ display:false } };
+  const PLUGIN_CNTS = { datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#1a4480',font:{size:10,weight:'700'},formatter:v=>v>0?v:'' } };
+
+  // ---- GRÁFICO 1: Valor mensal linha ----
+  if(serie.length){
+    const labels = serie.map(s=>s.label);
+    const vals = serie.map(s=>s.vNF);
+    const medias = vals.map((_,i)=>{ const j=vals.slice(Math.max(0,i-2),i+1); return j.reduce((a,b)=>a+b,0)/j.length; });
+    avRenderChart('av-chart-mensal','line', labels, [
+      { label:'Valor Total', data:vals, borderColor:'#0b2647', backgroundColor:'#1a448022', borderWidth:2.5, tension:0.35, fill:true, pointRadius:5, pointBackgroundColor:'#0b2647', pointBorderColor:'#fff', pointBorderWidth:2 },
+      { label:'Média Móvel 3M', data:medias, borderColor:'#5b92e5', borderDash:[6,4], borderWidth:2, tension:0.35, pointRadius:3, fill:false, pointBackgroundColor:'#5b92e5' }
+    ], { plugins:{ datalabels:{ anchor:'end',align:'top',offset:6,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:v=>AV_LABEL_BRL(v) } } });
+
+    // tabela mensal
+    const tel = document.getElementById('av-table-mensal');
+    if(tel) tel.innerHTML = avTabelaMensal(serie);
+  }
+
+  // ---- GRÁFICO 2: Notas e itens por mês ----
+  if(serie.length){
+    avRenderChart('av-chart-notas','bar', serie.map(s=>s.label), [
+      { label:'Notas', data:serie.map(s=>s.notas), backgroundColor:'#1a4480', borderRadius:5, borderSkipped:false },
+      { label:'Itens', data:serie.map(s=>s.itens), backgroundColor:'#5b92e5', borderRadius:5, borderSkipped:false }
+    ], { plugins:PLUGIN_CNTS, scales:{ y:{ ticks:{color:'#7a8798',font:{size:10}},grid:{color:'#eef1f4'},beginAtZero:true } } });
+  }
+
+  // ---- GRÁFICO 3: Ano a ano ----
+  if(anos.length){
+    const mesesPeriodo = window.avMesmaPeriodicidade && anos.length>=2;
+    if(mesesPeriodo){
+      const allMeses = [...new Set(avSerieMensal(notas).map(s=>s.mes))].sort((a,b)=>a-b);
+      const labels = allMeses.map(m=>MESES_PT[m]);
+      const ds = anos.map((an,idx)=>({
+        label:String(an.ano),
+        data: allMeses.map(m=>{ const s=avSerieMensal(notas.filter(n=>n.dtEmissao&&n.dtEmissao.getFullYear()===an.ano)).find(x=>x.mes===m); return s?s.vNF:0; }),
+        backgroundColor: AV_CORES[idx%AV_CORES.length], borderRadius:5, borderSkipped:false
+      }));
+      avRenderChart('av-chart-anual','bar', labels, ds, { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:9,weight:'700'},formatter:v=>v>0?AV_LABEL_BRL(v):'' } } });
+    } else {
+      avRenderChart('av-chart-anual','bar', anos.map(a=>String(a.ano)), [
+        { label:'Valor Total', data:anos.map(a=>a.vNF), backgroundColor: anos.map((_,i)=>AV_CORES[i%AV_CORES.length]), borderRadius:6, borderSkipped:false }
+      ], { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:v=>AV_LABEL_BRL(v) } } });
+    }
+    const tel2 = document.getElementById('av-table-anual');
+    if(tel2) tel2.innerHTML = avTabelaAnual(anos);
+  }
+
+  // ---- GRÁFICO 4: Semanas ----
+  if(semanas.length){
+    avRenderChart('av-chart-semanas','bar', semanas.map(s=>s.label), [
+      { label:'Valor Total', data:semanas.map(s=>s.vNF), backgroundColor:'#0b2647', borderRadius:5, borderSkipped:false },
+      { label:'Nº Notas', data:semanas.map(s=>s.notas), backgroundColor:'#8db4f0', borderRadius:5, borderSkipped:false, yAxisID:'y2' }
+    ], {
+      scales:{
+        y:{ ticks:{color:'#7a8798',font:{size:10},callback:AV_TICK_Y_BRL},grid:{color:'#eef1f4'},beginAtZero:true },
+        y2:{ position:'right',ticks:{color:'#5b92e5',font:{size:10}},grid:{drawOnChartArea:false},beginAtZero:true }
+      },
+      plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:(v,ctx)=> ctx.datasetIndex===0&&v>0?AV_LABEL_BRL(v):'' } }
+    });
+    const tel3 = document.getElementById('av-table-semanas');
+    if(tel3) tel3.innerHTML = avTabelaSemanas(semanas);
+  }
+
+  // ---- Atualiza cards de comparativo ----
+  if(comp){
+    const setEl = (id,v)=>{ const el=document.getElementById(id); if(el) el.innerHTML=v; };
+    setEl('av-comp-ult-label', comp.ult.label);
+    setEl('av-comp-ult-vnf', fBRL2(comp.ult.vNF));
+    setEl('av-comp-ult-notas', comp.ult.notas+' notas · '+comp.ult.itens+' itens');
+    setEl('av-comp-ant-label', comp.ant?comp.ant.label:'Sem mês anterior');
+    setEl('av-comp-ant-vnf', comp.ant?fBRL2(comp.ant.vNF):'—');
+    setEl('av-comp-ant-notas', comp.ant?comp.ant.notas+' notas · '+comp.ant.itens+' itens':'—');
+    if(comp.diffVNF!==null){
+      const cor = comp.diffVNF>=0?'#d64545':'#1a9c62';
+      const seta = comp.diffVNF>=0?'▲':'▼';
+      const corN = comp.diffNotas>=0?'#d64545':'#1a9c62';
+      setEl('av-comp-diff',`
+        <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+          <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Variação Valor</div>
+            <div style="font-size:22px;font-weight:800;color:${cor};">${seta} ${Math.abs(comp.diffVNF).toFixed(1)}%</div>
+            <div style="font-size:11px;color:#7a8798;">${fBRL2(comp.ult.vNF)} vs ${fBRL2(comp.ant.vNF)}</div></div>
+          <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Variação Notas</div>
+            <div style="font-size:22px;font-weight:800;color:${corN};">${comp.diffNotas>=0?'+':''}${comp.diffNotas}</div>
+            <div style="font-size:11px;color:#7a8798;">${comp.ult.notas} vs ${comp.ant.notas} notas</div></div>
+          <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Média/Nota</div>
+            <div style="font-size:18px;font-weight:800;color:#123a6b;">${fBRL2(comp.ult.notas?comp.ult.vNF/comp.ult.notas:0)}</div>
+            <div style="font-size:11px;color:#7a8798;">vs ${fBRL2(comp.ant&&comp.ant.notas?comp.ant.vNF/comp.ant.notas:0)}</div></div>
+        </div>`);
+    } else {
+      setEl('av-comp-diff','<span style="color:#7a8798;">Sem mês anterior para comparar.</span>');
+    }
+  }
+}
+
+function avCategorias(notas) {
+  const map = new Map();
+  notas.forEach(n=>{
+    const c = n.categoria;
+    const ex = map.get(c) || {categoria:c, notas:0, itens:0, vProd:0, vNF:0, vImpostos:0};
+    ex.notas++;
+    ex.itens  += n.itens.length;
+    ex.vProd  += n.vProd;
+    ex.vNF    += n.vNF;
+    ex.vImpostos += n.vImpostos;
+    map.set(c, ex);
+  });
+  return [...map.values()].sort((a,b)=>b.vNF-a.vNF);
+}
+
+// ---- Render principal ----
+function renderAvaria() {
+  const pane = document.getElementById('pane-avaria');
+  if(!pane) return;
+  const notas = avNotasFiltradas();
+  const cats = avCategorias(notas);
+  const totalNotas = notas.length;
+  const totalItens = notas.reduce((s,n)=>s+n.itens.length,0);
+  const totalVNF   = notas.reduce((s,n)=>s+n.vNF,0);
+  const totalVProd = notas.reduce((s,n)=>s+n.vProd,0);
+  const totalVimp  = notas.reduce((s,n)=>s+n.vImpostos,0);
+  const datas = notas.filter(n=>n.dtEmissao).map(n=>n.dtEmissao).sort((a,b)=>a-b);
+  const dtMin = datas[0], dtMax = datas[datas.length-1];
+  const alertasCNPJ = AvState.notas.filter(n=>n.ok&&n.cnpjDivergente);
+  const erros = AvState.notas.filter(n=>!n.ok);
+
+  const fBRL = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const mc = (icon, label, value, sub='', cor='#123a6b') =>
+    `<div class="card" style="flex:1;min-width:130px;">
+      <div class="card-label">${icon} ${label}</div>
+      <div class="card-value" style="color:${cor};">${value}</div>
+      ${sub?`<div class="card-sub">${sub}</div>`:''}
+    </div>`;
+
+  pane.innerHTML = `
+    <!-- UPLOAD -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📦 Avaria XML — Análise de NF-e</h3>
+        <div class="panel-actions">
+          <label class="btn btn-primary" style="cursor:pointer;">
+            📂 Carregar ZIP de XMLs
+            <input type="file" id="av-zip-input" accept=".zip" style="display:none;">
+          </label>
+          ${AvState.notas.length?`<button class="btn btn-outline btn-sm" id="av-limpar">Limpar dados</button>`:''}
+        </div>
+      </div>
+      ${AvState.notas.length===0?`<div class="hint-box">Carregue um arquivo <strong>.ZIP</strong> contendo os XMLs de NF-e para iniciar a análise.</div>`:''}
+      ${erros.length?`<div class="warn-box">⚠️ ${erros.length} arquivo(s) com erro de leitura: ${erros.map(e=>`<strong>${e.nomeArquivo}</strong>: ${e.erro}`).join(' · ')}</div>`:''}
+      ${alertasCNPJ.length?`<div class="warn-box" style="background:#fef2f2;border-color:#d64545;">🚫 ${alertasCNPJ.length} XML(s) com CNPJ divergente:<br>${alertasCNPJ.map(n=>`<strong>${n.nomeArquivo}</strong>: encontrado <code>${n.cnpjEmit}</code> (esperado <code>${AvState.CNPJ_ESPERADO}</code>)`).join('<br>')}</div>`:''}
+    </div>
+
+    ${AvState.notas.length===0?'':`
+    <!-- FILTROS -->
+    <div class="panel">
+      <div class="toolbar">
+        <div class="filter-group">
+          <label>Data inicial</label>
+          <input type="date" id="av-dt-ini" value="${AvState.filtro.ini?AvState.filtro.ini.toISOString().slice(0,10):''}">
+        </div>
+        <div class="filter-group">
+          <label>Data final</label>
+          <input type="date" id="av-dt-fim" value="${AvState.filtro.fim?AvState.filtro.fim.toISOString().slice(0,10):''}">
+        </div>
+        <div class="filter-group">
+          <label>Categoria</label>
+          <select id="av-cat-sel">
+            <option value="">Todas</option>
+            ${[...new Set(AvState.notas.filter(n=>n.ok).map(n=>n.categoria))].sort().map(c=>`<option value="${c}" ${AvState.filtro.categoria===c?'selected':''}>${c}</option>`).join('')}
+          </select>
+        </div>
+        <div class="filter-group" style="flex:2;">
+          <label>Busca (NF, motivo, arquivo)</label>
+          <input type="text" id="av-busca" placeholder="Pesquisar..." value="${AvState.filtro.busca}">
+        </div>
+        <button class="btn btn-outline btn-sm" id="av-limpar-filtro">Limpar filtros</button>
+      </div>
+    </div>
+
+    <!-- CARDS -->
+    <div class="panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${mc('📄','Total de Notas', totalNotas, dtMin&&dtMax?fmtDateBR(dtMin)+' a '+fmtDateBR(dtMax):'')}
+        ${mc('📦','Total de Itens', totalItens.toLocaleString('pt-BR'))}
+        ${mc('💰','Valor Total', fBRL(totalVNF), `média ${fBRL(totalNotas?totalVNF/totalNotas:0)}/nota`,'#1a9c62')}
+        ${mc('🧾','Valor dos Produtos', fBRL(totalVProd))}
+        ${mc('💸','Total de Impostos', fBRL(totalVimp))}
+        ${mc('⚠️','Categorias', cats.length, `${totalNotas} notas processadas`)}
+      </div>
+    </div>
+
+    <!-- COMPARATIVO MÊS vs MÊS ANTERIOR -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📅 Comparativo — Mês Fechado vs Anterior${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
+        <div class="panel-actions">
+          <label style="font-size:11px;color:#7a8798;">Mesmo período:</label>
+          <div class="toggle-group">
+            <button data-v="sim" class="${window.avMesmaPeriodicidade?'active':''}" onclick="avTogglePeriodo(true)">Sim</button>
+            <button data-v="nao" class="${!window.avMesmaPeriodicidade?'active':''}" onclick="avTogglePeriodo(false)">Não</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+        <div style="flex:1;min-width:160px;background:#0b2647;border-radius:8px;padding:14px 18px;">
+          <div style="font-size:10px;color:#9db8dd;font-weight:700;text-transform:uppercase;margin-bottom:4px;" id="av-comp-ult-label">—</div>
+          <div style="font-size:26px;font-weight:800;color:#fff;" id="av-comp-ult-vnf">—</div>
+          <div style="font-size:11px;color:#9db8dd;margin-top:3px;" id="av-comp-ult-notas">—</div>
+        </div>
+        <div style="flex:1;min-width:160px;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:14px 18px;">
+          <div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:4px;" id="av-comp-ant-label">—</div>
+          <div style="font-size:26px;font-weight:800;color:#7a8798;" id="av-comp-ant-vnf">—</div>
+          <div style="font-size:11px;color:#7a8798;margin-top:3px;" id="av-comp-ant-notas">—</div>
+        </div>
+        <div style="flex:2;min-width:200px;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:14px 18px;display:flex;align-items:center;">
+          <div style="font-size:13px;" id="av-comp-diff">Sem dados suficientes para comparação.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GRÁFICOS -->
+    <div class="panel">
+      <div class="panel-header"><h3>📈 Valor Total por Mês${AvState.filtro.categoria?' — '+AvState.filtro.categoria:''}</h3></div>
+      <div style="height:280px;"><canvas id="av-chart-mensal"></canvas></div>
+      <div id="av-table-mensal"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="panel">
+        <div class="panel-header"><h3>📊 Notas e Itens por Mês</h3></div>
+        <div style="height:240px;"><canvas id="av-chart-notas"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <h3>📅 Ano a Ano${window.avMesmaPeriodicidade?' — Mesmo Período':''}</h3>
+        </div>
+        <div style="height:240px;"><canvas id="av-chart-anual"></canvas></div>
+        <div id="av-table-anual"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>📆 Semanas do Último Mês com Dados</h3></div>
+      <div style="height:240px;"><canvas id="av-chart-semanas"></canvas></div>
+      <div id="av-table-semanas"></div>
+    </div>
+
+    <!-- RANKING DE CATEGORIAS -->
+    <div class="panel">
+      <div class="panel-header"><h3>📊 Ranking por Categoria</h3></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>#</th><th>Categoria</th><th>Notas</th><th>Itens</th><th>Valor Produtos</th><th>Valor Total</th><th>Média/Nota</th></tr></thead>
+          <tbody>
+            ${cats.map((c,i)=>`<tr class="clickable" onclick="avFiltrarCategoria('${escapeHtml(c.categoria)}')">
+              <td style="color:#7a8798;">${i+1}</td>
+              <td><strong>${escapeHtml(c.categoria)}</strong></td>
+              <td>${c.notas}</td><td>${c.itens.toLocaleString('pt-BR')}</td>
+              <td>${fBRL(c.vProd)}</td>
+              <td><strong>${fBRL(c.vNF)}</strong></td>
+              <td>${fBRL(c.notas?c.vNF/c.notas:0)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TABELA DE NOTAS -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📋 Notas Fiscais — ${totalNotas} registros${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" style="font-size:11.5px;">
+          <thead><tr>
+            <th>Data</th><th>NF</th><th>Série</th><th>Natureza</th>
+            <th>Motivo Original</th><th>Categoria</th><th>Itens</th>
+            <th>Valor Prod.</th><th>Impostos</th><th>Valor Total</th><th>Arquivo</th>
+          </tr></thead>
+          <tbody>
+            ${notas.slice(0,200).map(n=>`<tr class="clickable" onclick="avAbrirDetalhe('${escapeHtml(n.nNF+'-'+n.serie)}')">
+              <td>${n.dtEmissao?fmtDateBR(n.dtEmissao):'—'}</td>
+              <td style="font-weight:700;color:#2f6fce;">${escapeHtml(n.nNF)}</td>
+              <td>${escapeHtml(n.serie)}</td>
+              <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(n.natOp)}">${escapeHtml(n.natOp)}</td>
+              <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(n.motivo)}">${escapeHtml(n.motivo)||'—'}</td>
+              <td><span style="background:#2f6fce22;color:#2f6fce;font-size:9px;font-weight:800;padding:2px 7px;border-radius:10px;">${escapeHtml(n.categoria)}</span></td>
+              <td>${n.itens.length}</td>
+              <td>${fBRL(n.vProd)}</td>
+              <td>${fBRL(n.vImpostos)}</td>
+              <td><strong>${fBRL(n.vNF)}</strong></td>
+              <td style="font-size:10px;color:#7a8798;max-width:100px;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(n.nomeArquivo)}">${escapeHtml(n.nomeArquivo.replace(/-nfe-proc\.xml$/,''))}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        ${totalNotas>200?`<div class="hint-box">Exibindo 200 de ${totalNotas} notas. Use os filtros para refinar.</div>`:''}
+      </div>
+    </div>
+
+    <!-- DETALHE DA NOTA (se aberto) -->
+    <div id="av-detalhe"></div>
+    `}
+  `;
+
+  document.getElementById('av-zip-input')?.addEventListener('change', avCarregarZip);
+  document.getElementById('av-limpar')?.addEventListener('click', ()=>{ AvState.notas=[]; AvState.filtro={ini:null,fim:null,categoria:null,busca:''}; renderAvaria(); });
+  document.getElementById('av-dt-ini')?.addEventListener('change', e=>{ AvState.filtro.ini=e.target.value?new Date(e.target.value+'T00:00:00'):null; renderAvaria(); });
+  document.getElementById('av-dt-fim')?.addEventListener('change', e=>{ AvState.filtro.fim=e.target.value?new Date(e.target.value+'T23:59:59'):null; renderAvaria(); });
+  document.getElementById('av-cat-sel')?.addEventListener('change', e=>{ AvState.filtro.categoria=e.target.value||null; renderAvaria(); });
+  document.getElementById('av-busca')?.addEventListener('input', e=>{ AvState.filtro.busca=e.target.value; renderAvaria(); });
+  document.getElementById('av-limpar-filtro')?.addEventListener('click', ()=>{ AvState.filtro={ini:null,fim:null,categoria:null,busca:''}; renderAvaria(); });
+
+  // Renderiza gráficos após DOM estar pronto (precisa dos canvas existirem)
+  if(AvState.notas.length > 0) {
+    setTimeout(()=> avRenderGraficos(), 60);
+  }
+
+  // Se tem detalhe aberto, re-renderiza
+  if(AvState.detalheNota) avRenderDetalhe(AvState.detalheNota);
+}
+
+function avFiltrarCategoria(cat) {
+  AvState.filtro.categoria = AvState.filtro.categoria===cat ? null : cat;
+  AvState.detalheNota = null;
+  renderAvaria();
+}
+
+function avAbrirDetalhe(key) {
+  const [nNF, serie] = key.split('-');
+  const nota = avNotasFiltradas().find(n=>n.nNF===nNF && n.serie===serie);
+  if(!nota) return;
+  AvState.detalheNota = nota;
+  avRenderDetalhe(nota);
+  setTimeout(()=>document.getElementById('av-detalhe')?.scrollIntoView({behavior:'smooth',block:'start'}),100);
+}
+
+function avRenderDetalhe(nota) {
+  const el = document.getElementById('av-detalhe');
+  if(!el) return;
+  const fBRL = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const totalItens = nota.itens.reduce((s,i)=>s+i.qCom,0);
+  el.innerHTML = `
+    <div class="panel" style="border-left:4px solid #2f6fce;">
+      <div class="panel-header">
+        <h3>📄 Detalhe NF-e ${escapeHtml(nota.nNF)} — Série ${escapeHtml(nota.serie)}</h3>
+        <button class="btn btn-outline btn-sm" onclick="AvState.detalheNota=null;document.getElementById('av-detalhe').innerHTML='';">✕ Fechar</button>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+        <div style="flex:1;min-width:220px;">
+          <table style="font-size:12px;border-collapse:collapse;width:100%;">
+            ${[
+              ['Data Emissão', nota.dtEmissao?fmtDateBR(nota.dtEmissao):'—'],
+              ['CNPJ Emitente', nota.cnpjEmit+(nota.cnpjDivergente?' <span style="color:#d64545;font-weight:700;">⚠️ divergente</span>':'')],
+              ['Natureza da Operação', escapeHtml(nota.natOp)],
+              ['Motivo Original', `<strong>${escapeHtml(nota.motivo||'—')}</strong>`],
+              ['Categoria Padronizada', `<span style="background:#2f6fce22;color:#2f6fce;font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;">${escapeHtml(nota.categoria)}</span>`],
+              ['Arquivo XML', `<span style="font-size:10px;color:#7a8798;">${escapeHtml(nota.nomeArquivo)}</span>`],
+            ].map(([k,v])=>`<tr><td style="padding:4px 8px 4px 0;color:#7a8798;white-space:nowrap;">${k}:</td><td style="padding:4px 0;">${v}</td></tr>`).join('')}
+          </table>
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <table style="font-size:12px;border-collapse:collapse;width:100%;">
+            ${[
+              ['Valor dos Produtos', fBRL(nota.vProd)],
+              ['Desconto', fBRL(nota.vDesc)],
+              ['Frete', fBRL(nota.vFrete)],
+              ['ICMS', fBRL(nota.vICMS)],
+              ['PIS', fBRL(nota.vPIS)],
+              ['COFINS', fBRL(nota.vCOFINS)],
+              ['IPI', fBRL(nota.vIPI)],
+              ['Total Impostos', fBRL(nota.vImpostos)],
+              ['VALOR TOTAL NF', `<strong style="color:#1a9c62;font-size:14px;">${fBRL(nota.vNF)}</strong>`],
+            ].map(([k,v])=>`<tr><td style="padding:4px 8px 4px 0;color:#7a8798;">${k}:</td><td style="padding:4px 0;">${v}</td></tr>`).join('')}
+          </table>
+        </div>
+      </div>
+      <div style="margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:700;color:#123a6b;margin-bottom:4px;">Informações Adicionais (infAdic completo):</div>
+        <div style="font-size:11px;background:#f8fafc;border:1px solid #dde3ea;border-radius:4px;padding:8px;font-family:monospace;white-space:pre-wrap;color:#4a5568;">${escapeHtml(nota.infCplTxt||'—')}</div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:#123a6b;margin:14px 0 6px;">Produtos (${nota.itens.length} itens · ${fBRL(nota.vProd)} total)</div>
+      <div class="table-wrap">
+        <table class="data-table" style="font-size:11px;">
+          <thead><tr>
+            <th>#</th><th>Código</th><th>Descrição</th><th>NCM</th><th>CFOP</th>
+            <th>Un.</th><th>Qtd.</th><th>Vl. Unit.</th><th>Vl. Prod.</th>
+            <th>BC ICMS</th><th>%ICMS</th><th>Vl. ICMS</th><th>PIS</th><th>COFINS</th>
+          </tr></thead>
+          <tbody>
+            ${nota.itens.map(it=>`<tr>
+              <td>${escapeHtml(it.nItem)}</td>
+              <td style="color:#2f6fce;">${escapeHtml(it.cProd)}</td>
+              <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(it.xProd)}">${escapeHtml(it.xProd)}</td>
+              <td>${escapeHtml(it.NCM)}</td><td>${escapeHtml(it.CFOP)}</td>
+              <td>${escapeHtml(it.uCom)}</td>
+              <td>${it.qCom.toLocaleString('pt-BR',{maximumFractionDigits:4})}</td>
+              <td>${fBRL(it.vUnCom)}</td>
+              <td><strong>${fBRL(it.vProd)}</strong></td>
+              <td>${it.vBC?fBRL(it.vBC):'—'}</td>
+              <td>${it.pICMS?it.pICMS+'%':'—'}</td>
+              <td>${it.vICMS?fBRL(it.vICMS):'—'}</td>
+              <td>${it.vPIS?fBRL(it.vPIS):'—'}</td>
+              <td>${it.vCOFINS?fBRL(it.vCOFINS):'—'}</td>
+            </tr>`).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="background:#f0f4f8;font-weight:700;">
+              <td colspan="6">TOTAL</td>
+              <td>${totalItens.toLocaleString('pt-BR',{maximumFractionDigits:4})}</td>
+              <td>—</td>
+              <td>${fBRL(nota.vProd)}</td>
+              <td>—</td><td>—</td>
+              <td>${fBRL(nota.vICMS)}</td>
+              <td>${fBRL(nota.vPIS)}</td>
+              <td>${fBRL(nota.vCOFINS)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+async function avCarregarZip(e) {
+  const file = e.target.files[0];
+  if(!file) return;
+  toast('Processando ZIP...');
+  try {
+    // carrega JSZip via CDN se não disponível
+    if(typeof JSZip === 'undefined') {
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        s.onload=res; s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+    const buf = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(buf);
+    const novas = [];
+    const proms = [];
+    zip.forEach((relPath, zipEntry) => {
+      if(zipEntry.dir) return;
+      const nome = relPath.split('/').pop();
+      if(!nome.toLowerCase().endsWith('.xml')) return;
+      proms.push(
+        zipEntry.async('string').then(xmlStr => {
+          novas.push(avParseXML(xmlStr, nome));
+        })
+      );
+    });
+    await Promise.all(proms);
+    AvState.notas = novas;
+    AvState.filtro = { ini:null, fim:null, categoria:null, busca:'' };
+    AvState.detalheNota = null;
+    const ok = novas.filter(n=>n.ok).length;
+    const err = novas.filter(n=>!n.ok).length;
+    toast(`${ok} XML(s) processados${err?' · '+err+' com erro':''}.`, 'success');
+    renderAvaria();
+  } catch(err) {
+    console.error(err);
+    toast('Erro ao processar ZIP: '+err.message, 'error');
+  }
 }
