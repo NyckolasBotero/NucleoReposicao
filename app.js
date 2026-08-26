@@ -2405,6 +2405,7 @@ const UI = {
     });
     $("#btn-reload").addEventListener("click", ()=> $("#file-input").click());
     $("#btn-empty-upload").addEventListener("click", ()=> $("#file-input").click());
+    $("#btn-ir-avaria").addEventListener("click", ()=> abrirAvariaSemArquivo());
     $("#file-input").addEventListener("change", (e)=>{
       if(e.target.files[0]) this.handleFile(e.target.files[0]);
     });
@@ -2458,6 +2459,13 @@ const UI = {
       $("#main-content").style.display = "block";
       $("#btn-export-png").disabled = false;
       $("#btn-export-pdf").disabled = false;
+
+      // Restaura o botão Gestão caso tenha sido bloqueado pelo modo "sem arquivo"
+      const gestaoBtn = $(".nav-btn[data-view='gestao']");
+      if(gestaoBtn){ gestaoBtn.style.opacity=""; gestaoBtn.style.pointerEvents=""; gestaoBtn.title=""; }
+      // Remove hint de "sem arquivo" se existir
+      const hint = document.getElementById('avaria-sem-arquivo-hint');
+      if(hint) hint.remove();
 
       toast("Arquivo carregado com sucesso.","success");
 
@@ -2518,7 +2526,8 @@ const UI = {
   },
 
   renderPane(pane){
-    if(!window.APP_STATE.ready) return;
+    // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
+    if(!window.APP_STATE.ready && pane !== 'avaria') return;
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
@@ -5889,17 +5898,102 @@ const AvState = {
 };
 
 // ---- Normalização de motivos baseada nos XMLs reais analisados ----
+// Estado global do toggle TF Comprador → Avaria
+if(!window.avTFCompradorEmAvaria) window.avTFCompradorEmAvaria = true;
+
+// Helper: normaliza string para comparação tolerante a typos
+function avNorm(s){ return (s||'').toUpperCase().replace(/\s+/g,' ').trim(); }
+
+// Detecta se o texto contém "BAIXA TF" (com typos comuns: BAXA, BAIKA, BAI XA...)
+function avIsBaixaTF(t){
+  // BAIXA e variações (BA[IAX]X?A, BAEXA, etc.)
+  return /B[AI][AI]?X?A\s*T[EF]/.test(t) || /BAIXA\s*T[EF]/.test(t) || /BAXA\s*T[EF]/.test(t);
+}
+
+// Detecta se é TF da loja STO (Avaria)
+function avIsTFLoja(t){
+  return avIsBaixaTF(t) && /STO|LOJA|STORE|STOC|ESTO/.test(t);
+}
+
+// Detecta se é TF Comprador (nome de pessoa, não STO)
+// Lógica: é baixa TF, mas tem um nome após "TF" que NÃO é STO/LOJA
+// Detecta se é TF Comprador (deve ter nome/COMPRADOR explícito APÓS o TF)
+function avIsTFComprador(t){
+  if(avIsTFLoja(t)) return false;
+  if(!avIsBaixaTF(t) && !/\bT[EF]\s*[-–]?\s*COMP/.test(t)) return false;
+  // precisa ter COMPRADOR explícito OU nome após TF separado por hífen/espaço
+  if(/T[EF]\s*[-–]?\s*COMP/.test(t)) return true;      // TF COMPRADOR
+  if(/T[EF]\s*[-–]\s*[A-Z]{2}/.test(t)) return true;   // TF - NOME (com hífen obrigatório)
+  return false;
+  // ⚠️ "BAIXA TF" sozinho, sem hífen + nome ou COMPRADOR → NÃO é comprador → vai para Avaria
+}
+
+// Detecta variações de Cozinha
+function avIsCozinha(t){
+  return /C[OU]Z[IY]?[NH]A|COZINHA|CUZINHA|USO\s*COZ|CUZINHA|COZIMHA/.test(t);
+}
+
+// Detecta variações de VALE com typos
+function avIsVale(t){
+  return /V[AE]L[EI]/.test(t);
+}
+
+// Detecta VALE RECEBIMENTO com typos (VELE RECEBIMENTO etc.)
+function avIsValeRecebimento(t){
+  return avIsVale(t) && /REC[EI]B/.test(t);
+}
+
+// Detecta VALE MOTORISTA com typos
+function avIsValeMotorista(t){
+  return avIsVale(t) && /MOTOR|MOTO\b/.test(t);
+}
+
+// Detecta COMPRA DE FUNCIONÁRIO com muitos typos documentados:
+// COMNPRA, COMPPRA, COMPRAD, FUNCIOANRIO, FUNBCIONARIO, "NOTA DE FUNCIONARIO"
+function avIsCompraFuncionario(t){
+  // "NOTA DE FUNCIONARIO" (sem COMPRA explícita, mas claramente compra)
+  if(/NOTA\s+(DE\s+)?FUNC?/.test(t) && /IONARI|CIONARI|IOANRI|BCIONAR/.test(t) && !/LOJA|STO/.test(t)) return true;
+  // COMPRA (e typos) + FUNCIONARIO (e typos)
+  // temCompra: COM + variações (COMNPRA, COMPPRA, COMPRAD, COMPRA)
+  const temCompra = /COM[NP]?[NP]?R[AD][AO]?/.test(t) && /^.*COM/.test(t);
+  // temFunc: qualquer variante com FUN + C/B + sufixo com IONARI ou CIONARI ou IOANRI
+  const temFunc = /FUN[BC]?[CI]?[OA][AN][AIRO]*R?[IARO][OA]/.test(t) ||
+                  /FUNC/.test(t) && /IONAR|IOANR|BCIONAR/.test(t) ||
+                  /FUN[BC]CION/.test(t); // FUNBCIONARIO, FUNCIONARIO
+  return temCompra && temFunc;
+}
+
+// Função principal de categorização — tolerante a todos os typos documentados
 function avNormalizarCategoria(textoOriginal) {
   if(!textoOriginal) return 'Outros';
-  const t = textoOriginal.toUpperCase().replace(/\s+/g,' ').trim();
-  if(/VALE\s*MOTOR/.test(t))          return 'Vale Motorista';
-  if(/VALE\s*RECEB/.test(t))          return 'Vale Recebimento';
-  if(/COMPRA\s*DE\s*FU[CN][CN]?IONARI/.test(t)) return 'Compra de Funcionário';
-  if(/BAIXA\s*TF/.test(t))            return 'Baixa TF';
-  if(/BAIXA\s*COZ/.test(t))           return 'Baixa Cozinha';
-  if(/BAIXA/.test(t))                 return 'Baixa Estoque';
-  if(/AVARIA/.test(t))                return 'Avaria';
-  if(/VALE/.test(t))                  return 'Vale (outros)';
+  const t = avNorm(textoOriginal);
+
+  // 1. Baixa TF Loja (→ Avaria)
+  if(avIsTFLoja(t)) return 'Avaria';
+
+  // 2. Baixa TF Comprador (depende do toggle)
+  if(avIsTFComprador(t)){
+    return window.avTFCompradorEmAvaria ? 'Avaria' : 'Baixa TF Comprador';
+  }
+
+  // 3. Baixa Cozinha (e variações)
+  if(avIsCozinha(t)) return 'Baixa Cozinha';
+
+  // 4. Avaria explícita
+  if(/AVARIA/.test(t)) return 'Avaria';
+
+  // 5. Qualquer tipo de Vale → categoria única "Vales"
+  if(avIsVale(t)) return 'Vales';
+
+  // 6. Compra de Funcionário → também Vales
+  if(avIsCompraFuncionario(t)) return 'Vales';
+
+  // 9. Qualquer BAIXA TF restante (sem loja nem comprador explícito) → Avaria
+  if(avIsBaixaTF(t)) return 'Avaria';
+
+  // 10. Outras Baixas genéricas
+  if(/BA[IX]+A/.test(t)) return 'Baixa Estoque';
+
   return 'Outros';
 }
 
@@ -6089,9 +6183,34 @@ function avComparativoMes() {
   if(serie.length < 1) return null;
   const ult = serie[serie.length-1];
   const ant = serie.length>=2 ? serie[serie.length-2] : null;
-  const diffVNF = ant ? ((ult.vNF - ant.vNF)/Math.max(ant.vNF,0.01)*100) : null;
-  const diffNotas = ant ? ult.notas - ant.notas : null;
-  return { ult, ant, diffVNF, diffNotas };
+
+  if(!ant) return { ult, ant: null, diffVNF: null, diffNotas: null, mesmoPerido: window.avMesmaPeriodicidade };
+
+  // Determina o dia máximo presente no mês atual (último dia com nota)
+  const notasMesAtual = notas.filter(n=>n.dtEmissao.getFullYear()===ult.ano && n.dtEmissao.getMonth()===ult.mes);
+  const diaCorte = Math.max(...notasMesAtual.map(n=>n.dtEmissao.getDate()));
+
+  // Com "mesmo período": filtra o mês anterior até o mesmo dia do mês
+  let antComp = ant;
+  if(window.avMesmaPeriodicidade) {
+    const notasMesAnt = notas.filter(n=>
+      n.dtEmissao.getFullYear()===ant.ano && n.dtEmissao.getMonth()===ant.mes &&
+      n.dtEmissao.getDate() <= diaCorte
+    );
+    antComp = {
+      ...ant,
+      notas: notasMesAnt.length,
+      itens: notasMesAnt.reduce((s,n)=>s+n.itens.length,0),
+      vNF:   notasMesAnt.reduce((s,n)=>s+n.vNF,0),
+      vProd: notasMesAnt.reduce((s,n)=>s+n.vProd,0),
+      vImpostos: notasMesAnt.reduce((s,n)=>s+n.vImpostos,0),
+      diaCorte  // dia de corte aplicado
+    };
+  }
+
+  const diffVNF   = antComp.vNF > 0 ? ((ult.vNF - antComp.vNF) / antComp.vNF * 100) : null;
+  const diffNotas = ult.notas - antComp.notas;
+  return { ult, ant: antComp, antTotal: ant, diffVNF, diffNotas, mesmoPerido: window.avMesmaPeriodicidade, diaCorte };
 }
 
 // Semanas do mês mais recente
@@ -6292,25 +6411,18 @@ function avRenderGraficos() {
     ], { plugins:PLUGIN_CNTS, scales:{ y:{ ticks:{color:'#7a8798',font:{size:10}},grid:{color:'#eef1f4'},beginAtZero:true } } });
   }
 
-  // ---- GRÁFICO 3: Ano a ano ----
+  // ---- GRÁFICO 3: Ano a ano — SEMPRE por ano total, independente do filtro ----
   if(anos.length){
-    const mesesPeriodo = window.avMesmaPeriodicidade && anos.length>=2;
-    if(mesesPeriodo){
-      const allMeses = [...new Set(avSerieMensal(notas).map(s=>s.mes))].sort((a,b)=>a-b);
-      const labels = allMeses.map(m=>MESES_PT[m]);
-      const ds = anos.map((an,idx)=>({
-        label:String(an.ano),
-        data: allMeses.map(m=>{ const s=avSerieMensal(notas.filter(n=>n.dtEmissao&&n.dtEmissao.getFullYear()===an.ano)).find(x=>x.mes===m); return s?s.vNF:0; }),
-        backgroundColor: AV_CORES[idx%AV_CORES.length], borderRadius:5, borderSkipped:false
-      }));
-      avRenderChart('av-chart-anual','bar', labels, ds, { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:9,weight:'700'},formatter:v=>v>0?AV_LABEL_BRL(v):'' } } });
-    } else {
-      avRenderChart('av-chart-anual','bar', anos.map(a=>String(a.ano)), [
-        { label:'Valor Total', data:anos.map(a=>a.vNF), backgroundColor: anos.map((_,i)=>AV_CORES[i%AV_CORES.length]), borderRadius:6, borderSkipped:false }
-      ], { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:v=>AV_LABEL_BRL(v) } } });
-    }
+    // usa TODAS as notas (sem filtro de período) para mostrar anos completos
+    const todasOk = AvState.notas.filter(n=>n.ok&&n.dtEmissao);
+    const catFiltro = AvState.filtro.categoria;
+    const notasParaAnual = catFiltro ? todasOk.filter(n=>n.categoria===catFiltro) : todasOk;
+    const anosTotal = avSerieAnual(notasParaAnual);
+    avRenderChart('av-chart-anual','bar', anosTotal.map(a=>String(a.ano)), [
+      { label:'Valor Total', data:anosTotal.map(a=>a.vNF), backgroundColor: anosTotal.map((_,i)=>AV_CORES[i%AV_CORES.length]), borderRadius:6, borderSkipped:false }
+    ], { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:v=>AV_LABEL_BRL(v) } } });
     const tel2 = document.getElementById('av-table-anual');
-    if(tel2) tel2.innerHTML = avTabelaAnual(anos);
+    if(tel2) tel2.innerHTML = avTabelaAnual(anosTotal);
   }
 
   // ---- GRÁFICO 4: Semanas ----
@@ -6332,16 +6444,23 @@ function avRenderGraficos() {
   // ---- Atualiza cards de comparativo ----
   if(comp){
     const setEl = (id,v)=>{ const el=document.getElementById(id); if(el) el.innerHTML=v; };
-    setEl('av-comp-ult-label', comp.ult.label);
+    const mesmoP = window.avMesmaPeriodicidade;
+    setEl('av-comp-ult-label', comp.ult.label + (mesmoP && comp.diaCorte ? ` (1–${comp.diaCorte})` : ' (até hoje)'));
     setEl('av-comp-ult-vnf', fBRL2(comp.ult.vNF));
     setEl('av-comp-ult-notas', comp.ult.notas+' notas · '+comp.ult.itens+' itens');
-    setEl('av-comp-ant-label', comp.ant?comp.ant.label:'Sem mês anterior');
-    setEl('av-comp-ant-vnf', comp.ant?fBRL2(comp.ant.vNF):'—');
-    setEl('av-comp-ant-notas', comp.ant?comp.ant.notas+' notas · '+comp.ant.itens+' itens':'—');
+    setEl('av-comp-ant-label', comp.ant
+      ? comp.ant.label + (mesmoP && comp.diaCorte ? ` (1–${comp.diaCorte})` : ' (mês fechado)')
+      : 'Sem mês anterior');
+    setEl('av-comp-ant-vnf', comp.ant ? fBRL2(comp.ant.vNF) : '—');
+    const totalFechadoSub = mesmoP && comp.antTotal
+      ? `<br><span style="font-size:10px;color:#9db8dd;">Mês fechado: ${fBRL2(comp.antTotal.vNF)} · ${comp.antTotal.notas} notas</span>`
+      : '';
+    setEl('av-comp-ant-notas', comp.ant ? comp.ant.notas+' notas · '+comp.ant.itens+' itens'+totalFechadoSub : '—');
     if(comp.diffVNF!==null){
       const cor = comp.diffVNF>=0?'#d64545':'#1a9c62';
       const seta = comp.diffVNF>=0?'▲':'▼';
       const corN = comp.diffNotas>=0?'#d64545':'#1a9c62';
+      const periodoLabel = mesmoP && comp.diaCorte ? `dias 1–${comp.diaCorte} de cada mês` : 'mês atual vs fechado anterior';
       setEl('av-comp-diff',`
         <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
           <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Variação Valor</div>
@@ -6353,6 +6472,9 @@ function avRenderGraficos() {
           <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Média/Nota</div>
             <div style="font-size:18px;font-weight:800;color:#123a6b;">${fBRL2(comp.ult.notas?comp.ult.vNF/comp.ult.notas:0)}</div>
             <div style="font-size:11px;color:#7a8798;">vs ${fBRL2(comp.ant&&comp.ant.notas?comp.ant.vNF/comp.ant.notas:0)}</div></div>
+          <div style="font-size:10px;color:#7a8798;border-left:2px solid #dde3ea;padding-left:16px;">
+            Comparando: <strong>${periodoLabel}</strong>
+          </div>
         </div>`);
     } else {
       setEl('av-comp-diff','<span style="color:#7a8798;">Sem mês anterior para comparar.</span>');
@@ -6376,6 +6498,36 @@ function avCategorias(notas) {
 }
 
 // ---- Render principal ----
+function abrirAvariaSemArquivo(){
+  // Esconde o empty-state e mostra o main-content sem exigir arquivo
+  $("#empty-state").style.display = "none";
+  $("#main-content").style.display = "block";
+
+  // Oculta as abas que dependem do arquivo (deixa só o subnav de indicadores com avaria visível)
+  // Mostra a nav mas bloqueia Gestão até arquivo ser carregado
+  const gestaoBtn = $(".nav-btn[data-view='gestao']");
+  if(gestaoBtn && !window.APP_STATE.ready){
+    gestaoBtn.title = "Carregue o Núcleo Reposição para acessar Gestão";
+    gestaoBtn.style.opacity = "0.4";
+    gestaoBtn.style.pointerEvents = "none";
+  }
+
+  // Vai direto para Indicadores > Avaria XML
+  UI.switchView('indicadores', true);
+  UI.switchPane('avaria');
+
+  // Adiciona aviso no topo da aba de avaria orientando sobre o arquivo
+  const hint = document.createElement('div');
+  hint.id = 'avaria-sem-arquivo-hint';
+  hint.className = 'hint-box';
+  hint.innerHTML = '💡 Você está no modo <strong>Avaria XML</strong> sem o arquivo Núcleo Reposição. Carregue o arquivo <a href="#" onclick="document.getElementById(\'file-input\').click();return false;" style="color:#2f6fce;font-weight:700;">aqui</a> para acessar os outros módulos.';
+  hint.style.marginBottom = '0';
+  const pane = $("#pane-avaria");
+  if(pane && !document.getElementById('avaria-sem-arquivo-hint')){
+    pane.insertBefore(hint, pane.firstChild);
+  }
+}
+
 function renderAvaria() {
   const pane = document.getElementById('pane-avaria');
   if(!pane) return;
@@ -6412,7 +6564,14 @@ function renderAvaria() {
           ${AvState.notas.length?`<button class="btn btn-outline btn-sm" id="av-limpar">Limpar dados</button>`:''}
         </div>
       </div>
-      ${AvState.notas.length===0?`<div class="hint-box">Carregue um arquivo <strong>.ZIP</strong> contendo os XMLs de NF-e para iniciar a análise.</div>`:''}
+      ${AvState.notas.length===0?`<div class="hint-box">Carregue um arquivo <strong>.ZIP</strong> contendo os XMLs de NF-e para iniciar a análise.</div>`:`
+        <div class="hint-box" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <span style="font-size:12px;"><strong>Baixa TF Comprador</strong> (ex: "BAIXA TF ANDRE") considerar como <strong>Avaria</strong>?</span>
+          <div class="toggle-group" id="av-toggle-tf-comprador">
+            <button data-v="sim" class="${window.avTFCompradorEmAvaria?'active':''}" onclick="avSetTFComprador(true)">Sim — somar à Avaria</button>
+            <button data-v="nao" class="${!window.avTFCompradorEmAvaria?'active':''}">Não — separar</button>
+          </div>
+        </div>`}
       ${erros.length?`<div class="warn-box">⚠️ ${erros.length} arquivo(s) com erro de leitura: ${erros.map(e=>`<strong>${e.nomeArquivo}</strong>: ${e.erro}`).join(' · ')}</div>`:''}
       ${alertasCNPJ.length?`<div class="warn-box" style="background:#fef2f2;border-color:#d64545;">🚫 ${alertasCNPJ.length} XML(s) com CNPJ divergente:<br>${alertasCNPJ.map(n=>`<strong>${n.nomeArquivo}</strong>: encontrado <code>${n.cnpjEmit}</code> (esperado <code>${AvState.CNPJ_ESPERADO}</code>)`).join('<br>')}</div>`:''}
     </div>
@@ -6420,7 +6579,48 @@ function renderAvaria() {
     ${AvState.notas.length===0?'':`
     <!-- FILTROS -->
     <div class="panel">
-      <div class="toolbar">
+      <div class="panel-header" style="margin-bottom:8px;">
+        <h3>🔎 Filtros</h3>
+        <div class="panel-actions" style="flex-wrap:wrap;gap:6px;">
+          ${(()=>{
+            // calcula atalhos baseado nas datas disponíveis nos XMLs
+            const datas = AvState.notas.filter(n=>n.ok&&n.dtEmissao).map(n=>n.dtEmissao).sort((a,b)=>a-b);
+            const dtMax = datas[datas.length-1] || new Date();
+            const dtMin = datas[0];
+            const ano = dtMax.getFullYear();
+            const mes = dtMax.getMonth();
+            // Mês atual
+            const iniMesAtual = new Date(ano,mes,1).toISOString().slice(0,10);
+            const fimMesAtual = new Date(ano,mes+1,0).toISOString().slice(0,10);
+            // Mês anterior
+            const iniMesAnt = new Date(ano,mes-1,1).toISOString().slice(0,10);
+            const fimMesAnt = new Date(ano,mes,0).toISOString().slice(0,10);
+            // Ano atual
+            const iniAnoAtual = new Date(ano,0,1).toISOString().slice(0,10);
+            const fimAnoAtual = new Date(ano,11,31).toISOString().slice(0,10);
+            // Ano anterior
+            const iniAnoAnt = new Date(ano-1,0,1).toISOString().slice(0,10);
+            const fimAnoAnt = new Date(ano-1,11,31).toISOString().slice(0,10);
+            // Tudo
+            const iniTudo = dtMin ? dtMin.toISOString().slice(0,10) : '';
+            const fimTudo = dtMax.toISOString().slice(0,10);
+            const atalhos = [
+              { label:'Mês Atual',  ini:iniMesAtual, fim:fimMesAtual },
+              { label:'Mês Ant.',   ini:iniMesAnt,   fim:fimMesAnt },
+              { label:'Ano Atual',  ini:iniAnoAtual, fim:fimAnoAtual },
+              { label:'Ano Ant.',   ini:iniAnoAnt,   fim:fimAnoAnt },
+              { label:'Tudo',       ini:'',           fim:'' },
+            ];
+            const iniAtual = AvState.filtro.ini ? AvState.filtro.ini.toISOString().slice(0,10) : '';
+            const fimAtual = AvState.filtro.fim ? AvState.filtro.fim.toISOString().slice(0,10) : '';
+            return atalhos.map(a=>{
+              const ativo = (a.ini===iniAtual && a.fim===fimAtual) || (a.ini===''&&a.fim===''&&iniAtual===''&&fimAtual==='');
+              return `<button class="btn ${ativo?'btn-primary':'btn-outline'} btn-sm" onclick="avAtalho('${a.ini}','${a.fim}')">${a.label}</button>`;
+            }).join('');
+          })()}
+        </div>
+      </div>
+      <div class="toolbar" style="margin-bottom:0;">
         <div class="filter-group">
           <label>Data inicial</label>
           <input type="date" id="av-dt-ini" value="${AvState.filtro.ini?AvState.filtro.ini.toISOString().slice(0,10):''}">
@@ -6440,7 +6640,7 @@ function renderAvaria() {
           <label>Busca (NF, motivo, arquivo)</label>
           <input type="text" id="av-busca" placeholder="Pesquisar..." value="${AvState.filtro.busca}">
         </div>
-        <button class="btn btn-outline btn-sm" id="av-limpar-filtro">Limpar filtros</button>
+        <button class="btn btn-outline btn-sm" id="av-limpar-filtro">✕ Limpar</button>
       </div>
     </div>
 
@@ -6459,12 +6659,12 @@ function renderAvaria() {
     <!-- COMPARATIVO MÊS vs MÊS ANTERIOR -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📅 Comparativo — Mês Fechado vs Anterior${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
+        <h3>📅 Comparativo — Mês Atual vs Anterior${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
         <div class="panel-actions">
           <label style="font-size:11px;color:#7a8798;">Mesmo período:</label>
           <div class="toggle-group">
-            <button data-v="sim" class="${window.avMesmaPeriodicidade?'active':''}" onclick="avTogglePeriodo(true)">Sim</button>
-            <button data-v="nao" class="${!window.avMesmaPeriodicidade?'active':''}" onclick="avTogglePeriodo(false)">Não</button>
+            <button class="${window.avMesmaPeriodicidade?'active':''}" onclick="avTogglePeriodo(true)">Sim</button>
+            <button class="${!window.avMesmaPeriodicidade?'active':''}" onclick="avTogglePeriodo(false)">Não</button>
           </div>
         </div>
       </div>
@@ -6499,7 +6699,7 @@ function renderAvaria() {
       </div>
       <div class="panel">
         <div class="panel-header">
-          <h3>📅 Ano a Ano${window.avMesmaPeriodicidade?' — Mesmo Período':''}</h3>
+          <h3>📅 Valor por Ano (todos os dados)</h3>
         </div>
         <div style="height:240px;"><canvas id="av-chart-anual"></canvas></div>
         <div id="av-table-anual"></div>
@@ -6576,14 +6776,35 @@ function renderAvaria() {
   document.getElementById('av-cat-sel')?.addEventListener('change', e=>{ AvState.filtro.categoria=e.target.value||null; renderAvaria(); });
   document.getElementById('av-busca')?.addEventListener('input', e=>{ AvState.filtro.busca=e.target.value; renderAvaria(); });
   document.getElementById('av-limpar-filtro')?.addEventListener('click', ()=>{ AvState.filtro={ini:null,fim:null,categoria:null,busca:''}; renderAvaria(); });
+  // Botão "Não" do toggle TF Comprador
+  const tfToggleNao = document.querySelector('#av-toggle-tf-comprador [data-v="nao"]');
+  if(tfToggleNao) tfToggleNao.addEventListener('click', ()=> avSetTFComprador(false));
 
-  // Renderiza gráficos após DOM estar pronto (precisa dos canvas existirem)
-  if(AvState.notas.length > 0) {
-    setTimeout(()=> avRenderGraficos(), 60);
-  }
-
-  // Se tem detalhe aberto, re-renderiza
+  if(AvState.notas.length > 0) setTimeout(()=> avRenderGraficos(), 60);
   if(AvState.detalheNota) avRenderDetalhe(AvState.detalheNota);
+}
+
+function avAtalho(ini, fim) {
+  AvState.filtro.ini = ini ? new Date(ini + 'T00:00:00') : null;
+  AvState.filtro.fim = fim ? new Date(fim + 'T23:59:59') : null;
+  renderAvaria();
+}
+
+// Muda o toggle TF Comprador → Avaria e recategoriza TODAS as notas na memória
+function avSetTFComprador(val) {
+  window.avTFCompradorEmAvaria = val;
+  // Recategoriza todas as notas já carregadas (sem reler os XMLs)
+  AvState.notas.forEach(n => {
+    if(n.ok && n.motivo) {
+      n.categoria = avNormalizarCategoria(n.motivo);
+    }
+  });
+  // Se havia filtro de categoria que agora não existe mais, limpa
+  const cats = new Set(AvState.notas.filter(n=>n.ok).map(n=>n.categoria));
+  if(AvState.filtro.categoria && !cats.has(AvState.filtro.categoria)){
+    AvState.filtro.categoria = null;
+  }
+  renderAvaria();
 }
 
 function avFiltrarCategoria(cat) {
