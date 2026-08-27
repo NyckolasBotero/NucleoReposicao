@@ -5899,38 +5899,54 @@ const AvState = {
 
 // ---- Normalização de motivos baseada nos XMLs reais analisados ----
 // Estado global do toggle TF Comprador → Avaria
-if(!window.avTFCompradorEmAvaria) window.avTFCompradorEmAvaria = true;
+// Default: somar TF Comprador à Avaria (toggle pode separar)
+if(window.avTFCompradorEmAvaria === undefined) window.avTFCompradorEmAvaria = true;
 
 // Helper: normaliza string para comparação tolerante a typos
 function avNorm(s){ return (s||'').toUpperCase().replace(/\s+/g,' ').trim(); }
 
 // Detecta se o texto contém "BAIXA TF" (com typos comuns: BAXA, BAIKA, BAI XA...)
 function avIsBaixaTF(t){
-  // BAIXA e variações (BA[IAX]X?A, BAEXA, etc.)
   return /B[AI][AI]?X?A\s*T[EF]/.test(t) || /BAIXA\s*T[EF]/.test(t) || /BAXA\s*T[EF]/.test(t);
 }
 
-// Detecta se é TF da loja STO (Avaria)
+// TF da LOJA/STO (Avaria pura — sempre)
 function avIsTFLoja(t){
-  return avIsBaixaTF(t) && /STO|LOJA|STORE|STOC|ESTO/.test(t);
-}
-
-// Detecta se é TF Comprador (nome de pessoa, não STO)
-// Lógica: é baixa TF, mas tem um nome após "TF" que NÃO é STO/LOJA
-// Detecta se é TF Comprador (deve ter nome/COMPRADOR explícito APÓS o TF)
-function avIsTFComprador(t){
-  if(avIsTFLoja(t)) return false;
-  if(!avIsBaixaTF(t) && !/\bT[EF]\s*[-–]?\s*COMP/.test(t)) return false;
-  // precisa ter COMPRADOR explícito OU nome após TF separado por hífen/espaço
-  if(/T[EF]\s*[-–]?\s*COMP/.test(t)) return true;      // TF COMPRADOR
-  if(/T[EF]\s*[-–]\s*[A-Z]{2}/.test(t)) return true;   // TF - NOME (com hífen obrigatório)
+  if(avIsBaixaTF(t) && /STO|LOJA/.test(t)) return true;   // BAIXA TF LOJA STO
+  if(/LOJA\s*T[EF]/.test(t)) return true;                 // BAIXA LOJA TF - STO
+  if(/T[EF]\s*[-–]?\s*STO/.test(t)) return true;          // TF - STO
   return false;
-  // ⚠️ "BAIXA TF" sozinho, sem hífen + nome ou COMPRADOR → NÃO é comprador → vai para Avaria
 }
 
-// Detecta variações de Cozinha
+// TF Comprador — tem nome próprio OU palavra COMPRADOR após TF (sem STO/LOJA)
+// Exemplos: BAIXA TF ANDRE, BAIXA TF - RODRIGO, TF COMPRADOR, AVARIA TF WESLEY, BAIXA TF RODRIGO - 2137
+function avIsTFComprador(t){
+  if(avIsTFLoja(t)) return false;  // loja tem prioridade absoluta
+  // deve ter TF mencionado (com ou sem BAIXA/AVARIA antes)
+  const temTF = avIsBaixaTF(t) ||
+                /\bAVARIA\s+T[EF]\b/.test(t) ||
+                /\bT[EF]\b/.test(t);
+  if(!temTF) return false;
+  // tem COMPRADOR explícito
+  if(/T[EF]\s*[-–]?\s*COMP/.test(t)) return true;
+  // tem nome (2+ letras) após TF separado por hífen
+  if(/T[EF]\s*[-–]\s*[A-Z]{2}/.test(t)) return true;   // BAIXA TF - ANDRE
+  // tem nome após TF sem hífen, excluindo palavras reservadas de loja
+  if(/T[EF]\s+[A-Z][A-Z]/.test(t) && !/T[EF]\s+(LOJA|STO|STORE|DE|DO|DA|EM|BAXA|BAIXA)\b/.test(t)) return true;
+  // número de matrícula após TF (BAIXA TF RODRIGO- 2137)
+  if(/T[EF]\s+\w+\s*[-–]\s*\d+/.test(t) && !/T[EF]\s+(LOJA|STO)/.test(t)) return true;
+  return false;
+}
+
+// TF genérico (sem loja nem comprador identificado) → Avaria por padrão
+function avIsTF(t){
+  return avIsBaixaTF(t) || avIsTFLoja(t) || avIsTFComprador(t) ||
+         (/\bT[EF]\b/.test(t) && /LOJA|STO|BAIXA|BAXA/.test(t));
+}
+
+// Detecta variações de Cozinha — inclui COZINNHA, COZIMHA, CUZINHA, CUZINNHA...
 function avIsCozinha(t){
-  return /C[OU]Z[IY]?[NH]A|COZINHA|CUZINHA|USO\s*COZ|CUZINHA|COZIMHA/.test(t);
+  return /C[OU]Z[INHA]{2,}/.test(t) || /USO\s*COZ/.test(t);
 }
 
 // Detecta variações de VALE com typos
@@ -5938,60 +5954,52 @@ function avIsVale(t){
   return /V[AE]L[EI]/.test(t);
 }
 
-// Detecta VALE RECEBIMENTO com typos (VELE RECEBIMENTO etc.)
-function avIsValeRecebimento(t){
-  return avIsVale(t) && /REC[EI]B/.test(t);
-}
-
-// Detecta VALE MOTORISTA com typos
-function avIsValeMotorista(t){
-  return avIsVale(t) && /MOTOR|MOTO\b/.test(t);
-}
-
-// Detecta COMPRA DE FUNCIONÁRIO com muitos typos documentados:
-// COMNPRA, COMPPRA, COMPRAD, FUNCIOANRIO, FUNBCIONARIO, "NOTA DE FUNCIONARIO"
+// Detecta COMPRA DE FUNCIONÁRIO / MOTORISTA com todos os typos documentados
 function avIsCompraFuncionario(t){
-  // "NOTA DE FUNCIONARIO" (sem COMPRA explícita, mas claramente compra)
-  if(/NOTA\s+(DE\s+)?FUNC?/.test(t) && /IONARI|CIONARI|IOANRI|BCIONAR/.test(t) && !/LOJA|STO/.test(t)) return true;
-  // COMPRA (e typos) + FUNCIONARIO (e typos)
-  // temCompra: COM + variações (COMNPRA, COMPPRA, COMPRAD, COMPRA)
-  const temCompra = /COM[NP]?[NP]?R[AD][AO]?/.test(t) && /^.*COM/.test(t);
-  // temFunc: qualquer variante com FUN + C/B + sufixo com IONARI ou CIONARI ou IOANRI
-  const temFunc = /FUN[BC]?[CI]?[OA][AN][AIRO]*R?[IARO][OA]/.test(t) ||
-                  /FUNC/.test(t) && /IONAR|IOANR|BCIONAR/.test(t) ||
-                  /FUN[BC]CION/.test(t); // FUNBCIONARIO, FUNCIONARIO
-  return temCompra && temFunc;
+  // "NOTA DE FUNCIONARIO/MOTORISTA" sem COMPRA explícita
+  if(/NOTA\s+DE\s+(FUNC|FUI?N?C|FUC)/.test(t) && !/LOJA|STO/.test(t)) return true;
+  if(/NOTA\s+DE\s+MOTORISTA/.test(t)) return true;
+  // COMPRA (e typos) + destinatário (FUNCIONARIO com typos, MOTORISTA, etc.)
+  const temCompra = /COM[NP]?[NP]?R[AD][AO]?/.test(t) && /COM/.test(t);
+  if(!temCompra) return false;
+  // destinatário: FUNCIONARIO (e variações) ou MOTORISTA
+  const temDestinatario =
+    /FU[BI]?[IN]?[CN][CI]?[OA][AN][AO]?[RD][IO][AO]?/.test(t) || // FUNCIONARIO e typos
+    /FU[AC]?CION/.test(t)    ||  // FUCIONARIO, FUACIONARIO
+    /FUI?N?CION/.test(t)     ||  // FUINCIONARIO
+    /FUNCIOAN/.test(t)       ||  // FUNCIOANRIO (letras trocadas)
+    /FUN[BC]CION/.test(t)    ||  // FUNBCIONARIO
+    /MOTORISTA/.test(t)      ||  // NOTA DE COMPRA DE MOTORISTA
+    /FUNCIONA/.test(t);          // qualquer que comece com FUNCIONA
+  return temDestinatario;
 }
 
-// Função principal de categorização — tolerante a todos os typos documentados
+// Função principal — TF Comprador separado ou junto com Avaria conforme toggle
 function avNormalizarCategoria(textoOriginal) {
   if(!textoOriginal) return 'Outros';
   const t = avNorm(textoOriginal);
 
-  // 1. Baixa TF Loja (→ Avaria)
-  if(avIsTFLoja(t)) return 'Avaria';
+  // 1. Vale (primeiro — "VALE MOTORISTA (AVARIA)" deve ir para Vales)
+  if(avIsVale(t)) return 'Vales';
 
-  // 2. Baixa TF Comprador (depende do toggle)
+  // 2. Compra / Nota de Funcionário → Vales
+  if(avIsCompraFuncionario(t)) return 'Vales';
+
+  // 3. TF Comprador ANTES do TF genérico — toggle decide destino
   if(avIsTFComprador(t)){
     return window.avTFCompradorEmAvaria ? 'Avaria' : 'Baixa TF Comprador';
   }
 
-  // 3. Baixa Cozinha (e variações)
+  // 4. TF Loja / genérico → sempre Avaria
+  if(avIsTFLoja(t) || avIsBaixaTF(t)) return 'Avaria';
+
+  // 5. Baixa Cozinha (e variações)
   if(avIsCozinha(t)) return 'Baixa Cozinha';
 
-  // 4. Avaria explícita
+  // 6. Avaria explícita
   if(/AVARIA/.test(t)) return 'Avaria';
 
-  // 5. Qualquer tipo de Vale → categoria única "Vales"
-  if(avIsVale(t)) return 'Vales';
-
-  // 6. Compra de Funcionário → também Vales
-  if(avIsCompraFuncionario(t)) return 'Vales';
-
-  // 9. Qualquer BAIXA TF restante (sem loja nem comprador explícito) → Avaria
-  if(avIsBaixaTF(t)) return 'Avaria';
-
-  // 10. Outras Baixas genéricas
+  // 7. Outras Baixas genéricas
   if(/BA[IX]+A/.test(t)) return 'Baixa Estoque';
 
   return 'Outros';
@@ -6154,8 +6162,10 @@ function avSerieMensal(notas) {
     const y = n.dtEmissao.getFullYear(), m = n.dtEmissao.getMonth();
     const key = `${y}-${String(m+1).padStart(2,'0')}`;
     const label = MESES_PT[m]+'/'+String(y).slice(2);
-    const ex = map.get(key) || {key, label, ano:y, mes:m, notas:0, itens:0, vNF:0, vProd:0, vImpostos:0};
+    const isTFC = avIsTFComprador(avNorm(n.motivo||''));
+    const ex = map.get(key) || {key, label, ano:y, mes:m, notas:0, itens:0, vNF:0, vProd:0, vImpostos:0, vNFSemTFC:0, vTFC:0};
     ex.notas++; ex.itens+=n.itens.length; ex.vNF+=n.vNF; ex.vProd+=n.vProd; ex.vImpostos+=n.vImpostos;
+    if(isTFC) ex.vTFC+=n.vNF; else ex.vNFSemTFC+=n.vNF;
     map.set(key, ex);
   });
   return [...map.values()].sort((a,b)=>a.key.localeCompare(b.key));
@@ -6167,8 +6177,10 @@ function avSerieAnual(notas) {
   notas.forEach(n=>{
     if(!n.dtEmissao) return;
     const y = n.dtEmissao.getFullYear();
-    const ex = map.get(y) || {ano:y, notas:0, itens:0, vNF:0, vProd:0, vImpostos:0};
+    const isTFC = avIsTFComprador(avNorm(n.motivo||''));
+    const ex = map.get(y) || {ano:y, notas:0, itens:0, vNF:0, vProd:0, vImpostos:0, vNFSemTFC:0, vTFC:0};
     ex.notas++; ex.itens+=n.itens.length; ex.vNF+=n.vNF; ex.vProd+=n.vProd; ex.vImpostos+=n.vImpostos;
+    if(isTFC) ex.vTFC+=n.vNF; else ex.vNFSemTFC+=n.vNF;
     map.set(y, ex);
   });
   return [...map.values()].sort((a,b)=>a.ano-b.ano);
@@ -6184,33 +6196,41 @@ function avComparativoMes() {
   const ult = serie[serie.length-1];
   const ant = serie.length>=2 ? serie[serie.length-2] : null;
 
-  if(!ant) return { ult, ant: null, diffVNF: null, diffNotas: null, mesmoPerido: window.avMesmaPeriodicidade };
+  if(!ant) return { ult, ant: null, diffVNF: null, diffNotas: null };
 
-  // Determina o dia máximo presente no mês atual (último dia com nota)
+  // Dia máximo presente no mês atual
   const notasMesAtual = notas.filter(n=>n.dtEmissao.getFullYear()===ult.ano && n.dtEmissao.getMonth()===ult.mes);
   const diaCorte = Math.max(...notasMesAtual.map(n=>n.dtEmissao.getDate()));
 
-  // Com "mesmo período": filtra o mês anterior até o mesmo dia do mês
-  let antComp = ant;
-  if(window.avMesmaPeriodicidade) {
-    const notasMesAnt = notas.filter(n=>
-      n.dtEmissao.getFullYear()===ant.ano && n.dtEmissao.getMonth()===ant.mes &&
-      n.dtEmissao.getDate() <= diaCorte
-    );
-    antComp = {
-      ...ant,
-      notas: notasMesAnt.length,
-      itens: notasMesAnt.reduce((s,n)=>s+n.itens.length,0),
-      vNF:   notasMesAnt.reduce((s,n)=>s+n.vNF,0),
-      vProd: notasMesAnt.reduce((s,n)=>s+n.vProd,0),
-      vImpostos: notasMesAnt.reduce((s,n)=>s+n.vImpostos,0),
-      diaCorte  // dia de corte aplicado
-    };
-  }
+  // Helper: agrega notas em {vNF, vNFSemTFC, notas, itens}
+  const agregar = (arr) => {
+    const vNF       = arr.reduce((s,n)=>s+n.vNF,0);
+    const vNFSemTFC = arr.filter(n=>!avIsTFComprador(avNorm(n.motivo||''))).reduce((s,n)=>s+n.vNF,0);
+    const vTFC      = arr.filter(n=>avIsTFComprador(avNorm(n.motivo||''))).reduce((s,n)=>s+n.vNF,0);
+    return { vNF, vNFSemTFC, vTFC, notas:arr.length, itens:arr.reduce((s,n)=>s+n.itens.length,0) };
+  };
 
-  const diffVNF   = antComp.vNF > 0 ? ((ult.vNF - antComp.vNF) / antComp.vNF * 100) : null;
-  const diffNotas = ult.notas - antComp.notas;
-  return { ult, ant: antComp, antTotal: ant, diffVNF, diffNotas, mesmoPerido: window.avMesmaPeriodicidade, diaCorte };
+  const ultDados = agregar(notasMesAtual);
+
+  // Notas do mês anterior (com ou sem corte de dia)
+  const notasMesAntTodas = notas.filter(n=>n.dtEmissao.getFullYear()===ant.ano && n.dtEmissao.getMonth()===ant.mes);
+  const notasMesAntCorte = window.avMesmaPeriodicidade
+    ? notasMesAntTodas.filter(n=>n.dtEmissao.getDate()<=diaCorte)
+    : notasMesAntTodas;
+
+  const antDados = agregar(notasMesAntCorte);
+  const antTotal = agregar(notasMesAntTodas);
+
+  const diffVNF      = antDados.vNF      > 0 ? (ultDados.vNF      - antDados.vNF)      / antDados.vNF      * 100 : null;
+  const diffVNFSemTF = antDados.vNFSemTFC> 0 ? (ultDados.vNFSemTFC- antDados.vNFSemTFC)/ antDados.vNFSemTFC* 100 : null;
+  const diffNotas    = ultDados.notas - antDados.notas;
+
+  return {
+    ult: { ...ult, ...ultDados, label: ult.label },
+    ant: { ...ant, ...antDados, label: ant.label },
+    antTotal, diffVNF, diffVNFSemTF, diffNotas,
+    diaCorte, mesmoPerido: window.avMesmaPeriodicidade
+  };
 }
 
 // Semanas do mês mais recente
@@ -6220,14 +6240,15 @@ function avSemanasDoMes(notas) {
   const last = serie[serie.length-1];
   const mes = last.mes, ano = last.ano;
   const doMes = notas.filter(n=>n.dtEmissao && n.dtEmissao.getMonth()===mes && n.dtEmissao.getFullYear()===ano);
-  // agrupa por semana ISO dentro do mês
   const wmap = new Map();
   doMes.forEach(n=>{
     const d = n.dtEmissao;
-    const weekStart = new Date(d); weekStart.setDate(d.getDate() - d.getDay()); // domingo da semana
+    const weekStart = new Date(d); weekStart.setDate(d.getDate() - d.getDay());
     const wk = weekStart.toISOString().slice(0,10);
-    const ex = wmap.get(wk) || {semana:wk, label:'Sem '+weekStart.getDate()+'/'+MESES_PT[weekStart.getMonth()], notas:0, itens:0, vNF:0};
+    const isTFC = avIsTFComprador(avNorm(n.motivo||''));
+    const ex = wmap.get(wk) || {semana:wk, label:'Sem '+weekStart.getDate()+'/'+MESES_PT[weekStart.getMonth()], notas:0, itens:0, vNF:0, vNFSemTFC:0, vTFC:0};
     ex.notas++; ex.itens+=n.itens.length; ex.vNF+=n.vNF;
+    if(isTFC) ex.vTFC+=n.vNF; else ex.vNFSemTFC+=n.vNF;
     wmap.set(wk, ex);
   });
   return [...wmap.values()].sort((a,b)=>a.semana.localeCompare(b.semana));
@@ -6338,13 +6359,19 @@ function avTabelaAnual(anos){
       <td><strong>${a.ano}</strong></td>
       <td style="text-align:right;font-weight:700;">${fBRL(a.vNF)}</td>
       <td style="text-align:center;">${diffTag(dv)}</td>
+      <td style="text-align:right;color:#0b2647;font-weight:700;">${fBRL(a.vNFSemTFC||0)}</td>
+      <td style="text-align:right;color:#6b5200;font-weight:700;">${fBRL(a.vTFC||0)}</td>
       <td style="text-align:center;">${a.notas}</td>
       <td style="text-align:right;">${fBRL(a.notas?a.vNF/a.notas:0)}</td>
     </tr>`;
   }).join('');
   return `<div class="table-wrap" style="margin-top:14px;">
     <table class="data-table" style="font-size:11.5px;">
-      <thead><tr><th>Ano</th><th>Valor Total</th><th>Δ%</th><th>Notas</th><th>Média/Nota</th></tr></thead>
+      <thead><tr>
+        <th>Ano</th><th>Valor Total</th><th>Δ%</th>
+        <th>Avaria (sem TFC)</th><th>TF Comprador</th>
+        <th>Notas</th><th>Média/Nota</th>
+      </tr></thead>
       <tbody>${rows}</tbody>
     </table>
   </div>`;
@@ -6385,100 +6412,149 @@ function avRenderGraficos() {
   const comp = avComparativoMes();
   const fBRL2 = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 
-  const PLUGIN_NOLABELS = { datalabels:{ display:false } };
-  const PLUGIN_CNTS = { datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#1a4480',font:{size:10,weight:'700'},formatter:v=>v>0?v:'' } };
+  // Configuração de rótulos para barras (todos os datasets)
+  const DATALABELS_ALL = {
+    anchor:'end', align:'end', offset:4, clamp:true,
+    color: ctx => ctx.datasetIndex===0?'#0b2647':'#2f6fce',
+    font:{size:9.5, weight:'700'},
+    formatter: v => v>0 ? AV_LABEL_BRL(v) : ''
+  };
 
-  // ---- GRÁFICO 1: Valor mensal linha ----
+  // ---- GRÁFICO 1: Valor mensal — 3 linhas (Total, Sem TFC, Só TFC) ----
   if(serie.length){
     const labels = serie.map(s=>s.label);
-    const vals = serie.map(s=>s.vNF);
-    const medias = vals.map((_,i)=>{ const j=vals.slice(Math.max(0,i-2),i+1); return j.reduce((a,b)=>a+b,0)/j.length; });
     avRenderChart('av-chart-mensal','line', labels, [
-      { label:'Valor Total', data:vals, borderColor:'#0b2647', backgroundColor:'#1a448022', borderWidth:2.5, tension:0.35, fill:true, pointRadius:5, pointBackgroundColor:'#0b2647', pointBorderColor:'#fff', pointBorderWidth:2 },
-      { label:'Média Móvel 3M', data:medias, borderColor:'#5b92e5', borderDash:[6,4], borderWidth:2, tension:0.35, pointRadius:3, fill:false, pointBackgroundColor:'#5b92e5' }
-    ], { plugins:{ datalabels:{ anchor:'end',align:'top',offset:6,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:v=>AV_LABEL_BRL(v) } } });
-
-    // tabela mensal
+      { label:'Valor Total', data:serie.map(s=>s.vNF),
+        hidden: true,
+        borderColor:'#0b2647', backgroundColor:'#0b264710', borderWidth:2.5, tension:0.35,
+        fill:true, pointRadius:5, pointBackgroundColor:'#0b2647', pointBorderColor:'#fff', pointBorderWidth:2 },
+      { label:'Avaria (sem TFC)', data:serie.map(s=>s.vNFSemTFC),
+        borderColor:'#0b2647', backgroundColor:'#0b264708', borderWidth:2, tension:0.35,
+        fill:false, pointRadius:4, pointBackgroundColor:'#0b2647', borderDash:[4,2] },
+      { label:'TF Comprador', data:serie.map(s=>s.vTFC),
+        borderColor:'#e8cc60', borderWidth:2.5, tension:0.35,
+        fill:false, pointRadius:4, pointBackgroundColor:'#e8cc60', pointBorderColor:'#6b5200', pointBorderWidth:1.5 }
+    ], { plugins:{ datalabels:{ anchor:'end',align:'top',offset:5,clamp:true,
+      color: ctx=>ctx.datasetIndex===2?'#6b5200':'#0b2647',
+      font:{size:9.5,weight:'700'},formatter:v=>v>0?AV_LABEL_BRL(v):'' } } });
     const tel = document.getElementById('av-table-mensal');
     if(tel) tel.innerHTML = avTabelaMensal(serie);
   }
 
-  // ---- GRÁFICO 2: Notas e itens por mês ----
+  // ---- GRÁFICO 2: Notas/Itens por mês + valor Avaria ano a ano em barras ----
   if(serie.length){
+    // usa todas as notas agrupadas por ano (para barras de avaria anual)
+    const todasOk = AvState.notas.filter(n=>n.ok&&n.dtEmissao);
+    const catFiltro = AvState.filtro.categoria;
+    const notasAnual = catFiltro ? todasOk.filter(n=>n.categoria===catFiltro) : todasOk;
+    const anosData = avSerieAnual(notasAnual);
+    // usa labels dos meses para eixo X das notas/itens
     avRenderChart('av-chart-notas','bar', serie.map(s=>s.label), [
       { label:'Notas', data:serie.map(s=>s.notas), backgroundColor:'#1a4480', borderRadius:5, borderSkipped:false },
       { label:'Itens', data:serie.map(s=>s.itens), backgroundColor:'#5b92e5', borderRadius:5, borderSkipped:false }
-    ], { plugins:PLUGIN_CNTS, scales:{ y:{ ticks:{color:'#7a8798',font:{size:10}},grid:{color:'#eef1f4'},beginAtZero:true } } });
+    ], { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,
+      color: ctx=>ctx.datasetIndex===0?'#0b2647':'#1a4480', font:{size:10,weight:'700'},
+      formatter: v=>v>0?v:'' } }, scales:{ y:{ ticks:{color:'#7a8798',font:{size:10}},grid:{color:'#eef1f4'},beginAtZero:true } } });
   }
 
-  // ---- GRÁFICO 3: Ano a ano — SEMPRE por ano total, independente do filtro ----
+  // ---- GRÁFICO 3: Ano a ano — SEMPRE total por ano, fixo ----
   if(anos.length){
-    // usa TODAS as notas (sem filtro de período) para mostrar anos completos
     const todasOk = AvState.notas.filter(n=>n.ok&&n.dtEmissao);
     const catFiltro = AvState.filtro.categoria;
     const notasParaAnual = catFiltro ? todasOk.filter(n=>n.categoria===catFiltro) : todasOk;
     const anosTotal = avSerieAnual(notasParaAnual);
     avRenderChart('av-chart-anual','bar', anosTotal.map(a=>String(a.ano)), [
-      { label:'Valor Total', data:anosTotal.map(a=>a.vNF), backgroundColor: anosTotal.map((_,i)=>AV_CORES[i%AV_CORES.length]), borderRadius:6, borderSkipped:false }
-    ], { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:v=>AV_LABEL_BRL(v) } } });
+      { label:'Avaria (sem TF Comprador)', data:anosTotal.map(a=>a.vNFSemTFC),
+        backgroundColor:'#0b2647', borderRadius:5, borderSkipped:false },
+      { label:'TF Comprador', data:anosTotal.map(a=>a.vTFC),
+        backgroundColor:'#e8cc60', borderRadius:5, borderSkipped:false }
+    ], { plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,
+      color: ctx=>ctx.datasetIndex===0?'#0b2647':'#6b5200',
+      font:{size:10,weight:'700'}, formatter:v=>v>0?AV_LABEL_BRL(v):'' } } });
     const tel2 = document.getElementById('av-table-anual');
     if(tel2) tel2.innerHTML = avTabelaAnual(anosTotal);
   }
 
-  // ---- GRÁFICO 4: Semanas ----
+  // ---- GRÁFICO 4: Semanas — 2 barras (Sem TFC + Só TFC) + rótulos em todos ----
   if(semanas.length){
     avRenderChart('av-chart-semanas','bar', semanas.map(s=>s.label), [
-      { label:'Valor Total', data:semanas.map(s=>s.vNF), backgroundColor:'#0b2647', borderRadius:5, borderSkipped:false },
-      { label:'Nº Notas', data:semanas.map(s=>s.notas), backgroundColor:'#8db4f0', borderRadius:5, borderSkipped:false, yAxisID:'y2' }
+      { label:'Sem TF Comprador', data:semanas.map(s=>s.vNFSemTFC),
+        backgroundColor:'#0b2647', borderRadius:5, borderSkipped:false },
+      { label:'TF Comprador', data:semanas.map(s=>s.vTFC),
+        backgroundColor:'#e8cc60', borderRadius:5, borderSkipped:false }
     ], {
       scales:{
-        y:{ ticks:{color:'#7a8798',font:{size:10},callback:AV_TICK_Y_BRL},grid:{color:'#eef1f4'},beginAtZero:true },
-        y2:{ position:'right',ticks:{color:'#5b92e5',font:{size:10}},grid:{drawOnChartArea:false},beginAtZero:true }
+        y:{ ticks:{color:'#7a8798',font:{size:10},callback:AV_TICK_Y_BRL}, grid:{color:'#eef1f4'}, beginAtZero:true }
       },
-      plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,color:'#0b2647',font:{size:10,weight:'700'},formatter:(v,ctx)=> ctx.datasetIndex===0&&v>0?AV_LABEL_BRL(v):'' } }
+      plugins:{ datalabels:{ anchor:'end',align:'end',offset:4,clamp:true,
+        color: ctx=>ctx.datasetIndex===0?'#0b2647':'#6b5200',
+        font:{size:10,weight:'700'},
+        formatter: v=>v>0?AV_LABEL_BRL(v):''
+      }}
     });
     const tel3 = document.getElementById('av-table-semanas');
     if(tel3) tel3.innerHTML = avTabelaSemanas(semanas);
   }
 
-  // ---- Atualiza cards de comparativo ----
+  // ---- Cards de comparativo ----
   if(comp){
     const setEl = (id,v)=>{ const el=document.getElementById(id); if(el) el.innerHTML=v; };
     const mesmoP = window.avMesmaPeriodicidade;
-    setEl('av-comp-ult-label', comp.ult.label + (mesmoP && comp.diaCorte ? ` (1–${comp.diaCorte})` : ' (até hoje)'));
-    setEl('av-comp-ult-vnf', fBRL2(comp.ult.vNF));
-    setEl('av-comp-ult-notas', comp.ult.notas+' notas · '+comp.ult.itens+' itens');
-    setEl('av-comp-ant-label', comp.ant
-      ? comp.ant.label + (mesmoP && comp.diaCorte ? ` (1–${comp.diaCorte})` : ' (mês fechado)')
-      : 'Sem mês anterior');
-    setEl('av-comp-ant-vnf', comp.ant ? fBRL2(comp.ant.vNF) : '—');
-    const totalFechadoSub = mesmoP && comp.antTotal
-      ? `<br><span style="font-size:10px;color:#9db8dd;">Mês fechado: ${fBRL2(comp.antTotal.vNF)} · ${comp.antTotal.notas} notas</span>`
-      : '';
-    setEl('av-comp-ant-notas', comp.ant ? comp.ant.notas+' notas · '+comp.ant.itens+' itens'+totalFechadoSub : '—');
-    if(comp.diffVNF!==null){
-      const cor = comp.diffVNF>=0?'#d64545':'#1a9c62';
-      const seta = comp.diffVNF>=0?'▲':'▼';
-      const corN = comp.diffNotas>=0?'#d64545':'#1a9c62';
-      const periodoLabel = mesmoP && comp.diaCorte ? `dias 1–${comp.diaCorte} de cada mês` : 'mês atual vs fechado anterior';
-      setEl('av-comp-diff',`
-        <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
-          <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Variação Valor</div>
-            <div style="font-size:22px;font-weight:800;color:${cor};">${seta} ${Math.abs(comp.diffVNF).toFixed(1)}%</div>
-            <div style="font-size:11px;color:#7a8798;">${fBRL2(comp.ult.vNF)} vs ${fBRL2(comp.ant.vNF)}</div></div>
-          <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Variação Notas</div>
-            <div style="font-size:22px;font-weight:800;color:${corN};">${comp.diffNotas>=0?'+':''}${comp.diffNotas}</div>
-            <div style="font-size:11px;color:#7a8798;">${comp.ult.notas} vs ${comp.ant.notas} notas</div></div>
-          <div><div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:2px;">Média/Nota</div>
-            <div style="font-size:18px;font-weight:800;color:#123a6b;">${fBRL2(comp.ult.notas?comp.ult.vNF/comp.ult.notas:0)}</div>
-            <div style="font-size:11px;color:#7a8798;">vs ${fBRL2(comp.ant&&comp.ant.notas?comp.ant.vNF/comp.ant.notas:0)}</div></div>
-          <div style="font-size:10px;color:#7a8798;border-left:2px solid #dde3ea;padding-left:16px;">
-            Comparando: <strong>${periodoLabel}</strong>
-          </div>
-        </div>`);
-    } else {
-      setEl('av-comp-diff','<span style="color:#7a8798;">Sem mês anterior para comparar.</span>');
-    }
+    const periodoLabel = mesmoP && comp.diaCorte ? `dias 1–${comp.diaCorte} de cada mês` : 'mês atual vs fechado anterior';
+    const corteLabel = mesmoP && comp.diaCorte ? ` (1–${comp.diaCorte})` : '';
+
+    // Helper: gera bloco de indicadores (Variação Valor, Notas, Média) para um par de valores
+    const blocoIndicadores = (vAtual, vAnt, notasAtual, notasAnt, itenAtual, itenAnt) => {
+      if(vAnt <= 0) return '<span style="color:#7a8798;">Sem mês anterior para comparar.</span>';
+      const diffV = (vAtual - vAnt) / vAnt * 100;
+      const diffN = notasAtual - notasAnt;
+      const corV  = diffV>=0?'#d64545':'#1a9c62';
+      const setaV = diffV>=0?'▲':'▼';
+      const corN  = diffN>=0?'#d64545':'#1a9c62';
+      return `<div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:9px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:1px;">Variação Valor</div>
+          <div style="font-size:18px;font-weight:800;color:${corV};">${setaV} ${Math.abs(diffV).toFixed(1)}%</div>
+          <div style="font-size:10px;color:#7a8798;">${fBRL2(vAtual)} vs ${fBRL2(vAnt)}</div>
+        </div>
+        <div>
+          <div style="font-size:9px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:1px;">Variação Notas</div>
+          <div style="font-size:18px;font-weight:800;color:${corN};">${diffN>=0?'+':''}${diffN}</div>
+          <div style="font-size:10px;color:#7a8798;">${notasAtual} vs ${notasAnt} notas</div>
+        </div>
+        <div>
+          <div style="font-size:9px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:1px;">Média/Nota</div>
+          <div style="font-size:16px;font-weight:800;color:#123a6b;">${fBRL2(notasAtual?vAtual/notasAtual:0)}</div>
+          <div style="font-size:10px;color:#7a8798;">vs ${fBRL2(notasAnt?vAnt/notasAnt:0)}</div>
+        </div>
+        <div style="font-size:9px;color:#7a8798;padding-left:10px;border-left:2px solid #dde3ea;">
+          Comparando:<br><strong>${periodoLabel}</strong>
+        </div>
+      </div>`;
+    };
+
+    // ---- BLOCO 1: Total Geral ----
+    setEl('av-comp-ult-label', comp.ult.label + corteLabel);
+    setEl('av-comp-ult-vnf',   fBRL2(comp.ult.vNF));
+    setEl('av-comp-ult-notas', comp.ult.notas+' notas · '+comp.ult.itens+' itens'
+      + (mesmoP && comp.antTotal ? `<br><span style="font-size:9px;color:#9db8dd;">Mês fechado: ${fBRL2(comp.antTotal.vNF)}</span>` : ''));
+    setEl('av-comp-ant-label', comp.ant ? comp.ant.label + corteLabel : 'Sem mês anterior');
+    setEl('av-comp-ant-vnf',   comp.ant ? fBRL2(comp.ant.vNF) : '—');
+    setEl('av-comp-ant-notas', comp.ant ? comp.ant.notas+' notas · '+comp.ant.itens+' itens' : '—');
+    setEl('av-comp-diff', comp.ant
+      ? blocoIndicadores(comp.ult.vNF, comp.ant.vNF, comp.ult.notas, comp.ant.notas, comp.ult.itens, comp.ant.itens)
+      : '<span style="color:#7a8798;">Sem mês anterior para comparar.</span>');
+
+    // ---- BLOCO 2: Sem TF Comprador ----
+    setEl('av-comp2-ult-label', comp.ult.label + corteLabel);
+    setEl('av-comp2-ult-vnf',   fBRL2(comp.ult.vNFSemTFC));
+    setEl('av-comp2-ult-notas', 'TFC: '+fBRL2(comp.ult.vTFC));
+    setEl('av-comp2-ant-label', comp.ant ? comp.ant.label + corteLabel : 'Sem mês anterior');
+    setEl('av-comp2-ant-vnf',   comp.ant ? fBRL2(comp.ant.vNFSemTFC) : '—');
+    setEl('av-comp2-ant-notas', comp.ant ? 'TFC: '+fBRL2(comp.ant.vTFC) : '—');
+    setEl('av-comp2-diff', comp.ant
+      ? blocoIndicadores(comp.ult.vNFSemTFC, comp.ant.vNFSemTFC, comp.ult.notas, comp.ant.notas, comp.ult.itens, comp.ant.itens)
+      : '<span style="color:#6b5200;">Sem mês anterior para comparar.</span>');
   }
 }
 
@@ -6538,14 +6614,32 @@ function renderAvaria() {
   const totalVNF   = notas.reduce((s,n)=>s+n.vNF,0);
   const totalVProd = notas.reduce((s,n)=>s+n.vProd,0);
   const totalVimp  = notas.reduce((s,n)=>s+n.vImpostos,0);
+  // TF Comprador sempre calculado a partir de TODAS as notas do período
+  // independente do toggle — o valor deles é sempre fixo
+  const notasTFCompPeriodo = notas.filter(n=> avIsTFComprador(avNorm(n.motivo||'')));
+  const vTFComprador = notasTFCompPeriodo.reduce((s,n)=>s+n.vNF,0);
+  // Valor Total SEM comprador (notas que não são TF Comprador)
+  const vSemComprador = notas.filter(n=> !avIsTFComprador(avNorm(n.motivo||''))).reduce((s,n)=>s+n.vNF,0);
+  // Avaria no período (conforme toggle)
+  const vAvaria = notas.filter(n=>n.categoria==='Avaria').reduce((s,n)=>s+n.vNF,0);
+  // Avaria + TF Comprador sempre somados
+  const vAvariaComComp = window.avTFCompradorEmAvaria
+    ? vAvaria                      // toggle=sim: já estão juntos
+    : vAvaria + vTFComprador;      // toggle=não: soma manualmente
+
   const datas = notas.filter(n=>n.dtEmissao).map(n=>n.dtEmissao).sort((a,b)=>a-b);
   const dtMin = datas[0], dtMax = datas[datas.length-1];
   const alertasCNPJ = AvState.notas.filter(n=>n.ok&&n.cnpjDivergente);
   const erros = AvState.notas.filter(n=>!n.ok);
 
+  // Título dinâmico — categoria selecionada ou nome padrão
+  const tituloAba = AvState.filtro.categoria
+    ? `${escapeHtml(AvState.filtro.categoria)} — Análise de NF-e`
+    : 'Avaria XML — Análise de NF-e';
+
   const fBRL = v => 'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const mc = (icon, label, value, sub='', cor='#123a6b') =>
-    `<div class="card" style="flex:1;min-width:130px;">
+  const mc = (icon, label, value, sub='', cor='#123a6b', bg='#fff', border='#dde3ea') =>
+    `<div class="card" style="flex:1;min-width:130px;background:${bg};border-color:${border};">
       <div class="card-label">${icon} ${label}</div>
       <div class="card-value" style="color:${cor};">${value}</div>
       ${sub?`<div class="card-sub">${sub}</div>`:''}
@@ -6555,7 +6649,7 @@ function renderAvaria() {
     <!-- UPLOAD -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📦 Avaria XML — Análise de NF-e</h3>
+        <h3>📦 ${tituloAba}</h3>
         <div class="panel-actions">
           <label class="btn btn-primary" style="cursor:pointer;">
             📂 Carregar ZIP de XMLs
@@ -6566,8 +6660,8 @@ function renderAvaria() {
       </div>
       ${AvState.notas.length===0?`<div class="hint-box">Carregue um arquivo <strong>.ZIP</strong> contendo os XMLs de NF-e para iniciar a análise.</div>`:`
         <div class="hint-box" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
-          <span style="font-size:12px;"><strong>Baixa TF Comprador</strong> (ex: "BAIXA TF ANDRE") considerar como <strong>Avaria</strong>?</span>
-          <div class="toggle-group" id="av-toggle-tf-comprador">
+          <span style="font-size:12px;"><strong>Baixa TF Comprador</strong> (ex: "BAIXA TF ANDRE", "AVARIA TF WESLEY") somar à <strong>Avaria</strong>?</span>
+          <div class="toggle-group" id="av-toggle-tf">
             <button data-v="sim" class="${window.avTFCompradorEmAvaria?'active':''}" onclick="avSetTFComprador(true)">Sim — somar à Avaria</button>
             <button data-v="nao" class="${!window.avTFCompradorEmAvaria?'active':''}">Não — separar</button>
           </div>
@@ -6646,13 +6740,18 @@ function renderAvaria() {
 
     <!-- CARDS -->
     <div class="panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <!-- linha 1: métricas gerais -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
         ${mc('📄','Total de Notas', totalNotas, dtMin&&dtMax?fmtDateBR(dtMin)+' a '+fmtDateBR(dtMax):'')}
         ${mc('📦','Total de Itens', totalItens.toLocaleString('pt-BR'))}
-        ${mc('💰','Valor Total', fBRL(totalVNF), `média ${fBRL(totalNotas?totalVNF/totalNotas:0)}/nota`,'#1a9c62')}
-        ${mc('🧾','Valor dos Produtos', fBRL(totalVProd))}
+        ${mc('💰','Valor Total', fBRL(vSemComprador), `excl. TF Compradores`,'#1a9c62')}
         ${mc('💸','Total de Impostos', fBRL(totalVimp))}
         ${mc('⚠️','Categorias', cats.length, `${totalNotas} notas processadas`)}
+      </div>
+      <!-- linha 2: TF Compradores (sempre fixo) + combinado -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${mc('🔄','Valor TF Comprador', fBRL(vTFComprador), notasTFCompPeriodo.length+' nota(s) — valor fixo','#6b5200','#f5f2e4','#e8cc60')}
+        ${mc('📊','Avaria + TF Comprador', fBRL(vAvariaComComp), 'soma combinada do período','#0b2647','#eff6ff','#1a4480')}
       </div>
     </div>
 
@@ -6668,20 +6767,45 @@ function renderAvaria() {
           </div>
         </div>
       </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-        <div style="flex:1;min-width:160px;background:#0b2647;border-radius:8px;padding:14px 18px;">
-          <div style="font-size:10px;color:#9db8dd;font-weight:700;text-transform:uppercase;margin-bottom:4px;" id="av-comp-ult-label">—</div>
-          <div style="font-size:26px;font-weight:800;color:#fff;" id="av-comp-ult-vnf">—</div>
-          <div style="font-size:11px;color:#9db8dd;margin-top:3px;" id="av-comp-ult-notas">—</div>
+      <!-- Duas colunas: Comparativo Geral | Comparativo Sem TF Comprador -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+        <!-- Bloco 1: Geral -->
+        <div style="border:1px solid #dde3ea;border-radius:8px;padding:14px;">
+          <div style="font-size:10px;font-weight:800;color:#1a4480;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;">📊 Total Geral</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;">
+            <div style="flex:1;background:#0b2647;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:9.5px;color:#9db8dd;font-weight:700;text-transform:uppercase;margin-bottom:3px;" id="av-comp-ult-label">—</div>
+              <div style="font-size:22px;font-weight:800;color:#fff;" id="av-comp-ult-vnf">—</div>
+              <div style="font-size:10px;color:#9db8dd;margin-top:2px;" id="av-comp-ult-notas">—</div>
+            </div>
+            <div style="flex:1;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:9.5px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:3px;" id="av-comp-ant-label">—</div>
+              <div style="font-size:22px;font-weight:800;color:#7a8798;" id="av-comp-ant-vnf">—</div>
+              <div style="font-size:10px;color:#7a8798;margin-top:2px;" id="av-comp-ant-notas">—</div>
+            </div>
+          </div>
+          <div id="av-comp-diff" style="font-size:12px;">Sem dados suficientes.</div>
         </div>
-        <div style="flex:1;min-width:160px;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:14px 18px;">
-          <div style="font-size:10px;color:#7a8798;font-weight:700;text-transform:uppercase;margin-bottom:4px;" id="av-comp-ant-label">—</div>
-          <div style="font-size:26px;font-weight:800;color:#7a8798;" id="av-comp-ant-vnf">—</div>
-          <div style="font-size:11px;color:#7a8798;margin-top:3px;" id="av-comp-ant-notas">—</div>
+
+        <!-- Bloco 2: Sem TF Comprador -->
+        <div style="border:1px solid #e8cc60;border-radius:8px;padding:14px;background:#f5f2e4;">
+          <div style="font-size:10px;font-weight:800;color:#6b5200;text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;">🔄 Sem TF Comprador</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;">
+            <div style="flex:1;background:#0b2647;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:9.5px;color:#9db8dd;font-weight:700;text-transform:uppercase;margin-bottom:3px;" id="av-comp2-ult-label">—</div>
+              <div style="font-size:22px;font-weight:800;color:#fff;" id="av-comp2-ult-vnf">—</div>
+              <div style="font-size:10px;color:#9db8dd;margin-top:2px;" id="av-comp2-ult-notas">—</div>
+            </div>
+            <div style="flex:1;background:#f5f2e4;border:1px solid #e8cc60;border-radius:8px;padding:12px 14px;">
+              <div style="font-size:9.5px;color:#6b5200;font-weight:700;text-transform:uppercase;margin-bottom:3px;" id="av-comp2-ant-label">—</div>
+              <div style="font-size:22px;font-weight:800;color:#6b5200;" id="av-comp2-ant-vnf">—</div>
+              <div style="font-size:10px;color:#6b5200;margin-top:2px;" id="av-comp2-ant-notas">—</div>
+            </div>
+          </div>
+          <div id="av-comp2-diff" style="font-size:12px;">Sem dados suficientes.</div>
         </div>
-        <div style="flex:2;min-width:200px;background:#f8fafc;border:1px solid #dde3ea;border-radius:8px;padding:14px 18px;display:flex;align-items:center;">
-          <div style="font-size:13px;" id="av-comp-diff">Sem dados suficientes para comparação.</div>
-        </div>
+
       </div>
     </div>
 
@@ -6745,7 +6869,7 @@ function renderAvaria() {
             <th>Valor Prod.</th><th>Impostos</th><th>Valor Total</th><th>Arquivo</th>
           </tr></thead>
           <tbody>
-            ${notas.slice(0,200).map(n=>`<tr class="clickable" onclick="avAbrirDetalhe('${escapeHtml(n.nNF+'-'+n.serie)}')">
+            ${[...notas].sort((a,b)=>b.vNF-a.vNF).slice(0,200).map(n=>`<tr class="clickable" onclick="avAbrirDetalhe('${escapeHtml(n.nNF+'-'+n.serie)}')">
               <td>${n.dtEmissao?fmtDateBR(n.dtEmissao):'—'}</td>
               <td style="font-weight:700;color:#2f6fce;">${escapeHtml(n.nNF)}</td>
               <td>${escapeHtml(n.serie)}</td>
@@ -6776,10 +6900,8 @@ function renderAvaria() {
   document.getElementById('av-cat-sel')?.addEventListener('change', e=>{ AvState.filtro.categoria=e.target.value||null; renderAvaria(); });
   document.getElementById('av-busca')?.addEventListener('input', e=>{ AvState.filtro.busca=e.target.value; renderAvaria(); });
   document.getElementById('av-limpar-filtro')?.addEventListener('click', ()=>{ AvState.filtro={ini:null,fim:null,categoria:null,busca:''}; renderAvaria(); });
-  // Botão "Não" do toggle TF Comprador
-  const tfToggleNao = document.querySelector('#av-toggle-tf-comprador [data-v="nao"]');
-  if(tfToggleNao) tfToggleNao.addEventListener('click', ()=> avSetTFComprador(false));
-
+  const tfNao = document.querySelector('#av-toggle-tf [data-v="nao"]');
+  if(tfNao) tfNao.addEventListener('click', ()=> avSetTFComprador(false));
   if(AvState.notas.length > 0) setTimeout(()=> avRenderGraficos(), 60);
   if(AvState.detalheNota) avRenderDetalhe(AvState.detalheNota);
 }
