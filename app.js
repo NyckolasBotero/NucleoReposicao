@@ -1629,6 +1629,14 @@ const Audit = {
 // nenhuma ocorrência (impecáveis) sobre o total.
 const AUDITORIA_ONLINE_SHEET_ID = "1_WCpwtsyUJbc3j3v2oX9TuwzBZxnFwIobPEzg19Umy0";
 const AUDITORIA_ONLINE_GID = "0";
+// status de qualidade por faixa (usado em toda a Auditoria): Excelente/Boa/Atenção/Crítica
+function auditoriaStatusQual(v){
+  if(v===null||v===undefined) return { label:'—', cor:'#7a8798' };
+  if(v>=95) return { label:'Excelente', cor:'#1a9c62' };
+  if(v>=90) return { label:'Boa', cor:'#2f6fce' };
+  if(v>=80) return { label:'Atenção', cor:'#e08a1f' };
+  return { label:'Crítica', cor:'#d64545' };
+}
 
 const AuditOnline = {
   state: { dataInicial:null, dataFinal:null, atalhoSel:null, rua:null, repositor:null, auditor:null, apenasQuadroAtual:"SIM" },
@@ -1722,6 +1730,9 @@ const AuditOnline = {
     const iProxVenc = findCol(["Quantidade Produtos Próx. Vencimento","Quantidade Produtos Prox. Vencimento"]);
     const iSemSaldo = findCol(["Quantidade Produtos Sem Saldo"]);
     const iRepositor = findCol(["Repositor Atualmente"]);
+    const iPossuiImagem = findCol(["Possui Imagem"]);
+    const iFoto = findCol(["Foto"]);
+    const iFoto2 = findCol(["Foto 2"]);
 
     const numOr0 = (v) => { const n = parseInt(trimStr(v).replace(/[^\d\-]/g,''),10); return isNaN(n) ? 0 : n; };
 
@@ -1739,12 +1750,21 @@ const AuditOnline = {
       const proxVenc = iProxVenc!==-1 ? numOr0(cols[iProxVenc]) : 0;
       const semSaldo = iSemSaldo!==-1 ? numOr0(cols[iSemSaldo]) : 0;
       const totalOcorrencias = pickErrado + avariado + proxVenc + semSaldo;
+      // qualidade por critério: cada um dos 4 vale 25% — 0 = OK, >0 = falha nesse critério
+      const criteriosOk = (pickErrado===0?1:0)+(avariado===0?1:0)+(proxVenc===0?1:0)+(semSaldo===0?1:0);
+      const qualidade = criteriosOk/4*100;
+      const possuiImagem = iPossuiImagem!==-1 ? /^S/i.test(trimStr(cols[iPossuiImagem])) : false;
+      const foto = iFoto!==-1 ? trimStr(cols[iFoto]) : "";
+      const foto2 = iFoto2!==-1 ? trimStr(cols[iFoto2]) : "";
 
       out.push({
         _row: li-1, data, rua: iRua!==-1?trimStr(cols[iRua]):"", cod, nome, auditor,
         codKey: cod ? normStr(cod) : (nome?"NOME::"+normStr(nome):null),
         pickErrado, avariado, proxVenc, semSaldo, totalOcorrencias,
-        impecavel: totalOcorrencias===0
+        criteriosOk, qualidade,
+        impecavel: totalOcorrencias===0,
+        temProblema: totalOcorrencias>0,
+        possuiImagem, foto, foto2
       });
     }
     return out;
@@ -1765,9 +1785,10 @@ const AuditOnline = {
     return rows;
   },
 
-  // % de auditorias impecáveis (sem nenhuma ocorrência) num conjunto de linhas já filtrado
+  // qualidade média de um conjunto de linhas — cada auditoria vale 0-100% conforme
+  // quantos dos 4 critérios estão OK (valor 0); a média do conjunto é a qualidade geral
   qualidadeDe(rows){
-    return rows.length ? (rows.filter(r=>r.impecavel).length / rows.length * 100) : null;
+    return rows.length ? avg(rows.map(r=>r.qualidade)) : null;
   },
 
   // qualidade média num intervalo [ini,fim], respeitando os filtros de repositor/rua/
@@ -1790,9 +1811,14 @@ const AuditOnline = {
     const rows = this.getRows();
     const qualidadeMedia = this.qualidadeDe(rows);
     const totalOcorrencias = sum(rows.map(r=>r.totalOcorrencias));
+    const auditoriasComProblema = rows.filter(r=>r.temProblema).length;
+    const totalPickErrado = sum(rows.map(r=>r.pickErrado));
+    const totalAvariado = sum(rows.map(r=>r.avariado));
+    const totalProxVenc = sum(rows.map(r=>r.proxVenc));
+    const totalSemSaldo = sum(rows.map(r=>r.semSaldo));
 
     const byRua = this.byRua();
-    const ruasCriticas = byRua.filter(e=>e.qualidadeMedia!==null && e.qualidadeMedia<90).length;
+    const ruasCriticas = byRua.filter(e=>e.qualidadeMedia!==null && e.qualidadeMedia<80).length;
 
     // --- 3 cards fixos por calendário (independem do filtro de Ciclo) ---
     const hoje = new Date();
@@ -1811,7 +1837,8 @@ const AuditOnline = {
     const qualUlt3Meses = this.qualidadeNoIntervalo(iniUlt3, fimUlt3);
 
     return {
-      auditoriasRealizadas: rows.length, qualidadeMedia, totalOcorrencias,
+      auditoriasRealizadas: rows.length, qualidadeMedia, totalOcorrencias, auditoriasComProblema,
+      totalPickErrado, totalAvariado, totalProxVenc, totalSemSaldo,
       repositoresAuditados: uniq(rows.filter(r=>r.codKey).map(r=>r.codKey)).length,
       auditoresAtivos: uniq(rows.filter(r=>r.auditor).map(r=>r.auditor)).length,
       ruasAuditadas: uniq(rows.map(r=>r.rua)).length,
@@ -1825,9 +1852,10 @@ const AuditOnline = {
     const registry = window.APP_STATE.nameRegistry;
     const map = new Map();
     rows.forEach(r=>{
-      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, cod:r.cod, nome: registry.get(r.codKey)||r.nome, auditorias:0, ocorrencias:0 });
+      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, cod:r.cod, nome: registry.get(r.codKey)||r.nome, auditorias:0, pickErrado:0, avariado:0, proxVenc:0, semSaldo:0, ocorrencias:0 });
       const e = map.get(r.codKey);
       e.auditorias++; e.ocorrencias += r.totalOcorrencias;
+      e.pickErrado += r.pickErrado; e.avariado += r.avariado; e.proxVenc += r.proxVenc; e.semSaldo += r.semSaldo;
     });
     return Array.from(map.values()).map(e=>({...e, qualidadeMedia: this.qualidadeDe(rows.filter(r=>r.codKey===e.codKey))}))
       .sort((a,b)=>(b.qualidadeMedia||0)-(a.qualidadeMedia||0));
@@ -1841,8 +1869,25 @@ const AuditOnline = {
       const e = map.get(r.auditor);
       e.auditorias++; e.ruas.add(r.rua); e.ocorrencias += r.totalOcorrencias;
     });
-    return Array.from(map.values()).map(e=>({ auditor:e.auditor, ruas:e.ruas.size, auditorias:e.auditorias, ocorrencias:e.ocorrencias }))
+    return Array.from(map.values()).map(e=>({ auditor:e.auditor, ruas:e.ruas.size, auditorias:e.auditorias, ocorrencias:e.ocorrencias,
+        qualidadeMedia: this.qualidadeDe(rows.filter(r=>r.auditor===e.auditor)) }))
       .sort((a,b)=>b.ruas-a.ruas);
+  },
+
+  // Detalhamento por Repositor × Rua (granularidade pedida no relatório)
+  byRepositorRua(){
+    const rows = this.getRows().filter(r=>r.codKey);
+    const registry = window.APP_STATE.nameRegistry;
+    const map = new Map();
+    rows.forEach(r=>{
+      const k = r.codKey+'|||'+r.rua;
+      if(!map.has(k)) map.set(k, { codKey:r.codKey, cod:r.cod, nome: registry.get(r.codKey)||r.nome, rua:r.rua, auditorias:0, pickErrado:0, avariado:0, proxVenc:0, semSaldo:0, ocorrencias:0 });
+      const e = map.get(k);
+      e.auditorias++; e.ocorrencias += r.totalOcorrencias;
+      e.pickErrado += r.pickErrado; e.avariado += r.avariado; e.proxVenc += r.proxVenc; e.semSaldo += r.semSaldo;
+    });
+    return Array.from(map.values()).map(e=>({...e, qualidadeMedia: this.qualidadeDe(rows.filter(r=>r.codKey===e.codKey&&r.rua===e.rua))}))
+      .sort((a,b)=>(a.qualidadeMedia||0)-(b.qualidadeMedia||0));
   },
 
   byRua(){
@@ -3017,6 +3062,10 @@ function periodoAtalho(tipo){
   if(tipo==='mes_ant')    return { ini: new Date(y,m-1,1),   fim: new Date(y,m,0,23,59,59)   };
   if(tipo==='ano_atual')  return { ini: new Date(y,0,1),     fim: new Date(y,11,31,23,59,59)  };
   if(tipo==='ano_ant')    return { ini: new Date(y-1,0,1),   fim: new Date(y-1,11,31,23,59,59)};
+  // 3 meses completos anteriores ao mês atual (não inclui o mês atual)
+  if(tipo==='ultimos_3m') return { ini: new Date(y,m-3,1),   fim: new Date(y,m,0,23,59,59)    };
+  if(tipo==='ultimos_30') return { ini: addDays(h,-30),      fim: h };
+  if(tipo==='ultimos_90') return { ini: addDays(h,-90),      fim: h };
   return { ini: null, fim: null }; // tudo
 }
 
@@ -3025,7 +3074,7 @@ function periodoAtalho(tipo){
 // onclickFn = nome da função JS a chamar com o tipo como string
 function renderAtalhos(selected, onclickFn, opcoes){
   opcoes = opcoes || ['mes_atual','mes_ant','ano_atual','ano_ant','tudo'];
-  const labels = {mes_atual:'Mês Atual', mes_ant:'Mês Anterior', ano_atual:'Ano Atual', ano_ant:'Ano Anterior', tudo:'Tudo'};
+  const labels = {mes_atual:'Mês Atual', mes_ant:'Mês Anterior', ano_atual:'Ano Atual', ano_ant:'Ano Anterior', ultimos_3m:'Últimos 3 Meses', ultimos_30:'Últimos 30 Dias', ultimos_90:'Últimos 90 Dias', tudo:'Tudo'};
   return opcoes.map(t=>{
     const ativo = selected===t;
     return `<button
@@ -4901,17 +4950,22 @@ function renderAuditoria(){
   const pane = $("#pane-auditoria");
   const st = AuditOnline.state;
 
-  // primeira renderizacao: dispara o carregamento e mostra estado de loading
   if(AuditOnline.rows===null && !AuditOnline.loading){
     AuditOnline.load().then(()=> renderAuditoria());
   }
 
+  const statusBadge = AuditOnline.loading
+    ? `<span style="background:#e08a1f22;color:#e08a1f;font-size:10px;font-weight:800;padding:3px 10px;border-radius:10px;">ATUALIZANDO...</span>`
+    : (AuditOnline.error && !(AuditOnline.rows&&AuditOnline.rows.length))
+      ? `<span style="background:#d6454522;color:#d64545;font-size:10px;font-weight:800;padding:3px 10px;border-radius:10px;">ERRO DE CONEXAO</span>`
+      : `<span style="background:#1a9c6222;color:#1a9c62;font-size:10px;font-weight:800;padding:3px 10px;border-radius:10px;">\u25CF DADOS ONLINE</span>`;
+
   if(AuditOnline.loading){
-    pane.innerHTML = `<div class="hint-box">Carregando dados da planilha online...</div>`;
+    pane.innerHTML = `<div class="hint-box">${statusBadge} Carregando dados da planilha online...</div>`;
     return;
   }
   if(AuditOnline.error && !(AuditOnline.rows && AuditOnline.rows.length)){
-    pane.innerHTML = `<div class="warn-box">Nao foi possivel carregar a planilha online.<br><strong>${escapeHtml(AuditOnline.error)}</strong><br>
+    pane.innerHTML = `<div class="warn-box">${statusBadge}<br><br>Nao foi possivel atualizar os dados da Auditoria. Verifique a conexao ou a disponibilidade da planilha online.<br><strong>${escapeHtml(AuditOnline.error)}</strong><br>
       Confira se o link do Google Sheets esta compartilhado como "Qualquer pessoa com o link pode visualizar".
       <div style="margin-top:10px;"><button class="btn btn-outline btn-sm" id="aud-retry">Tentar novamente</button></div></div>`;
     $("#aud-retry").addEventListener("click", ()=>{ AuditOnline.load(true).then(()=>renderAuditoria()); });
@@ -4924,27 +4978,28 @@ function renderAuditoria(){
     .map(c=>({codKey:c, nome:registry.get(c)||c})).sort((a,b)=>a.nome.localeCompare(b.nome));
   const allAuditores = uniq((AuditOnline.rows||[]).filter(r=>r.auditor).map(r=>r.auditor)).sort();
 
-  const lastSync = AuditOnline.lastLoadedAt ? `Sincronizado as ${AuditOnline.lastLoadedAt.toLocaleTimeString('pt-BR')}` : '';
+  const lastSync = AuditOnline.lastLoadedAt ? `Ultima atualizacao: ${fmtDateBR(AuditOnline.lastLoadedAt)} ${AuditOnline.lastLoadedAt.toLocaleTimeString('pt-BR')}` : '';
 
   pane.innerHTML = `
     <div class="toolbar" style="margin-bottom:6px;">
-      <div class="filter-group"><label>Atalhos de Ciclo</label>
-        <div>${renderAtalhos(st.atalhoSel, 'atalhoAuditoria', ['mes_atual','mes_ant','ano_atual','tudo'])}</div>
+      <div class="filter-group"><label>Atalhos de Periodo</label>
+        <div>${renderAtalhos(st.atalhoSel, 'atalhoAuditoria', ['mes_atual','mes_ant','ultimos_3m','ano_atual','ano_ant','ultimos_30','ultimos_90','tudo'])}</div>
       </div>
       <div class="filter-group">
-        <label>Apenas Quadro Atual?</label>
+        <label>Somente Quadro Atual?</label>
         <div class="toggle-group" id="aud-quadro-toggle">
           <button data-v="SIM" class="${st.apenasQuadroAtual==='SIM'?'active':''}">Sim</button>
           <button data-v="NAO" class="${st.apenasQuadroAtual==='NAO'?'active':''}">Nao</button>
         </div>
       </div>
       <div class="spacer"></div>
+      ${statusBadge}
       <span class="small-muted" style="white-space:nowrap;">${lastSync}</span>
-      <button class="btn btn-outline btn-sm" id="aud-refresh">Atualizar dados</button>
+      <button class="btn btn-outline btn-sm" id="aud-refresh">\u21BB Atualizar dados</button>
     </div>
     <div class="toolbar">
-      <div class="filter-group"><label>Ciclo - De</label><input type="date" id="aud-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
-      <div class="filter-group"><label>Ciclo - Ate</label><input type="date" id="aud-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+      <div class="filter-group"><label>Data Inicial</label><input type="date" id="aud-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
+      <div class="filter-group"><label>Data Final</label><input type="date" id="aud-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
       <div class="filter-group"><label>Rua</label><select id="aud-rua"><option value="">Todas</option>${allRuas.map(r=>`<option value="${escapeHtml(r)}" ${String(st.rua)===String(r)?'selected':''}>Rua ${escapeHtml(r)}</option>`).join("")}</select></div>
       <div class="filter-group"><label>Repositor</label><select id="aud-rep"><option value="">Todos</option>${allReps.map(r=>`<option value="${r.codKey}" ${st.repositor===r.codKey?'selected':''}>${escapeHtml(r.nome)}</option>`).join("")}</select></div>
       <div class="filter-group"><label>Auditor</label><select id="aud-auditor"><option value="">Todos</option>${allAuditores.map(a=>`<option value="${escapeHtml(a)}" ${st.auditor===a?'selected':''}>${escapeHtml(a)}</option>`).join("")}</select></div>
@@ -4967,7 +5022,7 @@ function renderAuditoria(){
 
   const cards = AuditOnline.cards();
   const fmtQual = (v) => v!==null ? fmtNum(v,1)+'%' : '-';
-  const qualClass = (v) => v===null ? '' : v>=90 ? 'pos' : v<75 ? 'neg' : 'warn';
+  const qualClass = (v) => { const s=auditoriaStatusQual(v); return s.label==='Excelente'||s.label==='Boa'?'pos':s.label==='Atencao'||s.label==='Atenção'?'warn':s.label==='Critica'||s.label==='Crítica'?'neg':''; };
 
   const rows = AuditOnline.getRows();
   const audDates = rows.map(r=>r.data).filter(Boolean);
@@ -4988,6 +5043,7 @@ function renderAuditoria(){
   const byRep = AuditOnline.byRepositor();
   const byRua = AuditOnline.byRua();
   const byAuditor = AuditOnline.byAuditor();
+  const byRepRua = AuditOnline.byRepositorRua();
   const evolucao = AuditOnline.evolucao();
   const porTipo = AuditOnline.ocorrenciasPorTipo();
 
@@ -4999,15 +5055,24 @@ function renderAuditoria(){
       <div class="card ${qualClass(cards.qualUlt3Meses)}"><div class="card-label">% Qualidade - Ultimos 3 Meses</div><div class="card-value ${qualClass(cards.qualUlt3Meses)}">${fmtQual(cards.qualUlt3Meses)}</div></div>
     </div>
 
-    <div class="panel-header" style="margin:14px 0 8px;"><h3>Ciclo Selecionado</h3></div>
-    <div class="hint-box">Qualidade aqui = % de auditorias sem nenhuma ocorrencia (Picking Errado + Avariados + Prox. Vencimento + Sem Saldo = 0).</div>
+    <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
+    <div class="hint-box">Qualidade de uma auditoria = % dos 4 criterios OK (Picking Errado, Avariados, Prox. Vencimento, Sem Saldo = 0). Qualidade do grupo = media das auditorias.</div>
     <div class="cards-grid">
-      <div class="card"><div class="card-label">Auditorias no Ciclo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
-      <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Media Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
-      <div class="card"><div class="card-label">Total Ocorrencias</div><div class="card-value neg">${fmtNum(cards.totalOcorrencias)}</div></div>
+      <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
+      <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
+      <div class="card"><div class="card-label">Auditorias com Problema</div><div class="card-value neg">${fmtNum(cards.auditoriasComProblema)}</div></div>
       <div class="card"><div class="card-label">Ruas Auditadas</div><div class="card-value">${fmtNum(cards.ruasAuditadas)}</div></div>
-      <div class="card"><div class="card-label">Ruas Criticas (&lt;90%)</div><div class="card-value neg">${fmtNum(cards.ruasCriticas)}</div></div>
+      <div class="card"><div class="card-label">Ruas Criticas (&lt;80%)</div><div class="card-value neg">${fmtNum(cards.ruasCriticas)}</div></div>
       <div class="card"><div class="card-label">Auditores Ativos</div><div class="card-value">${fmtNum(cards.auditoresAtivos)}</div></div>
+    </div>
+
+    <div class="panel-header" style="margin:14px 0 8px;"><h3>Indicadores de Ocorrencias</h3></div>
+    <div class="cards-grid">
+      <div class="card"><div class="card-label">Picking Errado</div><div class="card-value">${fmtNum(cards.totalPickErrado)}</div></div>
+      <div class="card"><div class="card-label">Avariados</div><div class="card-value">${fmtNum(cards.totalAvariado)}</div></div>
+      <div class="card"><div class="card-label">Prox. Vencimento</div><div class="card-value">${fmtNum(cards.totalProxVenc)}</div></div>
+      <div class="card"><div class="card-label">Sem Saldo</div><div class="card-value">${fmtNum(cards.totalSemSaldo)}</div></div>
+      <div class="card"><div class="card-label">Total Geral de Problemas</div><div class="card-value neg">${fmtNum(cards.totalOcorrencias)}</div></div>
     </div>
 
     <div class="grid-2">
@@ -5026,33 +5091,45 @@ function renderAuditoria(){
         <div class="chart-wrap"><canvas id="chart-qual-evo"></canvas></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><h3>Ocorrencias por Tipo</h3></div>
+        <div class="panel-header"><h3>Problemas por Tipo</h3></div>
         <div class="chart-wrap"><canvas id="chart-tipo"></canvas></div>
       </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h3>Ocorrencias por Dia</h3></div>
+      <div class="chart-wrap"><canvas id="chart-ocor-dia"></canvas></div>
     </div>
 
     ${byAuditor.length ? `
     <div class="panel">
-      <div class="panel-header"><h3>Ranking Auditores - Ruas Inspecionadas</h3></div>
+      <div class="panel-header"><h3>Auditores</h3></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Auditor</th><th>Ruas Inspecionadas</th><th>Auditorias</th><th>Ocorrencias</th></tr></thead>
-        <tbody>${byAuditor.map(e=>`<tr><td>${escapeHtml(e.auditor)}</td><td>${e.ruas}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Auditor</th><th>Auditorias</th><th>Ruas Auditadas</th><th>Problemas</th><th>Qualidade Media</th></tr></thead>
+        <tbody>${byAuditor.map(e=>`<tr><td>${escapeHtml(e.auditor)}</td><td>${e.auditorias}</td><td>${e.ruas}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>` : ``}
 
     <div class="panel">
-      <div class="panel-header"><h3>Ranking de Repositores - Qualidade</h3></div>
+      <div class="panel-header"><h3>Qualidade por Repositor</h3></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Codigo</th><th>Repositor</th><th>Auditorias</th><th>Ocorrencias</th><th>Qualidade %</th></tr></thead>
-        <tbody>${byRep.map(e=>`<tr><td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Codigo</th><th>Repositor</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade %</th></tr></thead>
+        <tbody>${byRep.map(e=>`<tr><td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${e.auditorias}</td><td>${e.pickErrado}</td><td>${e.avariado}</td><td>${e.proxVenc}</td><td>${e.semSaldo}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>
 
     <div class="panel">
-      <div class="panel-header"><h3>Qualidade por Rua - Detalhamento</h3></div>
+      <div class="panel-header"><h3>Qualidade por Rua - Repositor e Rua</h3></div>
+      <div class="table-wrap" style="max-height:400px;overflow-y:auto;"><table class="data-table">
+        <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
+        <tbody>${byRepRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>${escapeHtml(e.nome)}</td><td>${e.cod||'-'}</td><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.auditorias}</td><td>${e.pickErrado}</td><td>${e.avariado}</td><td>${e.proxVenc}</td><td>${e.semSaldo}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h3>Qualidade por Rua - Resumo</h3></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Rua</th><th>Auditorias</th><th>Ocorrencias</th><th>Qualidade Media</th><th>Status</th></tr></thead>
-        <tbody>${byRua.map(e=>`<tr><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td>${e.qualidadeMedia===null?'-':e.qualidadeMedia>=95?'Otima':e.qualidadeMedia>=85?'Boa':e.qualidadeMedia>=70?'Atencao':'Critica'}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Rua</th><th>Auditorias</th><th>Problemas</th><th>Qualidade Media</th><th>Status</th></tr></thead>
+        <tbody>${byRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
       </table></div>
     </div>
 
@@ -5086,6 +5163,14 @@ function renderAuditoria(){
     data:{ labels: porTipo.map(s=>s.tipo), datasets:[{ label:"Ocorrencias", data: porTipo.map(s=>s.total), backgroundColor:Charts.colors.red, borderRadius:4 }] },
     options: Charts.baseOptions({ indexAxis:"y" })
   });
+  Charts.make("chart-ocor-dia", {
+    type:"bar",
+    data:{ labels: evolucao.map(e=>fmtDateBR(e.date)), datasets:[{ label:"Problemas", data: evolucao.map(e=>{
+      const dr = rows.filter(r=>ymdKey(r.data)===ymdKey(e.date));
+      return sum(dr.map(r=>r.totalOcorrencias));
+    }), backgroundColor:Charts.colors.blueDark, borderRadius:4 }] },
+    options: Charts.baseOptions({ plugins:{legend:{display:false}} })
+  });
 }
 
 function atalhoAuditoria(tipo){
@@ -5097,16 +5182,27 @@ function atalhoAuditoria(tipo){
 function showAuditDetailOnline(rowIdx){
   const r = (AuditOnline.rows||[]).find(x=>x._row===rowIdx);
   if(!r) return;
+  const temFoto = r.possuiImagem && (r.foto || r.foto2);
+  const linkFoto = (url, label) => {
+    if(!url) return '';
+    const isUrl = /^https?:\/\//i.test(url);
+    return isUrl
+      ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="margin-right:6px;">${label}</a>`
+      : `<span class="small-muted" style="margin-right:10px;">${label}: ${escapeHtml(url)}</span>`;
+  };
   UI.openModal(`
     <h3>Auditoria - Rua ${escapeHtml(String(r.rua))}</h3>
     <p><strong>Data:</strong> ${fmtDateBR(r.data)} &nbsp; <strong>Codigo:</strong> ${r.cod||'-'} &nbsp; <strong>Repositor:</strong> ${escapeHtml(r.nome||'-')} &nbsp; <strong>Auditor:</strong> ${escapeHtml(r.auditor||'-')}</p>
-    <p><strong>Status:</strong> ${r.impecavel?'Impecavel (sem ocorrencias)':'Com ocorrencia(s)'}</p>
+    <p><strong>Status:</strong> ${r.impecavel?'Impecavel (sem ocorrencias)':'Com ocorrencia(s)'} &nbsp; <strong>Qualidade:</strong> ${fmtNum(r.qualidade,1)}%</p>
     <ul class="criteria-list">
       <li><span>Picking Errado</span><span class="${r.pickErrado>0?'badge-nao':'badge-sim'}">${r.pickErrado}</span></li>
       <li><span>Avariados</span><span class="${r.avariado>0?'badge-nao':'badge-sim'}">${r.avariado}</span></li>
       <li><span>Prox. Vencimento</span><span class="${r.proxVenc>0?'badge-nao':'badge-sim'}">${r.proxVenc}</span></li>
       <li><span>Sem Saldo</span><span class="${r.semSaldo>0?'badge-nao':'badge-sim'}">${r.semSaldo}</span></li>
     </ul>
+    <div style="margin-top:10px;">
+      ${temFoto ? (linkFoto(r.foto,'Ver evidencia 1')+linkFoto(r.foto2,'Ver evidencia 2')) : '<span class="small-muted">Sem imagem</span>'}
+    </div>
   `);
 }
 
