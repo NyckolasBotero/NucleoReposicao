@@ -1608,18 +1608,30 @@ const Audit = {
 };
 
 /* ---------------------------------------------------------------------- */
-/* MODULE: AuditOnline (fonte: Google Sheets público, exclusivo do        */
-/*         relatório Gestão > Auditoria)                                  */
+/* MODULE: AuditOnline (fonte: Google Sheets público "Qualidade Ruas",    */
+/*         exclusivo do relatório Gestão > Auditoria)                     */
 /* ---------------------------------------------------------------------- */
-// A aba "Auditoria" passou a buscar os dados diretamente de uma planilha
-// Google Sheets pública (não depende mais da aba AUDITORIA REP do Excel
-// carregado). Isso é exclusivo deste relatório — o restante do painel
-// (cards de O.S., etc.) continua usando processed.auditoria normalmente.
+// A aba "Auditoria" busca os dados diretamente de uma planilha Google Sheets
+// pública (não depende mais da aba AUDITORIA REP do Excel carregado). Isso é
+// exclusivo deste relatório — o restante do painel continua usando
+// processed.auditoria normalmente.
+//
+// Estrutura real da planilha (colunas): id, Data, Data//hora Registro,
+// usuario, Rua, Quantidade de Produdos em Picking Errado, Quantidade de
+// Produtos Avariados, Quantidade Produtos Próx. Vencimento, Quantidade
+// Produtos Sem Saldo, Repositor Atualmente ("CODIGO - Nome"), Possui Imagem,
+// Foto, Foto 2.
+//
+// Não existem mais os 7 critérios SIM/NÃO — cada auditoria traz 4 contagens
+// de ocorrências. "Qualidade" de uma auditoria = 100% quando ela não tem
+// NENHUMA ocorrência (as 4 contagens somam zero); caso contrário conta como
+// "com ocorrência". A qualidade média de um conjunto = % de auditorias sem
+// nenhuma ocorrência (impecáveis) sobre o total.
 const AUDITORIA_ONLINE_SHEET_ID = "1_WCpwtsyUJbc3j3v2oX9TuwzBZxnFwIobPEzg19Umy0";
 const AUDITORIA_ONLINE_GID = "0";
 
 const AuditOnline = {
-  state: { dataInicial:null, dataFinal:null, rua:null, repositor:null, auditor:null },
+  state: { dataInicial:null, dataFinal:null, atalhoSel:null, rua:null, repositor:null, auditor:null, apenasQuadroAtual:"SIM" },
   rows: null,        // null = ainda não carregado
   loading: false,
   error: null,
@@ -1682,6 +1694,15 @@ const AuditOnline = {
     return isNaN(d.getTime()) ? null : d;
   },
 
+  // "10003805 - Luis Paulo" → { cod:"10003805", nome:"Luis Paulo" }
+  parseRepositor(v){
+    const s = trimStr(v);
+    if(!s) return { cod:null, nome:"" };
+    const m = s.match(/^(\d+)\s*-\s*(.+)$/);
+    if(m) return { cod: m[1], nome: trimStr(m[2]) };
+    return { cod:null, nome: s };
+  },
+
   parseCSV(text){
     const lines = this.splitCSV(text);
     if(!lines.length) return [];
@@ -1693,12 +1714,16 @@ const AuditOnline = {
       }
       return -1;
     };
-    const iData = findCol(["DATA"]);
-    const iRua = findCol(["RUA"]);
-    const iCod = findCol(["COD","CODIGO"]);
-    const iNome = findCol(["NOME"]);
-    const iAuditor = findCol(["AUDITOR","NOME AUDITOR","RESPONSAVEL","RESPONSÁVEL"]);
-    const critIdx = AUDIT_CRITERIA.map(c=>findCol([c]));
+    const iData = findCol(["Data"]);
+    const iAuditor = findCol(["usuario","Usuário","Auditor"]);
+    const iRua = findCol(["Rua"]);
+    const iPickErrado = findCol(["Quantidade de Produdos em Picking Errado","Quantidade de Produtos em Picking Errado"]);
+    const iAvariado = findCol(["Quantidade de Produtos Avariados"]);
+    const iProxVenc = findCol(["Quantidade Produtos Próx. Vencimento","Quantidade Produtos Prox. Vencimento"]);
+    const iSemSaldo = findCol(["Quantidade Produtos Sem Saldo"]);
+    const iRepositor = findCol(["Repositor Atualmente"]);
+
+    const numOr0 = (v) => { const n = parseInt(trimStr(v).replace(/[^\d\-]/g,''),10); return isNaN(n) ? 0 : n; };
 
     const out = [];
     for(let li=1; li<lines.length; li++){
@@ -1706,22 +1731,20 @@ const AuditOnline = {
       if(!cols || cols.every(c=>trimStr(c)==="")) continue;
       const data = iData!==-1 ? this.parseDateFlexible(cols[iData]) : null;
       if(!data) continue;
-      const cod = iCod!==-1 && trimStr(cols[iCod])!=="" ? trimStr(cols[iCod]) : null;
-      const nome = iNome!==-1 ? trimStr(cols[iNome]) : "";
+
+      const { cod, nome } = iRepositor!==-1 ? this.parseRepositor(cols[iRepositor]) : { cod:null, nome:"" };
       const auditor = iAuditor!==-1 ? trimStr(cols[iAuditor]) : "";
-      const criteria = {}; let simCount=0, invalid=0;
-      AUDIT_CRITERIA.forEach((c,ci)=>{
-        let v = critIdx[ci]!==-1 ? cols[critIdx[ci]] : "";
-        v = v===null||v===undefined ? "" : String(v).trim().toUpperCase();
-        if(v==="SIM"){ criteria[c]="SIM"; simCount++; }
-        else if(v==="NÃO"||v==="NAO"){ criteria[c]="NÃO"; }
-        else { criteria[c]="INVALIDO"; invalid++; }
-      });
+      const pickErrado = iPickErrado!==-1 ? numOr0(cols[iPickErrado]) : 0;
+      const avariado = iAvariado!==-1 ? numOr0(cols[iAvariado]) : 0;
+      const proxVenc = iProxVenc!==-1 ? numOr0(cols[iProxVenc]) : 0;
+      const semSaldo = iSemSaldo!==-1 ? numOr0(cols[iSemSaldo]) : 0;
+      const totalOcorrencias = pickErrado + avariado + proxVenc + semSaldo;
+
       out.push({
         _row: li-1, data, rua: iRua!==-1?trimStr(cols[iRua]):"", cod, nome, auditor,
         codKey: cod ? normStr(cod) : (nome?"NOME::"+normStr(nome):null),
-        criteria, simCount, invalid,
-        qualidade: invalid>0 ? null : (simCount/7*100)
+        pickErrado, avariado, proxVenc, semSaldo, totalOcorrencias,
+        impecavel: totalOcorrencias===0
       });
     }
     return out;
@@ -1735,23 +1758,38 @@ const AuditOnline = {
     if(st.rua) rows = rows.filter(r=>String(r.rua)===String(st.rua));
     if(st.repositor) rows = rows.filter(r=>r.codKey===st.repositor);
     if(st.auditor) rows = rows.filter(r=>r.auditor===st.auditor);
+    if(st.apenasQuadroAtual==="SIM"){
+      const codes = window.APP_STATE.currentTeam ? window.APP_STATE.currentTeam.codes : null;
+      if(codes) rows = rows.filter(r=>r.codKey && codes.has(r.codKey));
+    }
     return rows;
   },
 
-  // qualidade média simples (não ponderada) de um conjunto de datas [ini,fim]
+  // % de auditorias impecáveis (sem nenhuma ocorrência) num conjunto de linhas já filtrado
+  qualidadeDe(rows){
+    return rows.length ? (rows.filter(r=>r.impecavel).length / rows.length * 100) : null;
+  },
+
+  // qualidade média num intervalo [ini,fim], respeitando os filtros de repositor/rua/
+  // auditor/quadro atual ativos, mas ignorando o filtro de datas do Ciclo (usado pelos
+  // 3 cards fixos por calendário)
   qualidadeNoIntervalo(ini, fim){
-    const rows = (this.rows||[]).filter(r=>{
-      const d = dateOnly(r.data);
-      return d>=ini && d<=fim && r.qualidade!==null;
-    });
-    return rows.length ? avg(rows.map(r=>r.qualidade)) : null;
+    const st = this.state;
+    let rows = (this.rows||[]).filter(r=>{ const d=dateOnly(r.data); return d>=ini && d<=fim; });
+    if(st.rua) rows = rows.filter(r=>String(r.rua)===String(st.rua));
+    if(st.repositor) rows = rows.filter(r=>r.codKey===st.repositor);
+    if(st.auditor) rows = rows.filter(r=>r.auditor===st.auditor);
+    if(st.apenasQuadroAtual==="SIM"){
+      const codes = window.APP_STATE.currentTeam ? window.APP_STATE.currentTeam.codes : null;
+      if(codes) rows = rows.filter(r=>r.codKey && codes.has(r.codKey));
+    }
+    return this.qualidadeDe(rows);
   },
 
   cards(){
     const rows = this.getRows();
-    const valid = rows.filter(r=>r.qualidade!==null);
-    const qualidadeMedia = valid.length ? avg(valid.map(r=>r.qualidade)) : null;
-    const totalNao = sum(valid.map(r=>7-r.simCount));
+    const qualidadeMedia = this.qualidadeDe(rows);
+    const totalOcorrencias = sum(rows.map(r=>r.totalOcorrencias));
 
     const byRua = this.byRua();
     const ruasCriticas = byRua.filter(e=>e.qualidadeMedia!==null && e.qualidadeMedia<90).length;
@@ -1773,11 +1811,11 @@ const AuditOnline = {
     const qualUlt3Meses = this.qualidadeNoIntervalo(iniUlt3, fimUlt3);
 
     return {
-      auditoriasRealizadas: rows.length, qualidadeMedia, totalNao,
+      auditoriasRealizadas: rows.length, qualidadeMedia, totalOcorrencias,
       repositoresAuditados: uniq(rows.filter(r=>r.codKey).map(r=>r.codKey)).length,
       auditoresAtivos: uniq(rows.filter(r=>r.auditor).map(r=>r.auditor)).length,
       ruasAuditadas: uniq(rows.map(r=>r.rua)).length,
-      ruasCriticas, invalidos: rows.filter(r=>r.invalid>0).length,
+      ruasCriticas,
       qualMesAtual, qualMesAnterior, qualUlt3Meses
     };
   },
@@ -1787,12 +1825,11 @@ const AuditOnline = {
     const registry = window.APP_STATE.nameRegistry;
     const map = new Map();
     rows.forEach(r=>{
-      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, cod:r.cod, nome: registry.get(r.codKey)||r.nome, auditorias:0, sim:0, nao:0, qualidades:[] });
+      if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, cod:r.cod, nome: registry.get(r.codKey)||r.nome, auditorias:0, ocorrencias:0 });
       const e = map.get(r.codKey);
-      e.auditorias++;
-      if(r.qualidade!==null){ e.sim+=r.simCount; e.nao+=(7-r.simCount); e.qualidades.push(r.qualidade); }
+      e.auditorias++; e.ocorrencias += r.totalOcorrencias;
     });
-    return Array.from(map.values()).map(e=>({...e, qualidadeMedia: e.qualidades.length?avg(e.qualidades):null}))
+    return Array.from(map.values()).map(e=>({...e, qualidadeMedia: this.qualidadeDe(rows.filter(r=>r.codKey===e.codKey))}))
       .sort((a,b)=>(b.qualidadeMedia||0)-(a.qualidadeMedia||0));
   },
 
@@ -1802,8 +1839,7 @@ const AuditOnline = {
     rows.forEach(r=>{
       if(!map.has(r.auditor)) map.set(r.auditor, { auditor:r.auditor, ruas:new Set(), auditorias:0, ocorrencias:0 });
       const e = map.get(r.auditor);
-      e.auditorias++; e.ruas.add(r.rua);
-      if(r.qualidade!==null) e.ocorrencias += (7-r.simCount);
+      e.auditorias++; e.ruas.add(r.rua); e.ocorrencias += r.totalOcorrencias;
     });
     return Array.from(map.values()).map(e=>({ auditor:e.auditor, ruas:e.ruas.size, auditorias:e.auditorias, ocorrencias:e.ocorrencias }))
       .sort((a,b)=>b.ruas-a.ruas);
@@ -1813,29 +1849,29 @@ const AuditOnline = {
     const rows = this.getRows();
     const map = new Map();
     rows.forEach(r=>{
-      if(!map.has(r.rua)) map.set(r.rua, { rua:r.rua, auditorias:0, qualidades:[] });
+      if(!map.has(r.rua)) map.set(r.rua, { rua:r.rua, auditorias:0, ocorrencias:0 });
       const e = map.get(r.rua);
-      e.auditorias++;
-      if(r.qualidade!==null) e.qualidades.push(r.qualidade);
+      e.auditorias++; e.ocorrencias += r.totalOcorrencias;
     });
-    return Array.from(map.values()).map(e=>({...e, qualidadeMedia: e.qualidades.length?avg(e.qualidades):null}))
+    return Array.from(map.values()).map(e=>({...e, qualidadeMedia: this.qualidadeDe(rows.filter(r=>r.rua===e.rua))}))
       .sort((a,b)=>String(a.rua).localeCompare(String(b.rua), undefined, {numeric:true}));
   },
 
   evolucao(){
-    const rows = this.getRows().filter(r=>r.qualidade!==null);
+    const rows = this.getRows();
     const map = new Map();
-    rows.forEach(r=>{ const k=ymdKey(r.data); if(!map.has(k)) map.set(k,{date:r.data,qualidades:[]}); map.get(k).qualidades.push(r.qualidade); });
-    return Array.from(map.keys()).sort().map(k=>{ const e=map.get(k); return { date:e.date, qualidadeMedia:avg(e.qualidades) }; });
+    rows.forEach(r=>{ const k=ymdKey(r.data); if(!map.has(k)) map.set(k,{date:r.data,rows:[]}); map.get(k).rows.push(r); });
+    return Array.from(map.keys()).sort().map(k=>{ const e=map.get(k); return { date:e.date, qualidadeMedia:this.qualidadeDe(e.rows) }; });
   },
 
-  simNaoPorCriterio(){
-    const rows = this.getRows().filter(r=>r.invalid===0);
-    return AUDIT_CRITERIA.map(c=>({
-      criterio:c,
-      sim: rows.filter(r=>r.criteria[c]==="SIM").length,
-      nao: rows.filter(r=>r.criteria[c]==="NÃO").length
-    }));
+  ocorrenciasPorTipo(){
+    const rows = this.getRows();
+    return [
+      { tipo:"Picking Errado", total: sum(rows.map(r=>r.pickErrado)) },
+      { tipo:"Avariados", total: sum(rows.map(r=>r.avariado)) },
+      { tipo:"Próx. Vencimento", total: sum(rows.map(r=>r.proxVenc)) },
+      { tipo:"Sem Saldo", total: sum(rows.map(r=>r.semSaldo)) }
+    ];
   }
 };
 
@@ -4865,19 +4901,19 @@ function renderAuditoria(){
   const pane = $("#pane-auditoria");
   const st = AuditOnline.state;
 
-  // primeira renderização: dispara o carregamento e mostra estado de loading
+  // primeira renderizacao: dispara o carregamento e mostra estado de loading
   if(AuditOnline.rows===null && !AuditOnline.loading){
     AuditOnline.load().then(()=> renderAuditoria());
   }
 
   if(AuditOnline.loading){
-    pane.innerHTML = `<div class="hint-box">⏳ Carregando dados da planilha online...</div>`;
+    pane.innerHTML = `<div class="hint-box">Carregando dados da planilha online...</div>`;
     return;
   }
   if(AuditOnline.error && !(AuditOnline.rows && AuditOnline.rows.length)){
-    pane.innerHTML = `<div class="warn-box">⚠️ Não foi possível carregar a planilha online.<br><strong>${escapeHtml(AuditOnline.error)}</strong><br>
-      Confira se o link do Google Sheets está compartilhado como "Qualquer pessoa com o link pode visualizar".
-      <div style="margin-top:10px;"><button class="btn btn-outline btn-sm" id="aud-retry">🔄 Tentar novamente</button></div></div>`;
+    pane.innerHTML = `<div class="warn-box">Nao foi possivel carregar a planilha online.<br><strong>${escapeHtml(AuditOnline.error)}</strong><br>
+      Confira se o link do Google Sheets esta compartilhado como "Qualquer pessoa com o link pode visualizar".
+      <div style="margin-top:10px;"><button class="btn btn-outline btn-sm" id="aud-retry">Tentar novamente</button></div></div>`;
     $("#aud-retry").addEventListener("click", ()=>{ AuditOnline.load(true).then(()=>renderAuditoria()); });
     return;
   }
@@ -4888,31 +4924,46 @@ function renderAuditoria(){
     .map(c=>({codKey:c, nome:registry.get(c)||c})).sort((a,b)=>a.nome.localeCompare(b.nome));
   const allAuditores = uniq((AuditOnline.rows||[]).filter(r=>r.auditor).map(r=>r.auditor)).sort();
 
-  const lastSync = AuditOnline.lastLoadedAt ? `🔄 Sincronizado às ${AuditOnline.lastLoadedAt.toLocaleTimeString('pt-BR')}` : '';
+  const lastSync = AuditOnline.lastLoadedAt ? `Sincronizado as ${AuditOnline.lastLoadedAt.toLocaleTimeString('pt-BR')}` : '';
 
   pane.innerHTML = `
+    <div class="toolbar" style="margin-bottom:6px;">
+      <div class="filter-group"><label>Atalhos de Ciclo</label>
+        <div>${renderAtalhos(st.atalhoSel, 'atalhoAuditoria', ['mes_atual','mes_ant','ano_atual','tudo'])}</div>
+      </div>
+      <div class="filter-group">
+        <label>Apenas Quadro Atual?</label>
+        <div class="toggle-group" id="aud-quadro-toggle">
+          <button data-v="SIM" class="${st.apenasQuadroAtual==='SIM'?'active':''}">Sim</button>
+          <button data-v="NAO" class="${st.apenasQuadroAtual==='NAO'?'active':''}">Nao</button>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <span class="small-muted" style="white-space:nowrap;">${lastSync}</span>
+      <button class="btn btn-outline btn-sm" id="aud-refresh">Atualizar dados</button>
+    </div>
     <div class="toolbar">
-      <div class="filter-group"><label>Ciclo — De</label><input type="date" id="aud-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
-      <div class="filter-group"><label>Ciclo — Até</label><input type="date" id="aud-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+      <div class="filter-group"><label>Ciclo - De</label><input type="date" id="aud-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
+      <div class="filter-group"><label>Ciclo - Ate</label><input type="date" id="aud-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
       <div class="filter-group"><label>Rua</label><select id="aud-rua"><option value="">Todas</option>${allRuas.map(r=>`<option value="${escapeHtml(r)}" ${String(st.rua)===String(r)?'selected':''}>Rua ${escapeHtml(r)}</option>`).join("")}</select></div>
       <div class="filter-group"><label>Repositor</label><select id="aud-rep"><option value="">Todos</option>${allReps.map(r=>`<option value="${r.codKey}" ${st.repositor===r.codKey?'selected':''}>${escapeHtml(r.nome)}</option>`).join("")}</select></div>
       <div class="filter-group"><label>Auditor</label><select id="aud-auditor"><option value="">Todos</option>${allAuditores.map(a=>`<option value="${escapeHtml(a)}" ${st.auditor===a?'selected':''}>${escapeHtml(a)}</option>`).join("")}</select></div>
       <div class="spacer"></div>
-      <span class="small-muted" style="white-space:nowrap;">${lastSync}</span>
-      <button class="btn btn-outline btn-sm" id="aud-refresh">🔄 Atualizar dados</button>
-      <button class="btn btn-outline btn-sm" id="aud-legend-btn">? Como funciona</button>
       <button class="btn btn-outline btn-sm" id="aud-clear">Limpar filtros</button>
     </div>
     <div id="aud-content"></div>
   `;
-  $("#aud-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderAuditoria(); });
-  $("#aud-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderAuditoria(); });
+  $("#aud-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; st.atalhoSel=null; renderAuditoria(); });
+  $("#aud-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; st.atalhoSel=null; renderAuditoria(); });
   $("#aud-rua").addEventListener("change", e=>{ st.rua = e.target.value||null; renderAuditoria(); });
   $("#aud-rep").addEventListener("change", e=>{ st.repositor = e.target.value||null; renderAuditoria(); });
   $("#aud-auditor").addEventListener("change", e=>{ st.auditor = e.target.value||null; renderAuditoria(); });
-  $("#aud-clear").addEventListener("click", ()=>{ AuditOnline.state = {dataInicial:null,dataFinal:null,rua:null,repositor:null,auditor:null}; renderAuditoria(); });
+  $("#aud-clear").addEventListener("click", ()=>{ AuditOnline.state = {dataInicial:null,dataFinal:null,atalhoSel:null,rua:null,repositor:null,auditor:null,apenasQuadroAtual:"SIM"}; renderAuditoria(); });
   $("#aud-refresh").addEventListener("click", ()=>{ AuditOnline.load(true).then(()=>renderAuditoria()); });
-  $("#aud-legend-btn").addEventListener("click", showAuditLegend);
+  $("#aud-quadro-toggle").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    st.apenasQuadroAtual = b.dataset.v; renderAuditoria();
+  });
 
   const cards = AuditOnline.cards();
   const fmtQual = (v) => v!==null ? fmtNum(v,1)+'%' : '-';
@@ -4922,14 +4973,14 @@ function renderAuditoria(){
   const audDates = rows.map(r=>r.data).filter(Boolean);
   const audMin = audDates.length ? new Date(Math.min(...audDates.map(d=>d.getTime()))) : null;
   const audMax = audDates.length ? new Date(Math.max(...audDates.map(d=>d.getTime()))) : null;
-  const audBadge = audMin ? `<div class="hint-box">📅 Exibindo: <strong>${fmtDateBR(audMin)}</strong> até <strong>${fmtDateBR(audMax)}</strong> — ${rows.length} auditoria(s)${st.rua?' · Rua '+escapeHtml(st.rua):''}${st.repositor?' · '+escapeHtml(registry.get(st.repositor)||st.repositor):''}${st.auditor?' · Auditor '+escapeHtml(st.auditor):''}</div>` : "";
+  const audBadge = audMin ? `<div class="hint-box">Exibindo: <strong>${fmtDateBR(audMin)}</strong> ate <strong>${fmtDateBR(audMax)}</strong> - ${rows.length} auditoria(s)${st.rua?' - Rua '+escapeHtml(st.rua):''}${st.repositor?' - '+escapeHtml(registry.get(st.repositor)||st.repositor):''}${st.auditor?' - Auditor '+escapeHtml(st.auditor):''}${st.apenasQuadroAtual==='SIM'?' - so quadro atual':''}</div>` : "";
 
   if(!rows.length){
     $("#aud-content").innerHTML = audBadge + `<div class="warn-box">Nenhuma auditoria encontrada para os filtros selecionados.</div>
       <div class="cards-grid">
-        <div class="card ${qualClass(cards.qualMesAtual)}"><div class="card-label">% Qualidade — Mês Atual</div><div class="card-value ${qualClass(cards.qualMesAtual)}">${fmtQual(cards.qualMesAtual)}</div></div>
-        <div class="card ${qualClass(cards.qualMesAnterior)}"><div class="card-label">% Qualidade — Mês Anterior</div><div class="card-value ${qualClass(cards.qualMesAnterior)}">${fmtQual(cards.qualMesAnterior)}</div></div>
-        <div class="card ${qualClass(cards.qualUlt3Meses)}"><div class="card-label">% Qualidade — Últimos 3 Meses</div><div class="card-value ${qualClass(cards.qualUlt3Meses)}">${fmtQual(cards.qualUlt3Meses)}</div></div>
+        <div class="card ${qualClass(cards.qualMesAtual)}"><div class="card-label">% Qualidade - Mes Atual</div><div class="card-value ${qualClass(cards.qualMesAtual)}">${fmtQual(cards.qualMesAtual)}</div></div>
+        <div class="card ${qualClass(cards.qualMesAnterior)}"><div class="card-label">% Qualidade - Mes Anterior</div><div class="card-value ${qualClass(cards.qualMesAnterior)}">${fmtQual(cards.qualMesAnterior)}</div></div>
+        <div class="card ${qualClass(cards.qualUlt3Meses)}"><div class="card-label">% Qualidade - Ultimos 3 Meses</div><div class="card-value ${qualClass(cards.qualUlt3Meses)}">${fmtQual(cards.qualUlt3Meses)}</div></div>
       </div>`;
     return;
   }
@@ -4938,25 +4989,24 @@ function renderAuditoria(){
   const byRua = AuditOnline.byRua();
   const byAuditor = AuditOnline.byAuditor();
   const evolucao = AuditOnline.evolucao();
-  const simNao = AuditOnline.simNaoPorCriterio();
+  const porTipo = AuditOnline.ocorrenciasPorTipo();
 
   $("#aud-content").innerHTML = audBadge + `
-      ${cards.invalidos>0 ? `<div class="warn-box">${cards.invalidos} registro(s) possuem valores diferentes de Realizado/Não Realizado em algum critério e foram sinalizados como inválidos (não entram no cálculo de qualidade).</div>` : ``}
-
-    <div class="panel-header" style="margin:14px 0 8px;"><h3>📅 Qualidade por Período (calendário — independe do filtro de Ciclo)</h3></div>
+    <div class="panel-header" style="margin:14px 0 8px;"><h3>Qualidade por Periodo (calendario - independe do filtro de Ciclo)</h3></div>
     <div class="cards-grid">
-      <div class="card ${qualClass(cards.qualMesAtual)}"><div class="card-label">% Qualidade — Mês Atual</div><div class="card-value ${qualClass(cards.qualMesAtual)}">${fmtQual(cards.qualMesAtual)}</div></div>
-      <div class="card ${qualClass(cards.qualMesAnterior)}"><div class="card-label">% Qualidade — Mês Anterior</div><div class="card-value ${qualClass(cards.qualMesAnterior)}">${fmtQual(cards.qualMesAnterior)}</div></div>
-      <div class="card ${qualClass(cards.qualUlt3Meses)}"><div class="card-label">% Qualidade — Últimos 3 Meses</div><div class="card-value ${qualClass(cards.qualUlt3Meses)}">${fmtQual(cards.qualUlt3Meses)}</div></div>
+      <div class="card ${qualClass(cards.qualMesAtual)}"><div class="card-label">% Qualidade - Mes Atual</div><div class="card-value ${qualClass(cards.qualMesAtual)}">${fmtQual(cards.qualMesAtual)}</div></div>
+      <div class="card ${qualClass(cards.qualMesAnterior)}"><div class="card-label">% Qualidade - Mes Anterior</div><div class="card-value ${qualClass(cards.qualMesAnterior)}">${fmtQual(cards.qualMesAnterior)}</div></div>
+      <div class="card ${qualClass(cards.qualUlt3Meses)}"><div class="card-label">% Qualidade - Ultimos 3 Meses</div><div class="card-value ${qualClass(cards.qualUlt3Meses)}">${fmtQual(cards.qualUlt3Meses)}</div></div>
     </div>
 
-    <div class="panel-header" style="margin:14px 0 8px;"><h3>🔄 Ciclo Selecionado</h3></div>
+    <div class="panel-header" style="margin:14px 0 8px;"><h3>Ciclo Selecionado</h3></div>
+    <div class="hint-box">Qualidade aqui = % de auditorias sem nenhuma ocorrencia (Picking Errado + Avariados + Prox. Vencimento + Sem Saldo = 0).</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Ciclo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
-      <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Média Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
-      <div class="card"><div class="card-label">Total Ocorrências</div><div class="card-value neg">${fmtNum(cards.totalNao)}</div></div>
+      <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Media Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
+      <div class="card"><div class="card-label">Total Ocorrencias</div><div class="card-value neg">${fmtNum(cards.totalOcorrencias)}</div></div>
       <div class="card"><div class="card-label">Ruas Auditadas</div><div class="card-value">${fmtNum(cards.ruasAuditadas)}</div></div>
-      <div class="card"><div class="card-label">Ruas Críticas (&lt;90%)</div><div class="card-value neg">${fmtNum(cards.ruasCriticas)}</div></div>
+      <div class="card"><div class="card-label">Ruas Criticas (&lt;90%)</div><div class="card-value neg">${fmtNum(cards.ruasCriticas)}</div></div>
       <div class="card"><div class="card-label">Auditores Ativos</div><div class="card-value">${fmtNum(cards.auditoresAtivos)}</div></div>
     </div>
 
@@ -4972,46 +5022,46 @@ function renderAuditoria(){
     </div>
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><h3>Evolução da Qualidade</h3></div>
+        <div class="panel-header"><h3>Evolucao da Qualidade</h3></div>
         <div class="chart-wrap"><canvas id="chart-qual-evo"></canvas></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><h3>Realizado × Não Realizado por Critério</h3></div>
-        <div class="chart-wrap"><canvas id="chart-sim-nao"></canvas></div>
+        <div class="panel-header"><h3>Ocorrencias por Tipo</h3></div>
+        <div class="chart-wrap"><canvas id="chart-tipo"></canvas></div>
       </div>
     </div>
 
     ${byAuditor.length ? `
     <div class="panel">
-      <div class="panel-header"><h3>🔍 Ranking Auditores — Ruas Inspecionadas</h3></div>
+      <div class="panel-header"><h3>Ranking Auditores - Ruas Inspecionadas</h3></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Auditor</th><th>Ruas Inspecionadas</th><th>Auditorias</th><th>Ocorrências</th></tr></thead>
+        <thead><tr><th>Auditor</th><th>Ruas Inspecionadas</th><th>Auditorias</th><th>Ocorrencias</th></tr></thead>
         <tbody>${byAuditor.map(e=>`<tr><td>${escapeHtml(e.auditor)}</td><td>${e.ruas}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>` : ``}
 
     <div class="panel">
-      <div class="panel-header"><h3>👤 Ranking de Repositores — Qualidade</h3></div>
+      <div class="panel-header"><h3>Ranking de Repositores - Qualidade</h3></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Código</th><th>Repositor</th><th>Auditorias</th><th>Realizado</th><th>Não Realizado</th><th>Qualidade %</th></tr></thead>
-        <tbody>${byRep.map(e=>`<tr><td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${e.auditorias}</td><td class="cell-pos">${e.sim}</td><td class="cell-neg">${e.nao}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Codigo</th><th>Repositor</th><th>Auditorias</th><th>Ocorrencias</th><th>Qualidade %</th></tr></thead>
+        <tbody>${byRep.map(e=>`<tr><td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>
 
     <div class="panel">
-      <div class="panel-header"><h3>🗺️ Qualidade por Rua — Detalhamento</h3></div>
+      <div class="panel-header"><h3>Qualidade por Rua - Detalhamento</h3></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Rua</th><th>Auditorias</th><th>Qualidade Média</th><th>Status</th></tr></thead>
-        <tbody>${byRua.map(e=>`<tr><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.auditorias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td>${e.qualidadeMedia===null?'—':e.qualidadeMedia>=95?'🟢 Ótima':e.qualidadeMedia>=85?'🟡 Boa':e.qualidadeMedia>=70?'🟠 Atenção':'🔴 Crítica'}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Rua</th><th>Auditorias</th><th>Ocorrencias</th><th>Qualidade Media</th><th>Status</th></tr></thead>
+        <tbody>${byRua.map(e=>`<tr><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td>${e.qualidadeMedia===null?'-':e.qualidadeMedia>=95?'Otima':e.qualidadeMedia>=85?'Boa':e.qualidadeMedia>=70?'Atencao':'Critica'}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>
 
     <div class="panel">
       <div class="panel-header"><h3>Detalhamento das Auditorias</h3></div>
       <div class="table-wrap" style="max-height:340px;overflow-y:auto;"><table class="data-table">
-        <thead><tr><th>Data</th><th>Rua</th><th>Código</th><th>Repositor</th><th>Auditor</th><th>Qualidade</th><th>Realizados</th><th>Não Realizados</th></tr></thead>
+        <thead><tr><th>Data</th><th>Rua</th><th>Codigo</th><th>Repositor</th><th>Auditor</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Status</th></tr></thead>
         <tbody>${rows.map(r=>`<tr class="clickable" onclick='showAuditDetailOnline(${r._row})'><td>${fmtDateBR(r.data)}</td><td>${escapeHtml(String(r.rua))}</td><td>${r.cod||'-'}</td><td>${escapeHtml(r.nome||'-')}</td><td>${escapeHtml(r.auditor||'-')}</td>
-          <td class="${qualClass(r.qualidade)}">${r.qualidade!==null?fmtNum(r.qualidade,1)+'%':'Inválido'}</td><td class="cell-pos">${r.simCount}</td><td class="cell-neg">${7-r.simCount-r.invalid}</td></tr>`).join("")}</tbody>
+          <td class="cell-neg">${r.pickErrado}</td><td class="cell-neg">${r.avariado}</td><td class="cell-neg">${r.proxVenc}</td><td class="cell-neg">${r.semSaldo}</td><td class="${r.impecavel?'cell-pos':'cell-neg'}">${r.impecavel?'Impecavel':'Com ocorrencia'}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>
   `;
@@ -5031,25 +5081,31 @@ function renderAuditoria(){
     data:{ labels: evolucao.map(e=>fmtDateBR(e.date)), datasets:[{ label:"Qualidade %", data: evolucao.map(e=>e.qualidadeMedia), borderColor:Charts.colors.green, backgroundColor:"rgba(26,156,98,.12)", fill:true, tension:.3 }] },
     options: Charts.baseOptions({ plugins:{legend:{display:false}}, scales:{ y:{min:0,max:100} } })
   });
-  Charts.make("chart-sim-nao", {
+  Charts.make("chart-tipo", {
     type:"bar",
-    data:{ labels: simNao.map(s=>s.criterio.replace("?","")), datasets:[
-      { label:"Realizado", data: simNao.map(s=>s.sim), backgroundColor:Charts.colors.green, borderRadius:4 },
-      { label:"Não Realizado", data: simNao.map(s=>s.nao), backgroundColor:Charts.colors.red, borderRadius:4 }
-    ]},
+    data:{ labels: porTipo.map(s=>s.tipo), datasets:[{ label:"Ocorrencias", data: porTipo.map(s=>s.total), backgroundColor:Charts.colors.red, borderRadius:4 }] },
     options: Charts.baseOptions({ indexAxis:"y" })
   });
+}
+
+function atalhoAuditoria(tipo){
+  const {ini,fim}=periodoAtalho(tipo);
+  AuditOnline.state.dataInicial=ini; AuditOnline.state.dataFinal=fim; AuditOnline.state.atalhoSel=tipo;
+  renderAuditoria();
 }
 
 function showAuditDetailOnline(rowIdx){
   const r = (AuditOnline.rows||[]).find(x=>x._row===rowIdx);
   if(!r) return;
   UI.openModal(`
-    <h3>Auditoria — Rua ${escapeHtml(String(r.rua))}</h3>
-    <p><strong>Data:</strong> ${fmtDateBR(r.data)} &nbsp; <strong>Código:</strong> ${r.cod||'-'} &nbsp; <strong>Repositor:</strong> ${escapeHtml(r.nome||'-')} &nbsp; <strong>Auditor:</strong> ${escapeHtml(r.auditor||'-')}</p>
-    <p><strong>Qualidade:</strong> ${r.qualidade!==null?fmtNum(r.qualidade,2)+'%':'Registro inválido'}</p>
+    <h3>Auditoria - Rua ${escapeHtml(String(r.rua))}</h3>
+    <p><strong>Data:</strong> ${fmtDateBR(r.data)} &nbsp; <strong>Codigo:</strong> ${r.cod||'-'} &nbsp; <strong>Repositor:</strong> ${escapeHtml(r.nome||'-')} &nbsp; <strong>Auditor:</strong> ${escapeHtml(r.auditor||'-')}</p>
+    <p><strong>Status:</strong> ${r.impecavel?'Impecavel (sem ocorrencias)':'Com ocorrencia(s)'}</p>
     <ul class="criteria-list">
-      ${AUDIT_CRITERIA.map(c=>`<li><span>${c.replace("?","")}</span><span class="${r.criteria[c]==='SIM'?'badge-sim':r.criteria[c]==='NÃO'?'badge-nao':''}">${r.criteria[c]==='INVALIDO'?'—':r.criteria[c]==='SIM'?'✅ Realizado':r.criteria[c]==='NÃO'?'❌ Não Realizado':'—'}</span></li>`).join("")}
+      <li><span>Picking Errado</span><span class="${r.pickErrado>0?'badge-nao':'badge-sim'}">${r.pickErrado}</span></li>
+      <li><span>Avariados</span><span class="${r.avariado>0?'badge-nao':'badge-sim'}">${r.avariado}</span></li>
+      <li><span>Prox. Vencimento</span><span class="${r.proxVenc>0?'badge-nao':'badge-sim'}">${r.proxVenc}</span></li>
+      <li><span>Sem Saldo</span><span class="${r.semSaldo>0?'badge-nao':'badge-sim'}">${r.semSaldo}</span></li>
     </ul>
   `);
 }
