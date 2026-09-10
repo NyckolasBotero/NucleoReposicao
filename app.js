@@ -272,6 +272,177 @@ function avg(arr){ return arr.length ? sum(arr)/arr.length : 0; }
 /* ---------------------------------------------------------------------- */
 /* MODULE: Excel Loader                                                    */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* MODULE: LoadingScreen (tela de carregamento do arquivo)                 */
+/* ---------------------------------------------------------------------- */
+const LoadingScreen = {
+  root(){ return document.getElementById("flow-overlay-root"); },
+  steps: [
+    { id:"recebido", label:"Arquivo recebido" },
+    { id:"lendo", label:"Lendo arquivo..." },
+    { id:"validando", label:"Validando estrutura..." },
+    { id:"sheets", label:"Identificando sheets..." },
+    { id:"processando", label:"Processando dados..." },
+    { id:"finalizando", label:"Finalizando..." }
+  ],
+  show(filename){
+    const root = this.root();
+    root.innerHTML = `
+      <div class="flow-backdrop">
+        <div class="flow-card">
+          <div class="flow-spinner"></div>
+          <div class="flow-title">Carregando arquivo</div>
+          <div class="flow-filename">📄 ${escapeHtml(filename)}</div>
+          <div class="flow-progress-track" style="margin-top:18px;"><div class="flow-progress-bar" id="flow-progress-bar" style="width:2%;"></div></div>
+          <div class="flow-steps" id="flow-steps">
+            ${this.steps.map(s=>`<div class="flow-step" id="flow-step-${s.id}"><span class="flow-step-icon">•</span><span>${s.label}</span></div>`).join("")}
+          </div>
+        </div>
+      </div>`;
+    root.classList.add("show");
+  },
+  // marca um passo como ativo (spinner) e todos os anteriores como concluídos (✓),
+  // avança a barra de progresso. pct opcional (0-100); se omitido, calcula pela posição do passo.
+  async step(stepId, pct){
+    const idx = this.steps.findIndex(s=>s.id===stepId);
+    if(idx===-1) return;
+    this.steps.forEach((s,i)=>{
+      const el = document.getElementById("flow-step-"+s.id);
+      if(!el) return;
+      el.classList.remove("active","done");
+      if(i<idx){ el.classList.add("done"); el.querySelector(".flow-step-icon").textContent = "✓"; }
+      else if(i===idx){ el.classList.add("active"); el.querySelector(".flow-step-icon").textContent = "•"; }
+      else { el.querySelector(".flow-step-icon").textContent = "•"; }
+    });
+    const bar = document.getElementById("flow-progress-bar");
+    if(bar) bar.style.width = (pct!==undefined ? pct : Math.round((idx+1)/this.steps.length*100)) + "%";
+    // pequena pausa proposital para o usuário perceber a etapa (processamento real
+    // costuma ser rápido demais pra "ver" as etapas sem isso)
+    await new Promise(res=>setTimeout(res, 260));
+  },
+  hide(){
+    const root = this.root();
+    root.classList.remove("show");
+    root.innerHTML = "";
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: ImportLog (tela de log de importação, pós-processamento)        */
+/* ---------------------------------------------------------------------- */
+const ImportLog = {
+  root(){ return document.getElementById("flow-overlay-root"); },
+
+  // varre as linhas de uma sheet procurando colunas cujo nome contenha DATA/DT e
+  // retorna a data mais recente encontrada entre elas. Não inventa datas: se não
+  // achar nenhuma coluna candidata ou nenhum valor válido, retorna null.
+  detectMaxDate(rows){
+    if(!rows || !rows.length) return null;
+    const sampleKeys = Object.keys(rows[0]||{});
+    const dateKeys = sampleKeys.filter(k=>/DATA/i.test(k) || /^DT/i.test(k));
+    if(!dateKeys.length) return null;
+    let max = null;
+    rows.forEach(r=>{
+      dateKeys.forEach(k=>{
+        const d = toDate(r[k]);
+        if(d && !isNaN(d.getTime()) && d.getFullYear()>1901){
+          if(!max || d>max) max = d;
+        }
+      });
+    });
+    return max;
+  },
+
+  // monta o log dinâmico a partir do "raw" realmente carregado — nunca lista sheets
+  // fixas/hardcoded, sempre a partir de REQUIRED_SHEETS + OPTIONAL_SHEETS + o que
+  // efetivamente veio em raw
+  buildLog(raw){
+    const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
+    return allSheets.map(name=>{
+      const rows = raw[name];
+      if(rows===null || rows===undefined){
+        return { name, status:"nao-encontrada", statusLabel:"— Não encontrada (opcional)", date:null, msg:null, rowCount:0 };
+      }
+      if(!rows.length){
+        return { name, status:"vazia", statusLabel:"Sem dados", date:null, msg:"A aba foi encontrada, mas não contém nenhuma linha de dados.", rowCount:0 };
+      }
+      const maxDate = this.detectMaxDate(rows);
+      if(!maxDate){
+        return { name, status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:null,
+          msg:`Sheet ${name} carregada, porém nenhuma coluna de data válida foi identificada.`, rowCount:rows.length };
+      }
+      return { name, status:"ok", statusLabel:"✓ Carregada", date:maxDate, msg:null, rowCount:rows.length };
+    });
+  },
+
+  show(file, raw, onAccessDashboard, onLoadAnother){
+    const log = this.buildLog(raw);
+    const encontradas = log.filter(s=>s.status!=="nao-encontrada");
+    const comSucesso = log.filter(s=>s.status==="ok"||s.status==="vazia");
+    const comAlerta = log.filter(s=>s.status==="alerta");
+    const agora = new Date();
+
+    const statusCls = (s)=> s==="ok"?"ok": s==="alerta"?"alerta": s==="vazia"?"vazia": "vazia";
+
+    const root = this.root();
+    root.innerHTML = `
+      <div class="flow-backdrop">
+        <div class="flow-card wide">
+          <div class="flow-log-header">
+            <div class="flow-log-check">✓</div>
+            <div>
+              <div class="flow-log-title">Arquivo processado com sucesso</div>
+              <div class="flow-log-sub">📄 ${escapeHtml(file.name)} · carregado em ${fmtDateBR(agora)} às ${agora.toLocaleTimeString('pt-BR')}</div>
+            </div>
+          </div>
+
+          <div class="flow-summary-grid">
+            <div class="flow-summary-card"><div class="flow-summary-label">Sheets Encontradas</div><div class="flow-summary-value">${encontradas.length}</div></div>
+            <div class="flow-summary-card"><div class="flow-summary-label">Processadas OK</div><div class="flow-summary-value" style="color:var(--green);">${comSucesso.length}</div></div>
+            <div class="flow-summary-card"><div class="flow-summary-label">Com Alerta</div><div class="flow-summary-value" style="color:${comAlerta.length?'var(--orange)':'var(--gray-300)'};">${comAlerta.length}</div></div>
+            <div class="flow-summary-card"><div class="flow-summary-label">Total de Abas no Arquivo</div><div class="flow-summary-value">${log.length}</div></div>
+          </div>
+
+          <table class="flow-sheet-table">
+            <thead><tr><th>Sheet</th><th>Status</th><th>Registros</th><th>Última Data Encontrada</th></tr></thead>
+            <tbody>
+              ${log.map((s,i)=>`
+                <tr style="animation-delay:${i*30}ms;">
+                  <td><strong>${escapeHtml(s.name)}</strong></td>
+                  <td><span class="flow-sheet-status ${statusCls(s.status)}">${s.statusLabel}</span></td>
+                  <td>${s.status==="nao-encontrada"?"—":fmtNum(s.rowCount)}</td>
+                  <td>${s.date?fmtDateBR(s.date):(s.status==="nao-encontrada"?"—":"Sem data identificada")}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+
+          ${comAlerta.length ? `<div class="warn-box" style="margin-bottom:18px;">${comAlerta.map(s=>escapeHtml(s.msg)).join("<br>")}</div>` : ``}
+
+          <div class="flow-log-actions">
+            <button class="btn btn-outline" id="flow-btn-outro">📂 Carregar outro arquivo</button>
+            <button class="btn btn-primary" id="flow-btn-entrar">Acessar Dashboard →</button>
+          </div>
+        </div>
+      </div>`;
+    root.classList.add("show");
+
+    document.getElementById("flow-btn-entrar").addEventListener("click", ()=>{
+      this.hide();
+      onAccessDashboard();
+    });
+    document.getElementById("flow-btn-outro").addEventListener("click", ()=>{
+      this.hide();
+      onLoadAnother();
+    });
+  },
+
+  hide(){
+    const root = this.root();
+    root.classList.remove("show");
+    root.innerHTML = "";
+  }
+};
+
 const ExcelLoader = {
   // verifica se as bibliotecas externas (CDN) carregaram corretamente
   checkLibraries(){
@@ -2907,12 +3078,17 @@ const UI = {
 
   async handleFile(file){
     $("#empty-error").innerHTML = "";
-    toast("Lendo arquivo "+file.name+"...");
+    LoadingScreen.show(file.name);
     let stage = "leitura do arquivo (Excel Loader)";
     try{
+      await LoadingScreen.step("recebido", 5);
+      await LoadingScreen.step("lendo", 20);
       const raw = await ExcelLoader.load(file);
 
+      await LoadingScreen.step("validando", 45);
+
       stage = "processamento dos dados (Data Processor)";
+      await LoadingScreen.step("sheets", 60);
       const processed = DataProcessor.process(raw);
 
       stage = "identificação do quadro atual (Current Team)";
@@ -2920,6 +3096,8 @@ const UI = {
 
       stage = "montagem do cadastro de nomes";
       const nameRegistry = buildNameRegistry(processed);
+
+      await LoadingScreen.step("processando", 85);
 
       window.APP_STATE.raw = raw;
       window.APP_STATE.processed = processed;
@@ -2944,25 +3122,39 @@ const UI = {
         if(currentTeam.cargoCounts.NAO_INFORMADO>0) extras.push(currentTeam.cargoCounts.NAO_INFORMADO+" sem cargo informado");
         if(extras.length) badgeText += " (+" + extras.join(", ") + ")";
       }
-      $("#quadro-badge").textContent = badgeText;
-      $("#empty-state").style.display = "none";
-      $("#main-content").style.display = "block";
-      $("#btn-export-png").disabled = false;
-      $("#btn-export-pdf").disabled = false;
 
-      // Restaura o botão Gestão caso tenha sido bloqueado pelo modo "sem arquivo"
-      const gestaoBtn = $(".nav-btn[data-view='gestao']");
-      if(gestaoBtn){ gestaoBtn.style.opacity=""; gestaoBtn.style.pointerEvents=""; gestaoBtn.title=""; }
-      // Remove hint de "sem arquivo" se existir
-      const hint = document.getElementById('avaria-sem-arquivo-hint');
-      if(hint) hint.remove();
+      await LoadingScreen.step("finalizando", 100);
+      stage = "montagem do log de importação";
+      LoadingScreen.hide();
 
-      toast("Arquivo carregado com sucesso.","success");
+      // Só revela o dashboard quando o usuário clicar em "Acessar Dashboard" na
+      // tela de log — até lá, a interface continua na tela de boas-vindas por trás
+      // do overlay, então nunca aparece "meio carregada".
+      ImportLog.show(file, raw,
+        /* onAccessDashboard */ () => {
+          $("#quadro-badge").textContent = badgeText;
+          $("#empty-state").style.display = "none";
+          $("#main-content").style.display = "block";
+          $("#btn-export-png").disabled = false;
+          $("#btn-export-pdf").disabled = false;
 
-      stage = "renderização do painel (UI)";
-      this.switchView("indicadores", true);
+          const gestaoBtn = $(".nav-btn[data-view='gestao']");
+          if(gestaoBtn){ gestaoBtn.style.opacity=""; gestaoBtn.style.pointerEvents=""; gestaoBtn.title=""; }
+          const hint = document.getElementById('avaria-sem-arquivo-hint');
+          if(hint) hint.remove();
+
+          toast("Arquivo carregado com sucesso.","success");
+          this.switchView("indicadores", true);
+          $("#file-input").value = "";
+        },
+        /* onLoadAnother */ () => {
+          $("#file-input").value = "";
+          $("#file-input").click();
+        }
+      );
     }catch(err){
       console.error("[Central de Reposição] Erro na etapa:", stage, err);
+      LoadingScreen.hide();
       const msg = (err && err.message) ? err.message : String(err);
       const stackHint = (err && err.stack) ? "\n\nDetalhe técnico (stack):\n" + err.stack.split("\n").slice(0,4).join("\n") : "";
       $("#empty-error").innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;white-space:pre-line;">` +
@@ -2971,8 +3163,8 @@ const UI = {
       toast("Erro ao carregar arquivo.","error");
       // garante que a interface não fica "meio carregada"
       window.APP_STATE.ready = false;
+      $("#file-input").value = "";
     }
-    $("#file-input").value = "";
   },
 
   buildSubnav(){
@@ -3099,6 +3291,11 @@ function atalhoOp8457(tipo){
   const {ini,fim}=periodoAtalho(tipo);
   Op8457State.ini=ini; Op8457State.fim=fim;
   renderOperadores();
+}
+function atalhoTurnover(tipo){
+  const {ini,fim}=periodoAtalho(tipo);
+  TurnoverState.filtroIni = ini; TurnoverState.filtroFim = fim; TurnoverState.atalhoSel = tipo;
+  renderTurnover();
 }
 
 function periodoAtalho(tipo){
@@ -6276,7 +6473,10 @@ function renderIndividualResult(){
 /* ---------------------------------------------------------------------- */
 /* MODULE: Turnover (Gestão → Turnover)                                    */
 /* ---------------------------------------------------------------------- */
-const TurnoverState = { periodoMeses: 3 }; // quantos meses atrás calcular
+// filtroIni/filtroFim = filtro de período aplicado (controla TODO o painel Turnover:
+// indicadores, admissões, desligamentos, transferências, comparações e tabelas).
+// null em ambos = usa o padrão (últimos 3 meses), igual ao comportamento anterior.
+const TurnoverState = { periodoMeses: 3, filtroIni: null, filtroFim: null, atalhoSel: null, transfIni: null, transfFim: null };
 
 function computeTurnover(){
   const processed = window.APP_STATE.processed;
@@ -6290,26 +6490,48 @@ function computeTurnover(){
   const quadroCadastrado = ativos.length;
 
   // --- Período de análise ---
+  // Controla TODO o painel (indicadores, admissões, desligamentos, transferências,
+  // comparações e tabelas). Se o usuário aplicou um filtro de Data Inicial/Data Final,
+  // usa exatamente esse intervalo; senão cai no padrão de sempre (últimos 3 meses).
+  const filtroAtivo = !!(TurnoverState.filtroIni || TurnoverState.filtroFim);
   const meses = TurnoverState.periodoMeses || 3;
-  const periodoFim = hoje;
-  const periodoIni = addMonths(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -meses+1);
-  periodoIni.setDate(1);
+  let periodoIni, periodoFim;
+  if(filtroAtivo){
+    periodoFim = TurnoverState.filtroFim ? dateOnly(TurnoverState.filtroFim) : dateOnly(hoje);
+    periodoIni = TurnoverState.filtroIni ? dateOnly(TurnoverState.filtroIni) : new Date(2000,0,1);
+  } else {
+    periodoFim = hoje;
+    periodoIni = addMonths(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -meses+1);
+    periodoIni.setDate(1);
+  }
 
   const noPeriodo = (dt) => dt && dt >= periodoIni && dt <= periodoFim;
 
   // --- Contratações / Desligamentos / Transferências no período ---
-  // TIPO="TRANSFERIDO"/"TRANSFERENCIA" (ou qualquer variação contendo "transfer") conta só no
-  // card 🔀 Transferências, nunca em ➖ Desligamentos — por isso os dois filtros
-  // usam a mesma checagem (.includes("transfer")) para não haver contagem dupla
-  // nem TRANSFERIDO escapando da exclusão em Desligamentos.
+  // Considera transferido quem tiver: TIPO contendo "transfer" (TRANSFERIDO,
+  // TRANSFERENCIA etc.) OU a coluna DATA TRANSFERENCIA preenchida — o que vier
+  // primeiro já classifica a linha como transferência, mesmo que o TIPO esteja em
+  // branco ou com outro texto. Isso conta só no card 🔀 Transferências, nunca em
+  // ➖ Desligamentos.
   // Data de referência da transferência: prioriza a coluna DATA TRANSFERENCIA;
   // se não estiver preenchida, cai para DATA DESLIGAMENTO (transferido pra fora do
   // time) e por último DATA CONTRATAÇÃO (funcionário ATIVO=SIM que chegou via
   // transferência e não tem nenhuma das duas outras datas).
-  const isTransferencia = r => normStr(r.tipo||"").includes("transfer");
+  const isTransferencia = r => normStr(r.tipo||"").includes("transfer") || !!r.dtTransf;
   const contratacoes = tv.filter(r=>noPeriodo(r.dtAdm));
   const desligamentos = tv.filter(r=>r.dtDesl && noPeriodo(r.dtDesl) && !isTransferencia(r));
   const transferencias = tv.filter(r=>isTransferencia(r) && noPeriodo(r.dtTransf || r.dtDesl || r.dtAdm));
+
+  // --- Transferências: filtro dedicado por intervalo de datas (independente do
+  // período de análise geral) — usa DATA TRANSFERENCIA como referência; ignora
+  // linhas sem essa data preenchida.
+  const tIni = TurnoverState.transfIni, tFim = TurnoverState.transfFim;
+  const transferenciasFiltro = tv.filter(r=>{
+    if(!isTransferencia(r) || !r.dtTransf) return false;
+    if(tIni && r.dtTransf < dateOnly(tIni)) return false;
+    if(tFim && r.dtTransf > dateOnly(tFim)) return false;
+    return true;
+  }).sort((a,b)=>b.dtTransf-a.dtTransf);
 
   // --- Quadro médio para Turnover ---
   const quadroInicial = tv.filter(r=>{
@@ -6367,15 +6589,22 @@ function computeTurnover(){
   const scounts = { PRESENTE:0, SEGUNDO_TURNO:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0 };
   quadroRows.forEach(r=>{ scounts[r.bucket] = (scounts[r.bucket]||0)+1; });
 
+  // Quadro Geral (tabela) — quando o filtro de período está ativo, mostra só quem
+  // teve algum evento (admissão, desligamento ou transferência) dentro do intervalo;
+  // sem filtro, mostra o cadastro completo (comportamento de sempre).
+  const tvFiltrado = filtroAtivo
+    ? tv.filter(r => noPeriodo(r.dtAdm) || noPeriodo(r.dtDesl) || noPeriodo(r.dtTransf))
+    : tv;
+
   return {
-    hoje, periodoIni, periodoFim, meses,
+    hoje, periodoIni, periodoFim, meses, filtroAtivo,
     quadroCadastrado, quadroChamada, quadroInicial, quadroFinal, quadroMedio,
-    contratacoes, desligamentos, transferencias,
+    contratacoes, desligamentos, transferencias, transferenciasFiltro,
     turnoverTotal, turnoverEntrada, turnoverSaida,
     probatorio, efetivados, alertas, urgencias, semData,
     noTurnoverNaoChamada, naChamadaNaoTurnover,
     conciliados, pctConferencia,
-    scounts, ativos
+    scounts, ativos, tvFiltrado
   };
 }
 
@@ -6429,20 +6658,33 @@ function renderTurnover(){
   const corTurnover = d.turnoverTotal<=5?'#1a9c62':d.turnoverTotal<=10?'#e08a1f':'#d64545';
   const statusConf = d.noTurnoverNaoChamada.length===0 && d.naChamadaNaoTurnover.length===0;
 
+  const periodoLabel = d.filtroAtivo
+    ? `${fmtDateBR(d.periodoIni)} até ${fmtDateBR(d.periodoFim)}`
+    : `Últimos ${meses===1?'30 dias (mês atual)':meses+' meses'} (padrão)`;
+
   pane.innerHTML = `
+    <!-- ======================== FILTRO DE PERÍODO — controla todo o painel ======================== -->
+    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
+      <div class="panel-header">
+        <h3>🗓️ Filtro de Período</h3>
+        <span class="panel-note" style="font-weight:700;color:#123a6b;">Ativo: ${periodoLabel}</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        ${renderAtalhos(TurnoverState.atalhoSel, 'atalhoTurnover', ['mes_atual','mes_ant','ultimos_3m','ano_atual','ano_ant','tudo'])}
+      </div>
+      <div class="toolbar" style="margin-bottom:0;">
+        <div class="filter-group"><label>Data Inicial</label><input type="date" id="tv-filtro-ini" value="${TurnoverState.filtroIni?toInputDate(TurnoverState.filtroIni):''}"></div>
+        <div class="filter-group"><label>Data Final</label><input type="date" id="tv-filtro-fim" value="${TurnoverState.filtroFim?toInputDate(TurnoverState.filtroFim):''}"></div>
+        <div class="spacer"></div>
+        <button class="btn btn-outline btn-sm" id="tv-filtro-limpar">Limpar filtro</button>
+        <button class="btn btn-primary btn-sm" id="tv-filtro-aplicar">Aplicar filtro</button>
+      </div>
+    </div>
+
     <!-- ======================== RESUMO + CARDS ======================== -->
     <div class="panel">
       <div class="panel-header">
         <h3>📊 Turnover — Painel de Controle</h3>
-        <div class="panel-actions">
-          <label style="font-size:11px;color:#7a8798;">Período de análise:</label>
-          <select id="tv-periodo-select" style="font-size:12px;padding:4px 8px;border:1px solid #dde3ea;border-radius:6px;">
-            <option value="1" ${meses===1?'selected':''}>Mês atual</option>
-            <option value="3" ${meses===3?'selected':''}>Últimos 3 meses</option>
-            <option value="6" ${meses===6?'selected':''}>Últimos 6 meses</option>
-            <option value="12" ${meses===12?'selected':''}>Últimos 12 meses</option>
-          </select>
-        </div>
       </div>
 
       <!-- linha 1: quadro + chamada + turnover -->
@@ -6472,11 +6714,40 @@ function renderTurnover(){
       ${!statusConf ? `<div class="warn-box">⚠️ ATENÇÃO: O quadro da Reposição não está 100% conciliado com a chamada. ${d.noTurnoverNaoChamada.length} no Turnover sem chamada · ${d.naChamadaNaoTurnover.length} na chamada sem Turnover.</div>` : ''}
     </div>
 
+    <!-- ======================== TRANSFERÊNCIAS — DETALHAMENTO ======================== -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>🔀 Transferências — Detalhamento</h3>
+        <span class="panel-note">Filtra por DATA TRANSFERENCIA · independente do período de análise acima</span>
+      </div>
+      <div class="toolbar" style="margin-bottom:10px;">
+        <div class="filter-group"><label>Data Início</label><input type="date" id="tv-transf-ini" value="${TurnoverState.transfIni?toInputDate(TurnoverState.transfIni):''}"></div>
+        <div class="filter-group"><label>Data Fim</label><input type="date" id="tv-transf-fim" value="${TurnoverState.transfFim?toInputDate(TurnoverState.transfFim):''}"></div>
+        <div class="spacer"></div>
+        <button class="btn btn-outline btn-sm" id="tv-transf-clear">Limpar</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Matrícula</th><th>Nome</th><th>Data Transferência</th><th>Tipo</th><th>Ativo</th></tr></thead>
+          <tbody>
+            ${d.transferenciasFiltro.length ? d.transferenciasFiltro.map(r=>`
+              <tr>
+                <td>${escapeHtml(r.matric||'—')}</td>
+                <td><strong>${escapeHtml(r.nome||'—')}</strong></td>
+                <td>${fmtDateBR(r.dtTransf)}</td>
+                <td>${escapeHtml(r.tipo||'—')}</td>
+                <td>${r.ativo?'✅ Sim':'❌ Não'}</td>
+              </tr>`).join('') : `<tr><td colspan="5" style="text-align:center;color:#7a8798;padding:14px;">${TurnoverState.transfIni||TurnoverState.transfFim ? 'Nenhuma transferência no intervalo selecionado.' : 'Nenhum registro com DATA TRANSFERENCIA preenchida.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ======================== TABELA GERAL ======================== -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 Quadro Geral — Todos os Funcionários</h3>
-        <span class="panel-note">${tv.length} registros · ${d.quadroCadastrado} ativos</span>
+        <h3>📋 Quadro Geral — ${d.filtroAtivo?'Funcionários com Evento no Período':'Todos os Funcionários'}</h3>
+        <span class="panel-note">${d.tvFiltrado.length} registro(s)${d.filtroAtivo?' no período filtrado':''} · ${d.quadroCadastrado} ativos no total</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -6494,7 +6765,7 @@ function renderTurnover(){
             </tr>
           </thead>
           <tbody>
-            ${tv.map(r=>{
+            ${d.tvFiltrado.map(r=>{
               const prob = statusProb(r);
 
               // Data contratação
@@ -6560,9 +6831,34 @@ function renderTurnover(){
     </div>` : ''}
   `;
 
-  const selPeriodo = document.getElementById("tv-periodo-select");
-  if(selPeriodo) selPeriodo.addEventListener("change", e=>{
-    TurnoverState.periodoMeses = Number(e.target.value);
+  const tvFiltroAplicar = document.getElementById("tv-filtro-aplicar");
+  const tvFiltroLimpar = document.getElementById("tv-filtro-limpar");
+  if(tvFiltroAplicar) tvFiltroAplicar.addEventListener("click", ()=>{
+    const iniVal = document.getElementById("tv-filtro-ini").value;
+    const fimVal = document.getElementById("tv-filtro-fim").value;
+    TurnoverState.filtroIni = iniVal ? new Date(iniVal+"T00:00:00") : null;
+    TurnoverState.filtroFim = fimVal ? new Date(fimVal+"T00:00:00") : null;
+    TurnoverState.atalhoSel = null;
+    renderTurnover();
+  });
+  if(tvFiltroLimpar) tvFiltroLimpar.addEventListener("click", ()=>{
+    TurnoverState.filtroIni = null; TurnoverState.filtroFim = null; TurnoverState.atalhoSel = null;
+    renderTurnover();
+  });
+
+  const tvTransfIni = document.getElementById("tv-transf-ini");
+  const tvTransfFim = document.getElementById("tv-transf-fim");
+  const tvTransfClear = document.getElementById("tv-transf-clear");
+  if(tvTransfIni) tvTransfIni.addEventListener("change", e=>{
+    TurnoverState.transfIni = e.target.value ? new Date(e.target.value+"T00:00:00") : null;
+    renderTurnover();
+  });
+  if(tvTransfFim) tvTransfFim.addEventListener("change", e=>{
+    TurnoverState.transfFim = e.target.value ? new Date(e.target.value+"T00:00:00") : null;
+    renderTurnover();
+  });
+  if(tvTransfClear) tvTransfClear.addEventListener("click", ()=>{
+    TurnoverState.transfIni = null; TurnoverState.transfFim = null;
     renderTurnover();
   });
 }
