@@ -445,7 +445,43 @@ tr.row-selected td { background:var(--blue-light) !important; font-weight:700; }
 }
 
 @media print{
-  #app-header,#main-nav,#sub-nav,.toolbar,.panel-actions,.btn{display:none !important;}
+  /* Esconde tudo que não é Relações Rep */
+  #app-header, #main-nav, #sub-nav, .toolbar, .panel-actions,
+  .btn, #rel-toggle-det, #rel-det-wrap,
+  .view:not(#view-indicadores),
+  #pane-producao, #pane-projecao, #pane-individual,
+  #pane-avaria, #pane-operadores { display:none !important; }
+
+  /* Mostra só o pane-relacoes */
+  #view-indicadores, #pane-relacoes { display:block !important; }
+
+  body, html { background:#fff !important; margin:0; padding:0; }
+
+  /* Quebras de página explícitas */
+  #rel-pdf-p2    { break-before: page; page-break-before: always; }
+  #rel-pdf-p3    { break-before: page; page-break-before: always; }
+  #rel-pdf-p4    { break-before: page; page-break-before: always; }
+
+  /* Não quebra dentro das seções chave */
+  #rel-pdf-p1-cards, #rel-pdf-p1-top,
+  #rel-pdf-p2, #rel-pdf-p3, #rel-pdf-p4 { break-inside: avoid-page; }
+
+  .panel        { break-inside: avoid; page-break-inside: avoid; box-shadow:none !important; border:1px solid #dde3ea !important; }
+  .chart-wrap   { break-inside: avoid; page-break-inside: avoid; }
+  .table-wrap   { break-inside: auto; }
+  .grid-2       { break-inside: avoid; page-break-inside: avoid; }
+  .card         { break-inside: avoid; page-break-inside: avoid; }
+
+  /* Grade de rankings lado a lado */
+  #rel-pdf-p3 > div { display:grid !important; grid-template-columns:1fr 1fr; gap:12px; }
+
+  /* Gráficos: garante que canvas seja visível */
+  canvas { display:block !important; max-width:100% !important; }
+
+  /* Remove botões e filtros */
+  button, select, input { display:none !important; }
+
+  @page { margin: 10mm 12mm; size: A4 landscape; }
 }
 
 /* Esconde o app inteiro até a autenticação ser concluída */
@@ -525,6 +561,8 @@ body.locked #app-body{ display:none !important; }
       <div class="pane" id="pane-projecao"></div>
       <div class="pane" id="pane-individual"></div>
       <div class="pane" id="pane-avaria"></div>
+      <div class="pane" id="pane-operadores"></div>
+      <div class="pane" id="pane-relacoes"></div>
     </section>
 
     <!-- GESTAO -->
@@ -536,6 +574,7 @@ body.locked #app-body{ display:none !important; }
       <div class="pane" id="pane-comissao"></div>
       <div class="pane" id="pane-cronograma"></div>
       <div class="pane" id="pane-turnover"></div>
+      <div class="pane" id="pane-ferias"></div>
     </section>
 
   </div>
