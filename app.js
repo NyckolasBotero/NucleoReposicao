@@ -1785,10 +1785,19 @@ const AuditOnline = {
     return rows;
   },
 
-  // qualidade média de um conjunto de linhas — cada auditoria vale 0-100% conforme
-  // quantos dos 4 critérios estão OK (valor 0); a média do conjunto é a qualidade geral
+  // qualidade de UMA linha — por volume, usando os itens cadastrados na 8022 para a
+  // rua daquela linha: (itens da rua - ocorrências da linha) / itens da rua. Cai para
+  // a nota por critério (0/25/50/75/100%) quando a rua não tem itens conhecidos na 8022.
+  qualidadeLinha(row){
+    const itens = this.ruaItensMap().get(String(row.rua)) || 0;
+    if(itens>0) return Math.max(0, Math.min(100, (itens-row.totalOcorrencias)/itens*100));
+    return row.qualidade;
+  },
+
+  // qualidade média de um conjunto de linhas — usa qualidadeLinha (por volume) em cada
+  // uma e tira a média do conjunto
   qualidadeDe(rows){
-    return rows.length ? avg(rows.map(r=>r.qualidade)) : null;
+    return rows.length ? avg(rows.map(r=>this.qualidadeLinha(r))) : null;
   },
 
   // qualidade média num intervalo [ini,fim], respeitando os filtros de repositor/rua/
@@ -5086,7 +5095,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade de uma auditoria = % dos 4 criterios OK (Picking Errado, Avariados, Prox. Vencimento, Sem Saldo = 0). Qualidade do grupo = media das auditorias.</div>
+    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua - Problemas encontrados naquela auditoria) / Itens da rua. Quando a rua nao tem itens na 8022, usa a nota por criterio (Picking Errado, Avariados, Prox. Vencimento, Sem Saldo = 0 cada). Qualidade do grupo = media das auditorias.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
