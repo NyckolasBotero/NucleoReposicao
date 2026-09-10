@@ -81,7 +81,7 @@ const REQUIRED_COLUMNS = {
   "FEEDBACK REP": ["Data","Cod","Nome","Resumo Assunto","Avaliação Pessoal","Avaliação Gestor","Desempenho","Classificação"],
   "QUADRO REP": ["DATA","CODIGO","NOME","STATUS"],
   "8271": ["DATA","RUA","TIPOOS","NUMOS"],
-  "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTINICIOOS"],
+  "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTFIMSEPARACAO"],
   "MISSÕES": ["DATA","HORA INICIO","HORA FIM","CODIGO","NOME","TIPO"]
 };
 
@@ -478,8 +478,15 @@ const DataProcessor = {
     }).filter(r=>r.data);
 
     // ---- 8460 ----
+    // Usa DTFIMSEPARACAO (não DTINICIOOS) como data da O.S. — uma O.S. tipo 58 só
+    // pode ser contabilizada como "feita" quando ela foi de fato FINALIZADA (separação
+    // concluída). Se a O.S. ainda não terminou, DTFIMSEPARACAO fica vazia e a linha é
+    // descartada automaticamente pelo filtro abaixo (r=>r.dtinicio).
+    // Mantém o nome interno do campo como "dtinicio" (usado em todo o resto do app —
+    // Produção, Comissão, Missões, Acompanhamento Individual etc.) para não precisar
+    // alterar todas as outras funções; o que muda é só a coluna de origem.
     out.p8460 = raw["8460"].map((r,idx)=>{
-      const dtinicio = toDate(r["DTINICIOOS"]);
+      const dtinicio = toDate(getFieldFlexible(r, ["DTFIMSEPARACAO","DT FIM SEPARACAO","DATA FIM SEPARACAO"]));
       const cod = r["CODFUNCOS"]!==null && r["CODFUNCOS"]!==undefined && r["CODFUNCOS"]!=="" ? String(r["CODFUNCOS"]).trim() : null;
       const nome = trimStr(r["NOME"]);
       const tipoos = r["TIPOOS"]!==null && r["TIPOOS"]!==undefined ? Number(r["TIPOOS"]) : null;
@@ -752,7 +759,7 @@ function buildNameRegistry(processed){
 }
 
 /* ---------------------------------------------------------------------- */
-/* MODULE: Production (fonte: 8460, TIPOOS = 58, data = DTINICIOOS)        */
+/* MODULE: Production (fonte: 8460, TIPOOS = 58, data = DTFIMSEPARACAO)     */
 /* ---------------------------------------------------------------------- */
 const Production = {
   state: {
@@ -760,10 +767,10 @@ const Production = {
     dataInicial: null,
     dataFinal: null,
     employees: [],            // codKeys selecionados (vazio = todos)
-    quadroAtual: "SIM",
+    quadroAtual: "NAO",
     weekCompareMode: "anterior", // anterior | mesCorrespondente
     mesmaPeriodicidade: "SIM",
-    projectionBase: 0
+    projectionBase: 1
   },
 
   getBaseRows(){
@@ -3234,7 +3241,7 @@ function renderProducao(){
     st.employees = e.target.value ? [e.target.value] : []; renderProducao();
   });
   $("#prod-clear").addEventListener("click", ()=>{
-    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"SIM", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:0 };
+    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"NAO", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:1 };
     renderProducao();
   });
 
@@ -3317,7 +3324,7 @@ function renderProducaoContent(){
 
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><h3>Evolução Mensal — O.S. 58</h3><span class="panel-note">Fonte: 8460 · DTINICIOOS</span></div>
+        <div class="panel-header"><h3>Evolução Mensal — O.S. 58</h3><span class="panel-note">Fonte: 8460 · DTFIMSEPARACAO</span></div>
         <div class="chart-wrap"><canvas id="chart-evo-mensal"></canvas></div>
       </div>
       <div class="panel">
