@@ -1886,20 +1886,50 @@ const AuditOnline = {
       e.auditorias++; e.ocorrencias += r.totalOcorrencias;
       e.pickErrado += r.pickErrado; e.avariado += r.avariado; e.proxVenc += r.proxVenc; e.semSaldo += r.semSaldo;
     });
-    return Array.from(map.values()).map(e=>({...e, qualidadeMedia: this.qualidadeDe(rows.filter(r=>r.codKey===e.codKey&&r.rua===e.rua))}))
-      .sort((a,b)=>(a.qualidadeMedia||0)-(b.qualidadeMedia||0));
+    return Array.from(map.values()).map(e=>{
+      const rowsDoGrupo = rows.filter(r=>r.codKey===e.codKey&&r.rua===e.rua);
+      const { qualidade, itens } = this.qualidadeRuaPorCatalogo(e.rua, e.ocorrencias, rowsDoGrupo);
+      return {...e, itens8022: itens, qualidadeMedia: qualidade};
+    }).sort((a,b)=>(a.qualidadeMedia||0)-(b.qualidadeMedia||0));
+  },
+
+  // itens cadastrados por rua na sheet 8022 — usado para calcular qualidade da rua
+  // relativa ao tamanho do catálogo dela (rua com mais itens "dilui" mais erros)
+  ruaItensMap(){
+    const processed = window.APP_STATE.processed;
+    const map = new Map();
+    if(!processed || !processed.p8022dispo || !processed.prod2info8022) return map;
+    processed.prod2info8022.forEach(info=>{
+      if(!info.rua) return;
+      const k = String(info.rua);
+      map.set(k, (map.get(k)||0)+1);
+    });
+    return map;
+  },
+
+  // Qualidade de uma rua = (itens cadastrados na 8022 para essa rua - ocorrências
+  // encontradas nas auditorias) / itens cadastrados, em %. Se a 8022 não tiver dados
+  // para essa rua (itens=0/indisponível), cai para a média por critério (qualidadeDe).
+  qualidadeRuaPorCatalogo(rua, ocorrencias, rowsDaRua){
+    const itens = this.ruaItensMap().get(String(rua)) || 0;
+    if(itens>0) return { qualidade: Math.max(0, Math.min(100, (itens-ocorrencias)/itens*100)), itens };
+    return { qualidade: this.qualidadeDe(rowsDaRua), itens: 0 };
   },
 
   byRua(){
     const rows = this.getRows();
     const map = new Map();
     rows.forEach(r=>{
-      if(!map.has(r.rua)) map.set(r.rua, { rua:r.rua, auditorias:0, ocorrencias:0 });
+      if(!map.has(r.rua)) map.set(r.rua, { rua:r.rua, auditorias:0, pickErrado:0, avariado:0, proxVenc:0, semSaldo:0, ocorrencias:0 });
       const e = map.get(r.rua);
       e.auditorias++; e.ocorrencias += r.totalOcorrencias;
+      e.pickErrado += r.pickErrado; e.avariado += r.avariado; e.proxVenc += r.proxVenc; e.semSaldo += r.semSaldo;
     });
-    return Array.from(map.values()).map(e=>({...e, qualidadeMedia: this.qualidadeDe(rows.filter(r=>r.rua===e.rua))}))
-      .sort((a,b)=>String(a.rua).localeCompare(String(b.rua), undefined, {numeric:true}));
+    return Array.from(map.values()).map(e=>{
+      const rowsDaRua = rows.filter(r=>r.rua===e.rua);
+      const { qualidade, itens } = this.qualidadeRuaPorCatalogo(e.rua, e.ocorrencias, rowsDaRua);
+      return {...e, itens8022: itens, qualidadeMedia: qualidade};
+    }).sort((a,b)=>String(a.rua).localeCompare(String(b.rua), undefined, {numeric:true}));
   },
 
   evolucao(){
@@ -5118,20 +5148,27 @@ function renderAuditoria(){
     </div>
 
     <div class="panel">
-      <div class="panel-header"><h3>Qualidade por Rua - Repositor e Rua</h3></div>
+      <div class="panel-header">
+        <h3>Qualidade por Rua - Repositor e Rua</h3>
+        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens · quando a rua nao tem itens na 8022, usa a media por auditoria</span>
+      </div>
       <div class="table-wrap" style="max-height:400px;overflow-y:auto;"><table class="data-table">
-        <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
-        <tbody>${byRepRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>${escapeHtml(e.nome)}</td><td>${e.cod||'-'}</td><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.auditorias}</td><td>${e.pickErrado}</td><td>${e.avariado}</td><td>${e.proxVenc}</td><td>${e.semSaldo}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
+        <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
+        <tbody>${byRepRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>${escapeHtml(e.nome)}</td><td>${e.cod||'-'}</td><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.itens8022>0?fmtNum(e.itens8022):'-'}</td><td>${e.auditorias}</td><td>${e.pickErrado}</td><td>${e.avariado}</td><td>${e.proxVenc}</td><td>${e.semSaldo}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
       </table></div>
     </div>
 
     <div class="panel">
-      <div class="panel-header"><h3>Qualidade por Rua - Resumo</h3></div>
+      <div class="panel-header">
+        <h3>Qualidade por Rua - Resumo</h3>
+        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens</span>
+      </div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Rua</th><th>Auditorias</th><th>Problemas</th><th>Qualidade Media</th><th>Status</th></tr></thead>
-        <tbody>${byRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
+        <thead><tr><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Problemas</th><th>Qualidade Media</th><th>Status</th></tr></thead>
+        <tbody>${byRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.itens8022>0?fmtNum(e.itens8022):'-'}</td><td>${e.auditorias}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
       </table></div>
     </div>
+
 
     <div class="panel">
       <div class="panel-header"><h3>Detalhamento das Auditorias</h3></div>
