@@ -1806,6 +1806,10 @@ const Audit = {
 // "com ocorrência". A qualidade média de um conjunto = % de auditorias sem
 // nenhuma ocorrência (impecáveis) sobre o total.
 const AUDITORIA_ONLINE_SHEET_ID = "1_WCpwtsyUJbc3j3v2oX9TuwzBZxnFwIobPEzg19Umy0";
+// Peso de cada critério na qualidade "por critério" (usada quando a rua da auditoria
+// não tem itens cadastrados na 8022 — nesse caso não dá pra calcular por volume, então
+// cai nessa fórmula ponderada). Critério OK (valor 0) soma o peso; senão soma 0.
+const AUDITORIA_PESOS_CRITERIOS = { avariado:15, pickErrado:5, proxVenc:10, semSaldo:5 };
 const AUDITORIA_ONLINE_GID = "0";
 // status de qualidade por faixa (usado em toda a Auditoria): Excelente/Boa/Atenção/Crítica
 function auditoriaStatusQual(v){
@@ -1928,9 +1932,13 @@ const AuditOnline = {
       const proxVenc = iProxVenc!==-1 ? numOr0(cols[iProxVenc]) : 0;
       const semSaldo = iSemSaldo!==-1 ? numOr0(cols[iSemSaldo]) : 0;
       const totalOcorrencias = pickErrado + avariado + proxVenc + semSaldo;
-      // qualidade por critério: cada um dos 4 vale 25% — 0 = OK, >0 = falha nesse critério
+      // qualidade por critério (ponderada): cada critério OK (valor 0) soma seu peso;
+      // qualidade = soma dos pesos OK / soma total dos pesos × 100
+      const pesos = AUDITORIA_PESOS_CRITERIOS;
+      const pesoTotal = pesos.avariado + pesos.pickErrado + pesos.proxVenc + pesos.semSaldo;
+      const pesoOk = (avariado===0?pesos.avariado:0) + (pickErrado===0?pesos.pickErrado:0) + (proxVenc===0?pesos.proxVenc:0) + (semSaldo===0?pesos.semSaldo:0);
       const criteriosOk = (pickErrado===0?1:0)+(avariado===0?1:0)+(proxVenc===0?1:0)+(semSaldo===0?1:0);
-      const qualidade = criteriosOk/4*100;
+      const qualidade = pesoOk/pesoTotal*100;
       const possuiImagem = iPossuiImagem!==-1 ? /^S/i.test(trimStr(cols[iPossuiImagem])) : false;
       const foto = iFoto!==-1 ? trimStr(cols[iFoto]) : "";
       const foto2 = iFoto2!==-1 ? trimStr(cols[iFoto2]) : "";
@@ -5299,7 +5307,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua - Problemas encontrados naquela auditoria) / Itens da rua. Quando a rua nao tem itens na 8022, usa a nota por criterio (Picking Errado, Avariados, Prox. Vencimento, Sem Saldo = 0 cada). Qualidade do grupo = media das auditorias.</div>
+    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua - Problemas encontrados naquela auditoria) / Itens da rua. Quando a rua nao tem itens na 8022, usa a nota por criterio ponderada (peso: Avaria 15 · Prox. Vencimento 10 · Picking Errado 5 · Sem Saldo 5 — cada criterio OK soma seu peso sobre o total de 35). Qualidade do grupo = media das auditorias.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
