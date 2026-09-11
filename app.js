@@ -1971,17 +1971,29 @@ const AuditOnline = {
     return rows;
   },
 
-  // qualidade de UMA linha — por volume, usando os itens cadastrados na 8022 para a
-  // rua daquela linha: (itens da rua - ocorrências da linha) / itens da rua. Cai para
-  // a nota por critério (0/25/50/75/100%) quando a rua não tem itens conhecidos na 8022.
+  // "penalidade" de uma linha, em item-equivalentes: cada ocorrência de um critério
+  // "consome" o peso daquele critério em itens da rua. Ex.: 1 avaria (peso 15) tira
+  // 15 dos itens da rua; 3 avarias tiram 45.
+  penalidadeLinha(row){
+    const p = AUDITORIA_PESOS_CRITERIOS;
+    return row.pickErrado*p.pickErrado + row.avariado*p.avariado + row.proxVenc*p.proxVenc + row.semSaldo*p.semSaldo;
+  },
+
+  // qualidade de UMA linha = (itens cadastrados na 8022 da rua - penalidade ponderada
+  // daquela auditoria) / itens da rua. Ex.: rua com 100 itens e 1 avaria (peso 15) →
+  // (100-15)/100 = 85%. Quando a rua não tem itens conhecidos na 8022, cai para a nota
+  // por critério em percentual (peso OK / peso total × 100).
   qualidadeLinha(row){
     const itens = this.ruaItensMap().get(String(row.rua)) || 0;
-    if(itens>0) return Math.max(0, Math.min(100, (itens-row.totalOcorrencias)/itens*100));
+    if(itens>0){
+      const pen = this.penalidadeLinha(row);
+      return Math.max(0, Math.min(100, (itens-pen)/itens*100));
+    }
     return row.qualidade;
   },
 
-  // qualidade média de um conjunto de linhas — usa qualidadeLinha (por volume) em cada
-  // uma e tira a média do conjunto
+  // qualidade média de um conjunto de linhas — média da qualidade (por volume ponderado,
+  // com fallback por critério) de cada uma
   qualidadeDe(rows){
     return rows.length ? avg(rows.map(r=>this.qualidadeLinha(r))) : null;
   },
@@ -2102,12 +2114,15 @@ const AuditOnline = {
     return map;
   },
 
-  // Qualidade de uma rua = (itens cadastrados na 8022 para essa rua - ocorrências
-  // encontradas nas auditorias) / itens cadastrados, em %. Se a 8022 não tiver dados
-  // para essa rua (itens=0/indisponível), cai para a média por critério (qualidadeDe).
+  // Qualidade agregada de uma rua = (itens cadastrados na 8022 - soma da penalidade
+  // ponderada de todas as auditorias daquela rua) / itens. Sem itens conhecidos,
+  // cai para a média da nota por critério.
   qualidadeRuaPorCatalogo(rua, ocorrencias, rowsDaRua){
     const itens = this.ruaItensMap().get(String(rua)) || 0;
-    if(itens>0) return { qualidade: Math.max(0, Math.min(100, (itens-ocorrencias)/itens*100)), itens };
+    if(itens>0){
+      const penTotal = sum(rowsDaRua.map(r=>this.penalidadeLinha(r)));
+      return { qualidade: Math.max(0, Math.min(100, (itens-penTotal)/itens*100)), itens };
+    }
     return { qualidade: this.qualidadeDe(rowsDaRua), itens: 0 };
   },
 
@@ -5307,7 +5322,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua - Problemas encontrados naquela auditoria) / Itens da rua. Quando a rua nao tem itens na 8022, usa a nota por criterio ponderada (peso: Avaria 15 · Prox. Vencimento 10 · Picking Errado 5 · Sem Saldo 5 — cada criterio OK soma seu peso sobre o total de 35). Qualidade do grupo = media das auditorias.</div>
+    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua − penalidade) / Itens, onde penalidade = Picking Errado×5 + Avariados×15 + Prox.Vencimento×10 + Sem Saldo×5. Ex.: rua com 100 itens e 1 avaria = (100−15)/100 = 85%. Sem itens conhecidos na 8022, usa a nota por critério (peso OK / 35 × 100). Qualidade do grupo = media das auditorias.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
@@ -5371,7 +5386,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Repositor e Rua</h3>
-        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens · quando a rua nao tem itens na 8022, usa a media por auditoria</span>
+        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Picking×5 + Avaria×15 + Prox.Venc×10 + SemSaldo×5</span>
       </div>
       <div class="table-wrap" style="max-height:400px;overflow-y:auto;"><table class="data-table">
         <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
@@ -5382,7 +5397,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Resumo</h3>
-        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens</span>
+        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Picking×5 + Avaria×15 + Prox.Venc×10 + SemSaldo×5</span>
       </div>
       <div class="table-wrap"><table class="data-table">
         <thead><tr><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Problemas</th><th>Qualidade Media</th><th>Status</th></tr></thead>
