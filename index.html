@@ -536,6 +536,12 @@ body.locked #app-body{ display:none !important; }
 .pane{animation:flowFadeUp .28s ease both;}
 .card{transition:transform .15s ease,box-shadow .15s ease;}
 .card:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(16,32,64,.08);}
+
+/* Neutraliza animações/transições durante a exportação PNG/PDF (html2canvas), para
+   não capturar o frame inicial do fade-in dos panes/cards com opacidade parcial. Só
+   desativa "animation"/"transition" — nunca opacidade estática legítima (ex.: botão
+   desabilitado, texto secundário), então nada de visual real muda no export. */
+.export-no-anim, .export-no-anim *{ animation:none !important; transition:none !important; }
 </style>
 </head>
 <body class="locked">
