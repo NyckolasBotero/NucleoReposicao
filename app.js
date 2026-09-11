@@ -2725,6 +2725,10 @@ const Export = {
     const target = targetOverride || this.currentArea();
     if(!target){ toast("Nada para exportar.","error"); return; }
     toast("Gerando imagem PNG...");
+    // trava animações/transições antes do screenshot, para não capturar o pane/card
+    // ainda no meio do fade-in (opacidade parcial) — ver .export-no-anim no CSS
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const canvas = await html2canvas(target, { backgroundColor:"#f4f6f9", scale:2, useCORS:true });
       const link = document.createElement("a");
@@ -2735,6 +2739,8 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PNG: "+err.message,"error");
+    }finally{
+      document.body.classList.remove("export-no-anim");
     }
   },
 
@@ -2825,11 +2831,16 @@ const Export = {
     const hiddenEls = Array.from(target.querySelectorAll(".pdf-hide-geral"));
     const prevDisplay = hiddenEls.map(el=>el.style.display);
     hiddenEls.forEach(el=>{ el.style.display="none"; });
+    // trava animações/transições antes do screenshot, para não capturar o pane/card
+    // ainda no meio do fade-in (opacidade parcial) — ver .export-no-anim no CSS
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const scale = 2;
       const units = this.findBreakUnits(target);
       const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale, useCORS:true });
       hiddenEls.forEach((el,i)=>{ el.style.display = prevDisplay[i]; });
+      document.body.classList.remove("export-no-anim");
 
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
@@ -2881,6 +2892,7 @@ const Export = {
       toast("PDF exportado com sucesso.","success");
     }catch(err){
       hiddenEls.forEach((el,i)=>{ el.style.display = prevDisplay[i]; });
+      document.body.classList.remove("export-no-anim");
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
     }
@@ -2892,6 +2904,8 @@ const Export = {
     const target = targetOverride || this.currentArea();
     if(!target){ toast("Nada para exportar.","error"); return; }
     toast("Gerando PDF em 1 página...");
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale:2, useCORS:true });
       const { jsPDF } = window.jspdf;
@@ -2919,6 +2933,8 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
+    }finally{
+      document.body.classList.remove("export-no-anim");
     }
   },
 
@@ -2927,6 +2943,8 @@ const Export = {
   async toPDFMultiPage(targets, filenamePrefix, orientation){
     if(!targets || !targets.length){ toast("Nada para exportar.","error"); return; }
     toast(`Gerando PDF com ${targets.length} página(s)...`);
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const { jsPDF } = window.jspdf;
       const orient = orientation || "landscape";
@@ -2956,6 +2974,8 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
+    }finally{
+      document.body.classList.remove("export-no-anim");
     }
   }
 };
