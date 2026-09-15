@@ -105,11 +105,7 @@ const DEFAULT_COMMISSION_CONFIG = {
   exceptions: [],
   missions: [
     { name:"Separação de Múltiplos", qty:1, osEquiv:6, valuePerOs:0.50 }
-  ],
-  // Modelo alternativo de comissão baseado na % Qualidade da Auditoria (Gestão >
-  // Auditoria, últimos 3 meses): <50% = zero · 50-69% = metade do valor base ·
-  // >=70% = proporcional ao % (ex.: 71% de qualidade = 71% do valor base).
-  qualityModel: { enabled:false, baseValue:1000 }
+  ]
 };
 
 /* ---------------------------------------------------------------------- */
@@ -2277,13 +2273,15 @@ const Commission = {
   findException(codKey, cod, exceptions){
     return (exceptions||[]).find(e=> e.active!==false && e.codigo && normStr(e.codigo)===normStr(cod||"") );
   },
-  // Comissão pelo modelo de Qualidade da Auditoria (últimos 3 meses, mesma janela do
-  // Feedback): <50%=0 · 50-69,99%=metade do valor base · >=70%=proporcional ao %.
-  computeQualityCommission(qualidade, baseValue){
-    if(qualidade===null || qualidade===undefined) return null; // sem dado de auditoria — cai no fallback por faixa
-    if(qualidade < 50) return { comissaoTotal:0, regra:`Qualidade ${fmtNum(qualidade,1)}% (<50%) — sem comissão` };
-    if(qualidade < 70) return { comissaoTotal: baseValue*0.5, regra:`Qualidade ${fmtNum(qualidade,1)}% (50-69%) — metade da comissão` };
-    return { comissaoTotal: baseValue*(qualidade/100), regra:`Qualidade ${fmtNum(qualidade,1)}% — proporcional ao valor base` };
+  // Fator de ajuste por qualidade, aplicado SEMPRE em cima da comissão normal (por
+  // faixa/exceção) — não é um modelo alternativo, é um multiplicador sobre o valor já
+  // calculado: <50%=0 (zera) · 50-69,99%=0.5 (metade) · >=70%=qualidade/100 (proporcional,
+  // ex.: 71% de qualidade mantém 71% do valor da comissão).
+  qualityFactor(qualidade){
+    if(qualidade===null || qualidade===undefined) return null; // sem dado de auditoria — não penaliza, mantém valor cheio
+    if(qualidade < 50) return 0;
+    if(qualidade < 70) return 0.5;
+    return qualidade/100;
   },
   computeAll(dataInicial, dataFinal, considerarMissoes){
     considerarMissoes = considerarMissoes !== false; // default true
@@ -2310,12 +2308,19 @@ const Commission = {
       }
     });
 
-    // % Qualidade (últimos 3 meses) — vem da Auditoria online (Gestão > Auditoria,
-    // mesma planilha Google Sheets), sempre calculada, independente do modelo de
-    // comissão ativo (usada como coluna informativa e/ou como base do cálculo).
+    // % Qualidade — vem da Auditoria online (Gestão > Auditoria, mesma planilha Google
+    // Sheets), calculada no MESMO período filtrado nesta tela (mês/intervalo selecionado
+    // em Gestão > Comissão). Sem filtro de data ativo, usa o mês atual até o momento
+    // (maxDataDate), que é o período padrão exibido.
     const maxDateProd = Production.maxDataDate();
-    const qIni = maxDateProd ? addMonths(new Date(maxDateProd.getFullYear(), maxDateProd.getMonth(), 1), -2) : null;
-    const qFim = maxDateProd ? dateOnly(maxDateProd) : null;
+    let qIni, qFim;
+    if(dataInicial || dataFinal){
+      qIni = dataInicial ? dateOnly(dataInicial) : dateOnly(new Date(dataFinal.getFullYear(), dataFinal.getMonth(), 1));
+      qFim = dataFinal ? dateOnly(dataFinal) : dateOnly(maxDateProd||new Date());
+    } else if(maxDateProd){
+      qIni = dateOnly(new Date(maxDateProd.getFullYear(), maxDateProd.getMonth(), 1));
+      qFim = dateOnly(maxDateProd);
+    }
     const qualidadePorRep = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
 
     return Array.from(map.values()).map(e=>{
@@ -2325,33 +2330,27 @@ const Commission = {
       const qInfo = qualidadePorRep.get(e.codKey);
       const qualidade = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null;
 
-      let valorPonto, regra, band, comissaoTotal;
-      if(cfg.qualityModel && cfg.qualityModel.enabled){
-        const qc = this.computeQualityCommission(qualidade, cfg.qualityModel.baseValue||0);
-        if(qc){
-          comissaoTotal = qc.comissaoTotal; regra = qc.regra;
-          valorPonto = pontos>0 ? comissaoTotal/pontos : 0;
-        } else {
-          // sem dado de auditoria no período — cai no modelo por faixa normalmente
-          const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
-          if(exc){ valorPonto = exc.valuePerPoint; regra = "Exceção Individual (sem auditoria no período)"; }
-          else { band = this.findBand(pontos, cfg.bands); valorPonto = band ? band.value : 0; regra = (band?"Regra Normal":"Sem faixa aplicável") + " (sem auditoria no período)"; }
-          comissaoTotal = pontos * valorPonto;
-        }
+      const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
+      let valorPonto, regra, band;
+      if(exc){
+        valorPonto = exc.valuePerPoint; regra = "Exceção Individual";
       } else {
-        const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
-        if(exc){
-          valorPonto = exc.valuePerPoint; regra = "Exceção Individual";
-        } else {
-          band = this.findBand(pontos, cfg.bands);
-          valorPonto = band ? band.value : 0;
-          regra = band ? "Regra Normal" : "Sem faixa aplicável";
-        }
-        comissaoTotal = pontos * valorPonto;
+        band = this.findBand(pontos, cfg.bands);
+        valorPonto = band ? band.value : 0;
+        regra = band ? "Regra Normal" : "Sem faixa aplicável";
       }
+      const comissaoBase = pontos * valorPonto;
+
+      const fator = this.qualityFactor(qualidade);
+      const comissaoTotal = fator===null ? comissaoBase : comissaoBase*fator;
+      if(fator===null) regra += " — sem auditoria no período (comissão integral)";
+      else if(fator===0) regra += ` — qualidade ${fmtNum(qualidade,1)}% (<50%): comissão zerada`;
+      else if(fator===0.5) regra += ` — qualidade ${fmtNum(qualidade,1)}% (50-69%): metade da comissão`;
+      else regra += ` — qualidade ${fmtNum(qualidade,1)}%: ${fmtNum(fator*100,1)}% da comissão`;
+
       return {
         ...e, missoesOs, pontos, valorPonto, regra, band, qualidade,
-        comissaoTotal
+        comissaoBase, comissaoTotal
       };
     }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
   }
@@ -5717,25 +5716,7 @@ function renderComissao(){
     </div>
     ${commissionOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
 
-    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
-      <div class="panel-header"><h3>⚙️ Modelo de Comissão</h3></div>
-      <div class="toolbar" style="margin-bottom:0;">
-        <div class="filter-group">
-          <label>Modelo</label>
-          <div class="toggle-group" id="comm-model-toggle">
-            <button data-v="faixa" class="${!cfg.qualityModel.enabled?'active':''}">Por Faixa de Produção</button>
-            <button data-v="qualidade" class="${cfg.qualityModel.enabled?'active':''}">Por % Qualidade (Auditoria)</button>
-          </div>
-        </div>
-        ${cfg.qualityModel.enabled ? `
-        <div class="filter-group">
-          <label>Valor Base (R$)</label>
-          <input type="number" step="10" id="comm-quality-base" value="${cfg.qualityModel.baseValue}" style="width:110px;">
-        </div>
-        <span class="small-muted">Qualidade &lt;50% = sem comissão · 50-69% = metade do valor base · ≥70% = % da qualidade × valor base (ex.: 71% de qualidade = 71% de R$ ${fmtNum(cfg.qualityModel.baseValue)})</span>
-        ` : `<span class="small-muted">Comissão calculada pelas faixas de produção (O.S. + missões) abaixo.</span>`}
-      </div>
-    </div>
+    <div class="hint-box">🔍 A comissão calculada abaixo já é ajustada automaticamente pela % Qualidade da Auditoria (Gestão &gt; Auditoria) no mesmo período filtrado nesta tela: qualidade &lt;50% zera a comissão · 50-69% paga metade · ≥70% paga o % da qualidade sobre o valor normal (ex.: 71% de qualidade = 71% da comissão calculada pela faixa). Sem auditoria no período, a comissão fica integral (sem ajuste).</div>
 
     <div class="grid-2">
       <div class="panel">
@@ -5779,16 +5760,6 @@ function renderComissao(){
     </div>
   `;
 
-  $("#comm-model-toggle").addEventListener("click", e=>{
-    const b = e.target.closest("button"); if(!b) return;
-    cfg.qualityModel.enabled = b.dataset.v === "qualidade";
-    renderComissao();
-  });
-  const commQualityBase = $("#comm-quality-base");
-  if(commQualityBase) commQualityBase.addEventListener("change", e=>{
-    cfg.qualityModel.baseValue = Number(e.target.value)||0;
-    renderCommissionTable();
-  });
   $("#comm-quadro-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
     commissionQuadroAtual = b.dataset.v;
@@ -5968,10 +5939,10 @@ function renderCommissionTable(){
     <th>Código</th><th>Repositor</th><th>Produção (O.S. 58)</th>
     ${commissionShowMissoes?'<th>Missões (O.S. equiv.)</th>':''}
     <th>Pontos</th>
-    <th>% Qualidade (3m)</th>
+    <th>% Qualidade (período)</th>
     ${commissionShowValorPonto?'<th>Valor/Ponto</th>':''}
     ${commissionShowRegra?'<th>Regra</th>':''}
-    ${commissionShowComissaoTotal?'<th>Comissão Total</th>':''}
+    ${commissionShowComissaoTotal?'<th>Comissão Base</th><th>Comissão Total (c/ ajuste)</th>':''}
   </tr>`;
   $("#commission-thead").innerHTML = theadHtml;
 
@@ -5982,9 +5953,9 @@ function renderCommissionTable(){
       <td><strong>${fmtNum(e.pontos)}</strong></td>
       <td class="${qualClass(e.qualidade)}">${qualLabel(e.qualidade)}</td>
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
-      ${commissionShowRegra?`<td>${e.regra==='Exceção Individual'?`<span class="tag-warn">${e.regra}</span>`:e.regra==='Regra Normal'?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
-      ${commissionShowComissaoTotal?`<td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
-    </tr>`).join("") || `<tr><td colspan="9" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
+      ${commissionShowRegra?`<td>${e.regra.startsWith('Exceção Individual')?`<span class="tag-warn">${e.regra}</span>`:e.regra.startsWith('Regra Normal')?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
+      ${commissionShowComissaoTotal?`<td class="small-muted">${fmtBRL(e.comissaoBase)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
+    </tr>`).join("") || `<tr><td colspan="10" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
 
   // resumo: período selecionado + valor total (respeitando todos os filtros/toggles ativos)
   const periodoLabel = (st.dataInicial || st.dataFinal)
@@ -6013,10 +5984,10 @@ function exportComissaoToExcel(){
   const header = ["Código", "Repositor", "Produção (O.S. 58)"];
   if(commissionShowMissoes) header.push("Missões (O.S. equiv.)");
   header.push("Pontos");
-  header.push("% Qualidade (3m)");
+  header.push("% Qualidade (período)");
   if(commissionShowValorPonto) header.push("Valor/Ponto (R$)");
   if(commissionShowRegra) header.push("Regra");
-  if(commissionShowComissaoTotal) header.push("Comissão Total (R$)");
+  if(commissionShowComissaoTotal) header.push("Comissão Base (R$)", "Comissão Total c/ ajuste (R$)");
 
   const periodoLabel = (st.dataInicial || st.dataFinal)
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'inicio'} ate ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
@@ -6028,7 +5999,7 @@ function exportComissaoToExcel(){
     ["Período:", periodoLabel],
     ["Considerar Missões:", commissionConsiderarMissoes==='SIM' ? 'Sim' : 'Não'],
     ["Apenas Repositor:", commissionOnlyRepositor ? 'Sim' : 'Não'],
-    ["Modelo de Comissão:", window.APP_STATE.commissionConfig.qualityModel.enabled ? `Por % Qualidade (valor base R$ ${window.APP_STATE.commissionConfig.qualityModel.baseValue})` : 'Por Faixa de Produção'],
+    ["Ajuste por Qualidade:", "Automático (aplicado sobre a comissão por faixa/exceção — ver coluna % Qualidade)"],
     ["Valor Total:", totalGeral],
     [],
     header
@@ -6040,7 +6011,7 @@ function exportComissaoToExcel(){
     row.push(e.qualidade!==null && e.qualidade!==undefined ? +e.qualidade.toFixed(1) : 'Sem auditoria');
     if(commissionShowValorPonto) row.push(+e.valorPonto.toFixed(2));
     if(commissionShowRegra) row.push(e.regra);
-    if(commissionShowComissaoTotal) row.push(+e.comissaoTotal.toFixed(2));
+    if(commissionShowComissaoTotal){ row.push(+e.comissaoBase.toFixed(2)); row.push(+e.comissaoTotal.toFixed(2)); }
     aoa.push(row);
   });
 
