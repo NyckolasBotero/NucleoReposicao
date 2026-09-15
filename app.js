@@ -105,7 +105,11 @@ const DEFAULT_COMMISSION_CONFIG = {
   exceptions: [],
   missions: [
     { name:"Separação de Múltiplos", qty:1, osEquiv:6, valuePerOs:0.50 }
-  ]
+  ],
+  // Modelo alternativo de comissão baseado na % Qualidade da Auditoria (Gestão >
+  // Auditoria, últimos 3 meses): <50% = zero · 50-69% = metade do valor base ·
+  // >=70% = proporcional ao % (ex.: 71% de qualidade = 71% do valor base).
+  qualityModel: { enabled:false, baseValue:1000 }
 };
 
 /* ---------------------------------------------------------------------- */
@@ -941,7 +945,8 @@ const Production = {
     quadroAtual: "NAO",
     weekCompareMode: "anterior", // anterior | mesCorrespondente
     mesmaPeriodicidade: "SIM",
-    projectionBase: 1
+    projectionBase: 1,
+    dailyChartMes: 1  // 0=mês atual, 1=mês anterior (mês fechado) — usado só no gráfico Produção Diária
   },
 
   getBaseRows(){
@@ -1170,6 +1175,31 @@ const Production = {
       const y = Math.floor(k/10000), m = Math.floor((k%10000)/100)-1, d = k%100;
       return { date:new Date(y,m,d), total: byDay.get(k), media };
     });
+  },
+
+  // Série diária usada especificamente no gráfico "Produção Diária" — independente
+  // do filtro Data Inicial/Data Final do painel. state.dailyChartMes escolhe qual mês
+  // mostrar: 0 = mês atual (dia 1 até hoje), 1 = mês anterior (mês fechado, completo).
+  // Preenche todos os dias do intervalo (mesmo sem produção) para o eixo ficar completo.
+  dailySeriesForChart(){
+    const opt = this.state.dailyChartMes===0 ? 0 : 1;
+    const hoje = this.maxDataDate() || new Date();
+    const y = hoje.getFullYear(), m = hoje.getMonth();
+    const targetM = opt===0 ? m : m-1;
+    const ini = dateOnly(new Date(y, targetM, 1));
+    const fim = opt===0 ? dateOnly(hoje) : dateOnly(new Date(y, targetM+1, 0));
+    const rows = this.getBaseRows().filter(r=>{ const d=dateOnly(r.dtinicio); return d>=ini && d<=fim; });
+    const byDay = this.countByDay(rows);
+    const vals = Array.from(byDay.values());
+    const media = vals.length ? avg(vals) : 0;
+    const out = [];
+    let cur = new Date(ini);
+    while(cur<=fim){
+      const k = ymdKey(cur);
+      out.push({ date:new Date(cur), total: byDay.get(k)||0, media });
+      cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()+1);
+    }
+    return out;
   },
 
   weeklyTable(){
@@ -2014,6 +2044,19 @@ const AuditOnline = {
     return this.qualidadeDe(rows);
   },
 
+  // qualidade por repositor num intervalo [ini,fim] — ignora TODOS os filtros da tela
+  // de Auditoria (usado por outras telas, como o Ranking de Repositores do Feedback,
+  // que precisam de um número "cru" e estável independente do que está selecionado
+  // em Gestão > Auditoria no momento)
+  qualidadePorRepositorNoIntervalo(ini, fim){
+    const rows = (this.rows||[]).filter(r=>{ const d=dateOnly(r.data); return d>=ini && d<=fim && r.codKey; });
+    const map = new Map();
+    rows.forEach(r=>{ if(!map.has(r.codKey)) map.set(r.codKey, []); map.get(r.codKey).push(r); });
+    const out = new Map();
+    map.forEach((rs,codKey)=>{ out.set(codKey, { auditorias: rs.length, qualidadeMedia: this.qualidadeDe(rs) }); });
+    return out;
+  },
+
   cards(){
     const rows = this.getRows();
     const qualidadeMedia = this.qualidadeDe(rows);
@@ -2234,6 +2277,14 @@ const Commission = {
   findException(codKey, cod, exceptions){
     return (exceptions||[]).find(e=> e.active!==false && e.codigo && normStr(e.codigo)===normStr(cod||"") );
   },
+  // Comissão pelo modelo de Qualidade da Auditoria (últimos 3 meses, mesma janela do
+  // Feedback): <50%=0 · 50-69,99%=metade do valor base · >=70%=proporcional ao %.
+  computeQualityCommission(qualidade, baseValue){
+    if(qualidade===null || qualidade===undefined) return null; // sem dado de auditoria — cai no fallback por faixa
+    if(qualidade < 50) return { comissaoTotal:0, regra:`Qualidade ${fmtNum(qualidade,1)}% (<50%) — sem comissão` };
+    if(qualidade < 70) return { comissaoTotal: baseValue*0.5, regra:`Qualidade ${fmtNum(qualidade,1)}% (50-69%) — metade da comissão` };
+    return { comissaoTotal: baseValue*(qualidade/100), regra:`Qualidade ${fmtNum(qualidade,1)}% — proporcional ao valor base` };
+  },
   computeAll(dataInicial, dataFinal, considerarMissoes){
     considerarMissoes = considerarMissoes !== false; // default true
     const cfg = window.APP_STATE.commissionConfig;
@@ -2259,22 +2310,47 @@ const Commission = {
       }
     });
 
+    // % Qualidade (últimos 3 meses) — vem da Auditoria online (Gestão > Auditoria,
+    // mesma planilha Google Sheets), sempre calculada, independente do modelo de
+    // comissão ativo (usada como coluna informativa e/ou como base do cálculo).
+    const maxDateProd = Production.maxDataDate();
+    const qIni = maxDateProd ? addMonths(new Date(maxDateProd.getFullYear(), maxDateProd.getMonth(), 1), -2) : null;
+    const qFim = maxDateProd ? dateOnly(maxDateProd) : null;
+    const qualidadePorRep = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
+
     return Array.from(map.values()).map(e=>{
       const missaoInfo = missoesPorFuncionario.get(e.codKey);
       const missoesOs = missaoInfo ? missaoInfo.totalOs : 0;
       const pontos = considerarMissoes ? (e.producao + missoesOs) : e.producao;
-      const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
-      let valorPonto, regra, band;
-      if(exc){
-        valorPonto = exc.valuePerPoint; regra = "Exceção Individual";
+      const qInfo = qualidadePorRep.get(e.codKey);
+      const qualidade = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null;
+
+      let valorPonto, regra, band, comissaoTotal;
+      if(cfg.qualityModel && cfg.qualityModel.enabled){
+        const qc = this.computeQualityCommission(qualidade, cfg.qualityModel.baseValue||0);
+        if(qc){
+          comissaoTotal = qc.comissaoTotal; regra = qc.regra;
+          valorPonto = pontos>0 ? comissaoTotal/pontos : 0;
+        } else {
+          // sem dado de auditoria no período — cai no modelo por faixa normalmente
+          const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
+          if(exc){ valorPonto = exc.valuePerPoint; regra = "Exceção Individual (sem auditoria no período)"; }
+          else { band = this.findBand(pontos, cfg.bands); valorPonto = band ? band.value : 0; regra = (band?"Regra Normal":"Sem faixa aplicável") + " (sem auditoria no período)"; }
+          comissaoTotal = pontos * valorPonto;
+        }
       } else {
-        band = this.findBand(pontos, cfg.bands);
-        valorPonto = band ? band.value : 0;
-        regra = band ? "Regra Normal" : "Sem faixa aplicável";
+        const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
+        if(exc){
+          valorPonto = exc.valuePerPoint; regra = "Exceção Individual";
+        } else {
+          band = this.findBand(pontos, cfg.bands);
+          valorPonto = band ? band.value : 0;
+          regra = band ? "Regra Normal" : "Sem faixa aplicável";
+        }
+        comissaoTotal = pontos * valorPonto;
       }
-      const comissaoTotal = pontos * valorPonto;
       return {
-        ...e, missoesOs, pontos, valorPonto, regra, band,
+        ...e, missoesOs, pontos, valorPonto, regra, band, qualidade,
         comissaoTotal
       };
     }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
@@ -2468,6 +2544,14 @@ const FeedbackDoc = {
         ${cardHtml("O.S. Última Semana", fmtNum(hist.osSemana))}
         ${cardHtml("O.S. Mês Anterior", fmtNum(hist.osMesAnterior), hist.mesAnteriorLabel)}
         ${cardHtml("O.S. Últimos 3 Meses", fmtNum(hist.os3Meses))}
+      </div>
+
+      <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">🔍 Qualidade — Auditoria (Últimos 3 Meses)</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        ${cardHtml("% Qualidade (3m)",
+          (employee.qualidade!==null && employee.qualidade!==undefined) ? fmtNum(employee.qualidade,1)+'%' : 'Sem auditoria no período',
+          'Fonte: Gestão > Auditoria',
+          (employee.qualidade===null||employee.qualidade===undefined) ? '#7a8798' : employee.qualidade>=90 ? '#1a9c62' : employee.qualidade>=70 ? '#e08a1f' : '#d64545')}
       </div>
 
       <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">📈 Indicadores de Desempenho — Comparação Modo Mês</div>
@@ -3481,7 +3565,7 @@ function renderProducao(){
     st.employees = e.target.value ? [e.target.value] : []; renderProducao();
   });
   $("#prod-clear").addEventListener("click", ()=>{
-    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"NAO", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:1 };
+    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"NAO", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:1, dailyChartMes:1 };
     renderProducao();
   });
 
@@ -3505,7 +3589,7 @@ function renderProducaoContent(){
   const cmp = Production.modeComparison();
   const yearCmp = Production.yearComparison();
   const ytd = Production.ytd();
-  const daily = Production.dailySeries();
+  const daily = Production.dailySeriesForChart();
 
   // Duas projeções fixas — sempre presentes no topo independente do filtro "Base" do painel:
   //   projMesAtual  → base = média dos dias úteis já passados neste mês (projectionBase=0)
@@ -3615,7 +3699,13 @@ function renderProducaoContent(){
 
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><h3>Produção Diária</h3></div>
+        <div class="panel-header">
+          <h3>Produção Diária</h3>
+          <select id="prod-daily-mes-select" style="font-size:12px;padding:4px 8px;border:1px solid #dde3ea;border-radius:6px;">
+            <option value="0" ${Production.state.dailyChartMes===0?'selected':''}>Mês Atual</option>
+            <option value="1" ${Production.state.dailyChartMes!==0?'selected':''}>Mês Anterior (fechado)</option>
+          </select>
+        </div>
         ${daily.length ? `
         <div class="card" style="margin-bottom:10px;display:inline-flex;align-items:center;gap:14px;padding:10px 16px;border-left:4px solid var(--orange);">
           <div><div class="card-label">Média Diária</div><div style="font-size:22px;font-weight:800;color:var(--orange);">${fmtNum(daily[0]?daily[0].media:0,1)}</div></div>
@@ -3725,13 +3815,19 @@ function renderProducaoContent(){
     type:"bar",
     data:{ labels: daily.map(d=>fmtDateBR(d.date)), datasets:[
       { type:"bar", label:"O.S. 58", data: daily.map(d=>d.total), backgroundColor:Charts.colors.blueLight, borderRadius:4 },
-      { type:"line", label:"Média", data: daily.map(d=>d.media), borderColor:Charts.colors.orange, borderWidth:2, pointRadius:0, tension:0 }
+      { type:"line", label:"Média", data: daily.map(d=>d.media), borderColor:Charts.colors.orange, borderWidth:2, pointRadius:0, tension:0, datalabels:{ display:false } }
     ]},
     options: Charts.baseOptions({ plugins:{ tooltip:{ callbacks:{ label:(ctx)=>{
       const d = daily[ctx.dataIndex];
       if(ctx.dataset.label==="Média") return `Média: ${fmtNum(d.media,1)}`;
       return `Quantidade: ${fmtNum(d.total)} (dif. média: ${fmtNum(d.total-d.media,1)})`;
     }}}}})
+  });
+
+  const dailyMesSel = $("#prod-daily-mes-select");
+  if(dailyMesSel) dailyMesSel.addEventListener("change", e=>{
+    Production.state.dailyChartMes = Number(e.target.value);
+    renderProducaoContent();
   });
 
   // gráfico anual com barra do mês atual destacada
@@ -3768,6 +3864,14 @@ function renderProducaoContent(){
   const pbase = $("#proj-base-select");
   if(pbase) pbase.addEventListener("change", e=>{ Production.state.projectionBase = Number(e.target.value); renderProjecaoExpandida(Production.projection()); });
   renderProjecaoExpandida(proj);
+
+  // Semana atual sempre expandida por padrão (sem precisar clicar)
+  const hojeWk = weekOfYearMonday(Production.maxDataDate() || new Date());
+  const hojeWeekKey = hojeWk.year*100+hojeWk.week;
+  const semanaAtual = weekly.find(w=>w.weekKey===hojeWeekKey);
+  if(semanaAtual){
+    showWeekDrilldown(semanaAtual.weekKey, semanaAtual.anteriorWeekKey, semanaAtual.label, semanaAtual.anterior);
+  }
 }
 
 function renderProjecaoExpandida(proj){
@@ -3955,12 +4059,29 @@ function getRankingRows(periodoKey){
     if(repositorSet) filtered = filtered.filter(r=>repositorSet.has(r.codKey));
   }
 
+  // --- O.S. 58 Mês Anterior (mesmo período): dia 1 até o mesmo dia-do-mês de hoje,
+  // só que no mês anterior — ex.: hoje é dia 14, compara com dia 1-14 do mês passado.
+  // Independe do periodoKey selecionado acima (é sempre essa mesma janela fixa).
+  const diaAtual = maxDate.getDate();
+  const mesAntAno = maxDate.getMonth()-1<0 ? maxDate.getFullYear()-1 : maxDate.getFullYear();
+  const mesAntMes = (maxDate.getMonth()-1+12)%12;
+  const mesAntIni = dateOnly(new Date(mesAntAno, mesAntMes, 1));
+  const ultimoDiaMesAnt = new Date(mesAntAno, mesAntMes+1, 0).getDate();
+  const mesAntFim = dateOnly(new Date(mesAntAno, mesAntMes, Math.min(diaAtual, ultimoDiaMesAnt)));
+  let rowsMesAnt = allRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=mesAntIni && d<=mesAntFim; });
+  if(producaoOnlyRepositor){
+    const repositorSet = getRepositorCodeSet();
+    if(repositorSet) rowsMesAnt = rowsMesAnt.filter(r=>repositorSet.has(r.codKey));
+  }
+  const mapAnt = new Map();
+  rowsMesAnt.forEach(r=>{ mapAnt.set(r.codKey, (mapAnt.get(r.codKey)||0)+1); });
+
   const map = new Map();
   filtered.forEach(r=>{
     if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, nome: registry.get(r.codKey)||r.nome, total:0 });
     map.get(r.codKey).total++;
   });
-  return Array.from(map.values()).sort((a,b)=>b.total-a.total);
+  return Array.from(map.values()).map(e=>({...e, osMesAnterior: mapAnt.get(e.codKey)||0})).sort((a,b)=>b.total-a.total);
 }
 
 function renderRankingSection(periodoKey){
@@ -3990,7 +4111,7 @@ function renderRankingSection(periodoKey){
       <div class="grid-2">
         <!-- MELHORES -->
         <div>
-          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🏆 Top 5 Melhores Repositores</div>
+          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">📈 Destaques em Produtividade</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             ${top5.map((r,i)=>`<div class="card pos" style="min-width:140px;flex:1;">
               <div class="card-label">${medalha(i)}</div>
@@ -4001,19 +4122,19 @@ function renderRankingSection(periodoKey){
           </div>
           <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
             <table class="data-table">
-              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
               <tbody>
-                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
+                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
         </div>
         <!-- PIORES -->
         <div>
-          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:10px;">⚠️ Top 5 Piores Repositores</div>
+          <div style="font-size:13px;font-weight:700;color:var(--orange);margin-bottom:10px;">🎯 Oportunidades de Desenvolvimento</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             ${bot5.map((r,i)=>`<div class="card neg" style="min-width:140px;flex:1;">
-              <div class="card-label">${i+1}º pior</div>
+              <div class="card-label">Atenção</div>
               <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:4px;">${escapeHtml(r.nome.split(" ")[0])} ${escapeHtml(r.nome.split(" ").slice(-1)[0])}</div>
               <div class="card-value neg" style="font-size:20px;">${fmtNum(r.total)}</div>
               <div class="card-sub">O.S. 58</div>
@@ -4021,9 +4142,9 @@ function renderRankingSection(periodoKey){
           </div>
           <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
             <table class="data-table">
-              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
               <tbody>
-                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
+                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -4247,7 +4368,12 @@ function getFeedbackRankingData(){
   const currentTeam = window.APP_STATE.currentTeam;
   const registry = window.APP_STATE.nameRegistry;
   const maxDate = Production.maxDataDate();
-  const auditByEmp = new Map(Audit.byRepositor().map(e=>[e.codKey,e]));
+  // Qualidade % vem da Auditoria online (Gestão > Auditoria, mesma planilha Google
+  // Sheets), sempre nos últimos 3 meses (mesma janela usada em "O.S. Últimos 3 Meses"
+  // abaixo) — independente de qualquer filtro que esteja ativo na tela de Auditoria.
+  const qIni = maxDate ? addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2) : null;
+  const qFim = maxDate ? dateOnly(maxDate) : null;
+  const auditByEmp = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
   const rows58 = processed.p8460.filter(r=>r.tipoos===58);
 
   // base de funcionários: quadro atual ou todo o histórico, conforme o toggle
@@ -4334,7 +4460,7 @@ function renderFeedbackRankingPanel(){
           <thead><tr>
             <th style="width:30px;"><input type="checkbox" id="feedback-select-all" ${allSelected?'checked':''}></th>
             <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
-            <th>O.S. Último Dia</th><th>Auditorias Realizadas</th><th>Qualidade %</th>
+            <th>O.S. Último Dia</th><th>Auditorias (3m)</th><th>Qualidade % (3m)</th>
           </tr></thead>
           <tbody>
             ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployees.has(e.codKey)?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="toggleFeedbackEmployee('${escapeHtml(e.codKey)}')">
@@ -4394,6 +4520,12 @@ function getFeedbackFiltered(){
 function renderFeedbacks(){
   const pane = $("#pane-feedbacks");
   const st = FeedbackState;
+  // % Qualidade (últimos 3 meses) no ranking vem do AuditOnline (Gestão > Auditoria,
+  // planilha Google Sheets) — carrega em background se ainda não tiver sido carregado
+  // (ex.: usuário nunca visitou a aba Auditoria nesta sessão) e re-renderiza quando chegar.
+  if(AuditOnline.rows===null && !AuditOnline.loading){
+    AuditOnline.load().then(()=> renderFeedbacksContent());
+  }
   pane.innerHTML = `
     <div class="toolbar">
       <div class="filter-group"><label>Data Inicial</label><input type="date" id="fb-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
@@ -5537,6 +5669,12 @@ function renderComissao(){
   const currentTeam = window.APP_STATE.currentTeam;
   const st = CommissionState;
 
+  // % Qualidade (coluna + modelo por qualidade) vem do AuditOnline (Gestão > Auditoria) —
+  // carrega em background se ainda não tiver sido carregado nesta sessão.
+  if(AuditOnline.rows===null && !AuditOnline.loading){
+    AuditOnline.load().then(()=> renderCommissionTable());
+  }
+
   const badgePeriodo = (st.dataInicial || st.dataFinal)
     ? `<span class="hint-box" style="margin:0;padding:6px 12px;">📅 <strong>${st.dataInicial?fmtDateBR(st.dataInicial):'início'}</strong> até <strong>${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}</strong></span>`
     : `<span class="hint-box" style="margin:0;padding:6px 12px;">📊 Todo o histórico de produção</span>`;
@@ -5578,6 +5716,26 @@ function renderComissao(){
       <span class="hint-box" style="margin:0;padding:6px 12px;">${commissionQuadroAtual==='SIM' ? `Exibindo apenas os <strong>${commissionOnlyRepositor && currentTeam.cargoDisponivel ? currentTeam.repositorCodes.size : currentTeam.codes.size}</strong>${commissionOnlyRepositor && currentTeam.cargoDisponivel ? ' repositores (cargo REPOSITOR)' : ' do quadro atual'}` : `Exibindo <strong>todos</strong> os repositores históricos`}</span>
     </div>
     ${commissionOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
+
+    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
+      <div class="panel-header"><h3>⚙️ Modelo de Comissão</h3></div>
+      <div class="toolbar" style="margin-bottom:0;">
+        <div class="filter-group">
+          <label>Modelo</label>
+          <div class="toggle-group" id="comm-model-toggle">
+            <button data-v="faixa" class="${!cfg.qualityModel.enabled?'active':''}">Por Faixa de Produção</button>
+            <button data-v="qualidade" class="${cfg.qualityModel.enabled?'active':''}">Por % Qualidade (Auditoria)</button>
+          </div>
+        </div>
+        ${cfg.qualityModel.enabled ? `
+        <div class="filter-group">
+          <label>Valor Base (R$)</label>
+          <input type="number" step="10" id="comm-quality-base" value="${cfg.qualityModel.baseValue}" style="width:110px;">
+        </div>
+        <span class="small-muted">Qualidade &lt;50% = sem comissão · 50-69% = metade do valor base · ≥70% = % da qualidade × valor base (ex.: 71% de qualidade = 71% de R$ ${fmtNum(cfg.qualityModel.baseValue)})</span>
+        ` : `<span class="small-muted">Comissão calculada pelas faixas de produção (O.S. + missões) abaixo.</span>`}
+      </div>
+    </div>
 
     <div class="grid-2">
       <div class="panel">
@@ -5621,6 +5779,16 @@ function renderComissao(){
     </div>
   `;
 
+  $("#comm-model-toggle").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    cfg.qualityModel.enabled = b.dataset.v === "qualidade";
+    renderComissao();
+  });
+  const commQualityBase = $("#comm-quality-base");
+  if(commQualityBase) commQualityBase.addEventListener("change", e=>{
+    cfg.qualityModel.baseValue = Number(e.target.value)||0;
+    renderCommissionTable();
+  });
   $("#comm-quadro-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
     commissionQuadroAtual = b.dataset.v;
@@ -5792,12 +5960,15 @@ function getComissaoTableData(){
 function renderCommissionTable(){
   const data = getComissaoTableData();
   const st = CommissionState;
+  const qualClass = (v) => v===null||v===undefined ? '' : v>=90 ? 'cell-pos' : v>=70 ? '' : 'cell-neg';
+  const qualLabel = (v) => v===null||v===undefined ? '<span class="small-muted">Sem auditoria</span>' : fmtNum(v,1)+'%';
 
   // cabeçalho dinâmico conforme colunas visíveis
   const theadHtml = `<tr>
     <th>Código</th><th>Repositor</th><th>Produção (O.S. 58)</th>
     ${commissionShowMissoes?'<th>Missões (O.S. equiv.)</th>':''}
     <th>Pontos</th>
+    <th>% Qualidade (3m)</th>
     ${commissionShowValorPonto?'<th>Valor/Ponto</th>':''}
     ${commissionShowRegra?'<th>Regra</th>':''}
     ${commissionShowComissaoTotal?'<th>Comissão Total</th>':''}
@@ -5809,10 +5980,11 @@ function renderCommissionTable(){
       <td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${fmtNum(e.producao)}</td>
       ${commissionShowMissoes?`<td>${e.missoesOs>0?`<span class="tag-pos">+${fmtNum(e.missoesOs)}</span>`:'-'}</td>`:''}
       <td><strong>${fmtNum(e.pontos)}</strong></td>
+      <td class="${qualClass(e.qualidade)}">${qualLabel(e.qualidade)}</td>
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
       ${commissionShowRegra?`<td>${e.regra==='Exceção Individual'?`<span class="tag-warn">${e.regra}</span>`:e.regra==='Regra Normal'?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
       ${commissionShowComissaoTotal?`<td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
-    </tr>`).join("") || `<tr><td colspan="8" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="9" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
 
   // resumo: período selecionado + valor total (respeitando todos os filtros/toggles ativos)
   const periodoLabel = (st.dataInicial || st.dataFinal)
@@ -5841,6 +6013,7 @@ function exportComissaoToExcel(){
   const header = ["Código", "Repositor", "Produção (O.S. 58)"];
   if(commissionShowMissoes) header.push("Missões (O.S. equiv.)");
   header.push("Pontos");
+  header.push("% Qualidade (3m)");
   if(commissionShowValorPonto) header.push("Valor/Ponto (R$)");
   if(commissionShowRegra) header.push("Regra");
   if(commissionShowComissaoTotal) header.push("Comissão Total (R$)");
@@ -5855,6 +6028,7 @@ function exportComissaoToExcel(){
     ["Período:", periodoLabel],
     ["Considerar Missões:", commissionConsiderarMissoes==='SIM' ? 'Sim' : 'Não'],
     ["Apenas Repositor:", commissionOnlyRepositor ? 'Sim' : 'Não'],
+    ["Modelo de Comissão:", window.APP_STATE.commissionConfig.qualityModel.enabled ? `Por % Qualidade (valor base R$ ${window.APP_STATE.commissionConfig.qualityModel.baseValue})` : 'Por Faixa de Produção'],
     ["Valor Total:", totalGeral],
     [],
     header
@@ -5863,6 +6037,7 @@ function exportComissaoToExcel(){
     const row = [e.cod||'-', e.nome, e.producao];
     if(commissionShowMissoes) row.push(e.missoesOs);
     row.push(e.pontos);
+    row.push(e.qualidade!==null && e.qualidade!==undefined ? +e.qualidade.toFixed(1) : 'Sem auditoria');
     if(commissionShowValorPonto) row.push(+e.valorPonto.toFixed(2));
     if(commissionShowRegra) row.push(e.regra);
     if(commissionShowComissaoTotal) row.push(+e.comissaoTotal.toFixed(2));
@@ -6925,9 +7100,14 @@ function computeFerias(){
   const linhas = ativos.map(r=>{
     // primeira data de férias do ciclo: admissão + 13 meses
     let dataFerias = addMonths(r.dtAdm, 13);
-    // avança de 12 em 12 meses até achar o ciclo vigente (o mais próximo de hoje,
-    // sem "pular" um ciclo ainda não vencido)
-    while(addMonths(dataFerias, 12) <= hoje){ dataFerias = addMonths(dataFerias, 12); }
+    // Dedução de ciclos já tirados: se o ciclo está vencido há mais de 4 meses (120 dias),
+    // presume-se que o funcionário já tirou essas férias (mesmo sem registro), e avança
+    // pro próximo ciclo (+12 meses). Repete em cascata pra cada ano — assim alguém com
+    // vários anos de casa "pula" automaticamente todos os ciclos antigos presumidos como
+    // já tirados, e para exatamente no ciclo vigente a partir do ano atual.
+    // Ex.: admissão 11/09/2019 → ciclos 2020..2025 todos vencidos há mais de 4 meses →
+    // presume-se tirados → para no ciclo 2026 (11/10/2026), ainda não vencido.
+    while((hoje - dataFerias) / 86400000 > 120){ dataFerias = addMonths(dataFerias, 12); }
 
     const diffDias = Math.round((dataFerias - hoje) / 86400000);
 
@@ -6976,7 +7156,7 @@ function renderFerias(){
     <div class="panel">
       <div class="panel-header">
         <h3>🏖️ Férias — Painel de Controle</h3>
-        <span class="panel-note">Cálculo: Data de Contratação + 12 meses (fecha 1 ano) → férias programadas para o mês seguinte · ciclo se repete a cada 12 meses</span>
+        <span class="panel-note">Cálculo: Data de Contratação + 12 meses (fecha 1 ano) → férias programadas para o mês seguinte · ciclo se repete a cada 12 meses · ciclos vencidos há mais de 4 meses são presumidos como já tirados e avançam pro próximo ano</span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${mc('vencida','Vencidas', d.counts.vencida, '#d64545', FeriasState.filtro==='vencida')}
