@@ -2342,15 +2342,20 @@ const Commission = {
       const comissaoBase = pontos * valorPonto;
 
       const fator = this.qualityFactor(qualidade);
-      const comissaoTotal = fator===null ? comissaoBase : comissaoBase*fator;
+      const comissaoComDesconto = fator===null ? comissaoBase : comissaoBase*fator;
       if(fator===null) regra += " — sem auditoria no período (comissão integral)";
       else if(fator===0) regra += ` — qualidade ${fmtNum(qualidade,1)}% (<50%): comissão zerada`;
       else if(fator===0.5) regra += ` — qualidade ${fmtNum(qualidade,1)}% (50-69%): metade da comissão`;
       else regra += ` — qualidade ${fmtNum(qualidade,1)}%: ${fmtNum(fator*100,1)}% da comissão`;
 
+      // comissaoTotal = o valor "oficial" exibido/exportado, conforme o toggle
+      // "Aplicar desconto por qualidade?" — comissaoBase e comissaoComDesconto ficam
+      // sempre disponíveis nos dois totais do resumo, independente do toggle.
+      const comissaoTotal = commissionAplicarDesconto==="SIM" ? comissaoComDesconto : comissaoBase;
+
       return {
         ...e, missoesOs, pontos, valorPonto, regra, band, qualidade,
-        comissaoBase, comissaoTotal
+        comissaoBase, comissaoComDesconto, comissaoTotal
       };
     }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
   }
@@ -5660,6 +5665,7 @@ let commissionShowMissoes = true; // visibilidade da coluna Missões
 let commissionShowValorPonto = true; // visibilidade da coluna Valor/Ponto
 let commissionShowComissaoTotal = true; // visibilidade da coluna Comissão Total
 let commissionShowRegra = true; // visibilidade da coluna Regra
+let commissionAplicarDesconto = "SIM"; // se o desconto por % Qualidade é aplicado na Comissão Total exibida/exportada
 const CommissionState = { dataInicial: null, dataFinal: null };
 
 function renderComissao(){
@@ -5716,7 +5722,19 @@ function renderComissao(){
     </div>
     ${commissionOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
 
-    <div class="hint-box">🔍 A comissão calculada abaixo já é ajustada automaticamente pela % Qualidade da Auditoria (Gestão &gt; Auditoria) no mesmo período filtrado nesta tela: qualidade &lt;50% zera a comissão · 50-69% paga metade · ≥70% paga o % da qualidade sobre o valor normal (ex.: 71% de qualidade = 71% da comissão calculada pela faixa). Sem auditoria no período, a comissão fica integral (sem ajuste).</div>
+    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
+      <div class="panel-header"><h3>🔍 Desconto por % Qualidade</h3></div>
+      <div class="toolbar" style="margin-bottom:0;">
+        <div class="filter-group">
+          <label>Aplicar desconto por qualidade?</label>
+          <div class="toggle-group" id="comm-desconto-toggle">
+            <button data-v="SIM" class="${commissionAplicarDesconto==='SIM'?'active':''}">Sim</button>
+            <button data-v="NAO" class="${commissionAplicarDesconto==='NAO'?'active':''}">Não</button>
+          </div>
+        </div>
+        <span class="small-muted">Qualidade &lt;50% zera a comissão · 50-69% paga metade · ≥70% paga o % da qualidade sobre o valor normal (ex.: 71% de qualidade = 71% da comissão). Sem auditoria no período, fica integral. Os dois totais (com e sem desconto) aparecem sempre no resumo abaixo — este toggle só decide qual valor conta como "Comissão Total" na tabela e na exportação.</span>
+      </div>
+    </div>
 
     <div class="grid-2">
       <div class="panel">
@@ -5760,6 +5778,11 @@ function renderComissao(){
     </div>
   `;
 
+  $("#comm-desconto-toggle").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    commissionAplicarDesconto = b.dataset.v;
+    renderCommissionTable();
+  });
   $("#comm-quadro-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
     commissionQuadroAtual = b.dataset.v;
@@ -5931,7 +5954,7 @@ function getComissaoTableData(){
 function renderCommissionTable(){
   const data = getComissaoTableData();
   const st = CommissionState;
-  const qualClass = (v) => v===null||v===undefined ? '' : v>=90 ? 'cell-pos' : v>=70 ? '' : 'cell-neg';
+  const qualClass = (v) => v===null||v===undefined ? '' : v>=90 ? 'cell-pos' : v>=70 ? 'cell-warn' : 'cell-neg';
   const qualLabel = (v) => v===null||v===undefined ? '<span class="small-muted">Sem auditoria</span>' : fmtNum(v,1)+'%';
 
   // cabeçalho dinâmico conforme colunas visíveis
@@ -5957,14 +5980,20 @@ function renderCommissionTable(){
       ${commissionShowComissaoTotal?`<td class="small-muted">${fmtBRL(e.comissaoBase)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
     </tr>`).join("") || `<tr><td colspan="10" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
 
-  // resumo: período selecionado + valor total (respeitando todos os filtros/toggles ativos)
+  // resumo: período selecionado + os dois totais (com e sem desconto), sempre os dois —
+  // o toggle "Aplicar desconto?" só decide qual vira a "Comissão Total" oficial da tabela/export
   const periodoLabel = (st.dataInicial || st.dataFinal)
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'início'} até ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
     : "todo o histórico";
-  const totalGeral = sum(data.map(e=>e.comissaoTotal));
+  const totalSemDesconto = sum(data.map(e=>e.comissaoBase));
+  const totalComDesconto = sum(data.map(e=>e.comissaoComDesconto));
   const resumoEl = $("#commissao-resumo-periodo");
   if(resumoEl){
-    resumoEl.innerHTML = `📅 Período: <strong>${periodoLabel}</strong> &nbsp;·&nbsp; 👥 ${data.length} repositor(es) &nbsp;·&nbsp; 💰 Valor Total: <strong>${fmtBRL(totalGeral)}</strong>` +
+    resumoEl.innerHTML = `📅 Período: <strong>${periodoLabel}</strong> &nbsp;·&nbsp; 👥 ${data.length} repositor(es)<br>` +
+      `💰 Total <strong>sem</strong> desconto: <strong>${fmtBRL(totalSemDesconto)}</strong>` +
+      (commissionAplicarDesconto==='NAO' ? ' <span class="tag-pos">valor aplicado ✓</span>' : '') +
+      ` &nbsp;·&nbsp; 💰 Total <strong>com</strong> desconto: <strong>${fmtBRL(totalComDesconto)}</strong>` +
+      (commissionAplicarDesconto==='SIM' ? ' <span class="tag-pos">valor aplicado ✓</span>' : '') +
       (commissionConsiderarMissoes==='NAO' ? ' <span class="tag-neutral">missões não consideradas</span>' : '') +
       (commissionOnlyRepositor ? ' <span class="tag-neutral">somente cargo Repositor</span>' : '');
   }
@@ -5992,15 +6021,17 @@ function exportComissaoToExcel(){
   const periodoLabel = (st.dataInicial || st.dataFinal)
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'inicio'} ate ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
     : "todo o historico";
-  const totalGeral = sum(data.map(e=>e.comissaoTotal));
+  const totalSemDesconto = sum(data.map(e=>e.comissaoBase));
+  const totalComDesconto = sum(data.map(e=>e.comissaoComDesconto));
 
   const aoa = [
     ["Comissão Calculada — Núcleo Reposição"],
     ["Período:", periodoLabel],
     ["Considerar Missões:", commissionConsiderarMissoes==='SIM' ? 'Sim' : 'Não'],
     ["Apenas Repositor:", commissionOnlyRepositor ? 'Sim' : 'Não'],
-    ["Ajuste por Qualidade:", "Automático (aplicado sobre a comissão por faixa/exceção — ver coluna % Qualidade)"],
-    ["Valor Total:", totalGeral],
+    ["Aplicar Desconto por Qualidade (valor usado como Comissão Total):", commissionAplicarDesconto==='SIM' ? 'Sim' : 'Não'],
+    ["Total SEM desconto:", totalSemDesconto],
+    ["Total COM desconto:", totalComDesconto],
     [],
     header
   ];
