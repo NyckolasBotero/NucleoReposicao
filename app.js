@@ -701,7 +701,10 @@ const DataProcessor = {
       if (!cp) return null;
       return {
         codprod: cp,
+        descricao: r["DESCRICAO"] != null ? String(r["DESCRICAO"]).trim() : '',
         capacidade: r["CAPACIDADE"] != null ? Number(r["CAPACIDADE"]) : null,
+        codendereco: r["CODENDERECO"] != null ? String(r["CODENDERECO"]).trim() : '',
+        pk_end: r["PK_END"] != null ? String(r["PK_END"]).trim() : '',
         rua: r["RUA"] != null ? String(r["RUA"]).trim() : null,
         predio: r["PREDIO"] != null ? String(r["PREDIO"]).trim() : null,
         apto: r["APTO"] != null ? String(r["APTO"]).trim() : null,
