@@ -74,14 +74,14 @@ if(document.readyState === "loading"){
 /* CONFIG                                                                  */
 /* ---------------------------------------------------------------------- */
 const REQUIRED_SHEETS = ["AUDITORIA REP","FEEDBACK REP","QUADRO REP","8271","8460"];
-const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA"]; // carregadas se existirem, não causam erro se faltarem
+const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada"]; // carregadas se existirem, não causam erro se faltarem
 
 const REQUIRED_COLUMNS = {
   "AUDITORIA REP": ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"],
   "FEEDBACK REP": ["Data","Cod","Nome","Resumo Assunto","Avaliação Pessoal","Avaliação Gestor","Desempenho","Classificação"],
   "QUADRO REP": ["DATA","CODIGO","NOME","STATUS"],
   "8271": ["DATA","RUA","TIPOOS","NUMOS"],
-  "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTFIMSEPARACAO"],
+  "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTINICIOOS"],
   "MISSÕES": ["DATA","HORA INICIO","HORA FIM","CODIGO","NOME","TIPO"]
 };
 
@@ -272,177 +272,6 @@ function avg(arr){ return arr.length ? sum(arr)/arr.length : 0; }
 /* ---------------------------------------------------------------------- */
 /* MODULE: Excel Loader                                                    */
 /* ---------------------------------------------------------------------- */
-/* ---------------------------------------------------------------------- */
-/* MODULE: LoadingScreen (tela de carregamento do arquivo)                 */
-/* ---------------------------------------------------------------------- */
-const LoadingScreen = {
-  root(){ return document.getElementById("flow-overlay-root"); },
-  steps: [
-    { id:"recebido", label:"Arquivo recebido" },
-    { id:"lendo", label:"Lendo arquivo..." },
-    { id:"validando", label:"Validando estrutura..." },
-    { id:"sheets", label:"Identificando sheets..." },
-    { id:"processando", label:"Processando dados..." },
-    { id:"finalizando", label:"Finalizando..." }
-  ],
-  show(filename){
-    const root = this.root();
-    root.innerHTML = `
-      <div class="flow-backdrop">
-        <div class="flow-card">
-          <div class="flow-spinner"></div>
-          <div class="flow-title">Carregando arquivo</div>
-          <div class="flow-filename">📄 ${escapeHtml(filename)}</div>
-          <div class="flow-progress-track" style="margin-top:18px;"><div class="flow-progress-bar" id="flow-progress-bar" style="width:2%;"></div></div>
-          <div class="flow-steps" id="flow-steps">
-            ${this.steps.map(s=>`<div class="flow-step" id="flow-step-${s.id}"><span class="flow-step-icon">•</span><span>${s.label}</span></div>`).join("")}
-          </div>
-        </div>
-      </div>`;
-    root.classList.add("show");
-  },
-  // marca um passo como ativo (spinner) e todos os anteriores como concluídos (✓),
-  // avança a barra de progresso. pct opcional (0-100); se omitido, calcula pela posição do passo.
-  async step(stepId, pct){
-    const idx = this.steps.findIndex(s=>s.id===stepId);
-    if(idx===-1) return;
-    this.steps.forEach((s,i)=>{
-      const el = document.getElementById("flow-step-"+s.id);
-      if(!el) return;
-      el.classList.remove("active","done");
-      if(i<idx){ el.classList.add("done"); el.querySelector(".flow-step-icon").textContent = "✓"; }
-      else if(i===idx){ el.classList.add("active"); el.querySelector(".flow-step-icon").textContent = "•"; }
-      else { el.querySelector(".flow-step-icon").textContent = "•"; }
-    });
-    const bar = document.getElementById("flow-progress-bar");
-    if(bar) bar.style.width = (pct!==undefined ? pct : Math.round((idx+1)/this.steps.length*100)) + "%";
-    // pequena pausa proposital para o usuário perceber a etapa (processamento real
-    // costuma ser rápido demais pra "ver" as etapas sem isso)
-    await new Promise(res=>setTimeout(res, 260));
-  },
-  hide(){
-    const root = this.root();
-    root.classList.remove("show");
-    root.innerHTML = "";
-  }
-};
-
-/* ---------------------------------------------------------------------- */
-/* MODULE: ImportLog (tela de log de importação, pós-processamento)        */
-/* ---------------------------------------------------------------------- */
-const ImportLog = {
-  root(){ return document.getElementById("flow-overlay-root"); },
-
-  // varre as linhas de uma sheet procurando colunas cujo nome contenha DATA/DT e
-  // retorna a data mais recente encontrada entre elas. Não inventa datas: se não
-  // achar nenhuma coluna candidata ou nenhum valor válido, retorna null.
-  detectMaxDate(rows){
-    if(!rows || !rows.length) return null;
-    const sampleKeys = Object.keys(rows[0]||{});
-    const dateKeys = sampleKeys.filter(k=>/DATA/i.test(k) || /^DT/i.test(k));
-    if(!dateKeys.length) return null;
-    let max = null;
-    rows.forEach(r=>{
-      dateKeys.forEach(k=>{
-        const d = toDate(r[k]);
-        if(d && !isNaN(d.getTime()) && d.getFullYear()>1901){
-          if(!max || d>max) max = d;
-        }
-      });
-    });
-    return max;
-  },
-
-  // monta o log dinâmico a partir do "raw" realmente carregado — nunca lista sheets
-  // fixas/hardcoded, sempre a partir de REQUIRED_SHEETS + OPTIONAL_SHEETS + o que
-  // efetivamente veio em raw
-  buildLog(raw){
-    const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
-    return allSheets.map(name=>{
-      const rows = raw[name];
-      if(rows===null || rows===undefined){
-        return { name, status:"nao-encontrada", statusLabel:"— Não encontrada (opcional)", date:null, msg:null, rowCount:0 };
-      }
-      if(!rows.length){
-        return { name, status:"vazia", statusLabel:"Sem dados", date:null, msg:"A aba foi encontrada, mas não contém nenhuma linha de dados.", rowCount:0 };
-      }
-      const maxDate = this.detectMaxDate(rows);
-      if(!maxDate){
-        return { name, status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:null,
-          msg:`Sheet ${name} carregada, porém nenhuma coluna de data válida foi identificada.`, rowCount:rows.length };
-      }
-      return { name, status:"ok", statusLabel:"✓ Carregada", date:maxDate, msg:null, rowCount:rows.length };
-    });
-  },
-
-  show(file, raw, onAccessDashboard, onLoadAnother){
-    const log = this.buildLog(raw);
-    const encontradas = log.filter(s=>s.status!=="nao-encontrada");
-    const comSucesso = log.filter(s=>s.status==="ok"||s.status==="vazia");
-    const comAlerta = log.filter(s=>s.status==="alerta");
-    const agora = new Date();
-
-    const statusCls = (s)=> s==="ok"?"ok": s==="alerta"?"alerta": s==="vazia"?"vazia": "vazia";
-
-    const root = this.root();
-    root.innerHTML = `
-      <div class="flow-backdrop">
-        <div class="flow-card wide">
-          <div class="flow-log-header">
-            <div class="flow-log-check">✓</div>
-            <div>
-              <div class="flow-log-title">Arquivo processado com sucesso</div>
-              <div class="flow-log-sub">📄 ${escapeHtml(file.name)} · carregado em ${fmtDateBR(agora)} às ${agora.toLocaleTimeString('pt-BR')}</div>
-            </div>
-          </div>
-
-          <div class="flow-summary-grid">
-            <div class="flow-summary-card"><div class="flow-summary-label">Sheets Encontradas</div><div class="flow-summary-value">${encontradas.length}</div></div>
-            <div class="flow-summary-card"><div class="flow-summary-label">Processadas OK</div><div class="flow-summary-value" style="color:var(--green);">${comSucesso.length}</div></div>
-            <div class="flow-summary-card"><div class="flow-summary-label">Com Alerta</div><div class="flow-summary-value" style="color:${comAlerta.length?'var(--orange)':'var(--gray-300)'};">${comAlerta.length}</div></div>
-            <div class="flow-summary-card"><div class="flow-summary-label">Total de Abas no Arquivo</div><div class="flow-summary-value">${log.length}</div></div>
-          </div>
-
-          <table class="flow-sheet-table">
-            <thead><tr><th>Sheet</th><th>Status</th><th>Registros</th><th>Última Data Encontrada</th></tr></thead>
-            <tbody>
-              ${log.map((s,i)=>`
-                <tr style="animation-delay:${i*30}ms;">
-                  <td><strong>${escapeHtml(s.name)}</strong></td>
-                  <td><span class="flow-sheet-status ${statusCls(s.status)}">${s.statusLabel}</span></td>
-                  <td>${s.status==="nao-encontrada"?"—":fmtNum(s.rowCount)}</td>
-                  <td>${s.date?fmtDateBR(s.date):(s.status==="nao-encontrada"?"—":"Sem data identificada")}</td>
-                </tr>`).join("")}
-            </tbody>
-          </table>
-
-          ${comAlerta.length ? `<div class="warn-box" style="margin-bottom:18px;">${comAlerta.map(s=>escapeHtml(s.msg)).join("<br>")}</div>` : ``}
-
-          <div class="flow-log-actions">
-            <button class="btn btn-outline" id="flow-btn-outro">📂 Carregar outro arquivo</button>
-            <button class="btn btn-primary" id="flow-btn-entrar">Acessar Dashboard →</button>
-          </div>
-        </div>
-      </div>`;
-    root.classList.add("show");
-
-    document.getElementById("flow-btn-entrar").addEventListener("click", ()=>{
-      this.hide();
-      onAccessDashboard();
-    });
-    document.getElementById("flow-btn-outro").addEventListener("click", ()=>{
-      this.hide();
-      onLoadAnother();
-    });
-  },
-
-  hide(){
-    const root = this.root();
-    root.classList.remove("show");
-    root.innerHTML = "";
-  }
-};
-
 const ExcelLoader = {
   // verifica se as bibliotecas externas (CDN) carregaram corretamente
   checkLibraries(){
@@ -649,15 +478,8 @@ const DataProcessor = {
     }).filter(r=>r.data);
 
     // ---- 8460 ----
-    // Usa DTFIMSEPARACAO (não DTINICIOOS) como data da O.S. — uma O.S. tipo 58 só
-    // pode ser contabilizada como "feita" quando ela foi de fato FINALIZADA (separação
-    // concluída). Se a O.S. ainda não terminou, DTFIMSEPARACAO fica vazia e a linha é
-    // descartada automaticamente pelo filtro abaixo (r=>r.dtinicio).
-    // Mantém o nome interno do campo como "dtinicio" (usado em todo o resto do app —
-    // Produção, Comissão, Missões, Acompanhamento Individual etc.) para não precisar
-    // alterar todas as outras funções; o que muda é só a coluna de origem.
     out.p8460 = raw["8460"].map((r,idx)=>{
-      const dtinicio = toDate(getFieldFlexible(r, ["DTFIMSEPARACAO","DT FIM SEPARACAO","DATA FIM SEPARACAO"]));
+      const dtinicio = toDate(r["DTINICIOOS"]);
       const cod = r["CODFUNCOS"]!==null && r["CODFUNCOS"]!==undefined && r["CODFUNCOS"]!=="" ? String(r["CODFUNCOS"]).trim() : null;
       const nome = trimStr(r["NOME"]);
       const tipoos = r["TIPOOS"]!==null && r["TIPOOS"]!==undefined ? Number(r["TIPOOS"]) : null;
@@ -872,6 +694,78 @@ const DataProcessor = {
     out.numLancAvaria = numLancAvaria;
     out.repAvariaDispo = !!rawRepAvaria;
 
+    // ---- 8022 Nova — snapshot atualizado da capacidade ----
+    const raw8022Nova = raw["8022 Nova"];
+    out.p8022Nova = raw8022Nova ? raw8022Nova.map(r => {
+      const cp = r["CODPROD"] != null ? String(r["CODPROD"]).trim() : null;
+      if (!cp) return null;
+      return {
+        codprod: cp,
+        capacidade: r["CAPACIDADE"] != null ? Number(r["CAPACIDADE"]) : null,
+        rua: r["RUA"] != null ? String(r["RUA"]).trim() : null,
+        predio: r["PREDIO"] != null ? String(r["PREDIO"]).trim() : null,
+        apto: r["APTO"] != null ? String(r["APTO"]).trim() : null,
+      };
+    }).filter(Boolean) : null;
+    out.p8022NovaDispo = !!raw8022Nova;
+
+    // ---- 8022 (full rows para Capacidade CD) — NIVEL=1 apenas ----
+    const raw8022Full = raw["8022"];
+    out.p8022CDRows = raw8022Full ? raw8022Full.map(r => {
+      const nivel = r["NIVEL"] != null ? String(r["NIVEL"]).trim() : "";
+      if (nivel !== "1") return null;
+      const cp = r["CODPROD"] != null ? String(r["CODPROD"]).trim() : null;
+      if (!cp) return null;
+      return {
+        codprod:       cp,
+        descricao:     r["DESCRICAO"]     != null ? String(r["DESCRICAO"]).trim()     : "",
+        codauxiliar2:  r["CODAUXILIAR2"]  != null ? String(r["CODAUXILIAR2"]).trim()  : "",
+        codauxiliar:   r["CODAUXILIAR"]   != null ? String(r["CODAUXILIAR"]).trim()   : "",
+        lastropal:     r["LASTROPAL"]     != null ? r["LASTROPAL"]                    : "",
+        alturapal:     r["ALTURAPAL"]     != null ? r["ALTURAPAL"]                    : "",
+        qttotpal:      r["QTTOTPAL"]      != null ? r["QTTOTPAL"]                     : "",
+        codfornec:     r["CODFORNEC"]     != null ? String(r["CODFORNEC"]).trim()     : "",
+        fornecedor:    r["FORNECEDOR"]    != null ? String(r["FORNECEDOR"]).trim()    : "",
+        revenda:       r["REVENDA"]       != null ? String(r["REVENDA"]).trim()       : "",
+        capacidade:    r["CAPACIDADE"]    != null ? Number(r["CAPACIDADE"])           : null,
+        pontoreposicao:r["PONTOREPOSICAO"]!= null ? r["PONTOREPOSICAO"]              : "",
+        pkestru:       r["PKESTRU"]       != null ? String(r["PKESTRU"]).trim()       : "",
+        pk_end:        r["PK_END"]        != null ? String(r["PK_END"]).trim()        : "",
+        codendereco:   r["CODENDERECO"]   != null ? String(r["CODENDERECO"]).trim()   : "",
+        rua:           r["RUA"]           != null ? String(r["RUA"]).trim()           : "",
+        predio:        r["PREDIO"]        != null ? String(r["PREDIO"]).trim()        : "",
+        nivel:         nivel,
+        apto:          r["APTO"]          != null ? String(r["APTO"]).trim()          : "",
+        caracteristica:r["CARACTERISTICA"]!= null ? String(r["CARACTERISTICA"]).trim(): "",
+        pulmao:        r["PULMAO"]        != null ? String(r["PULMAO"]).trim()        : "",
+        tipo_1:        r["TIPO_1"]        != null ? String(r["TIPO_1"]).trim()        : "",
+      };
+    }).filter(Boolean) : null;
+    out.p8022CDDispo = !!raw8022Full;
+
+    // ---- Capacidade Realizada — histórico de validações ----
+    const rawCapReal = raw["Capacidade Realizada"];
+    out.capacidadeRealizada = rawCapReal ? rawCapReal.map(r => {
+      const cod  = r["CODIGO"] != null ? String(r["CODIGO"]).trim() : null;
+      if (!cod) return null;
+      // Normaliza data
+      let dt = null;
+      if (r["DATA"] instanceof Date) {
+        dt = r["DATA"];
+      } else if (r["DATA"] != null) {
+        const s = String(r["DATA"]).trim();
+        // DD/MM/YYYY ou YYYY-MM-DD
+        const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m1) dt = new Date(+m1[3], +m1[2]-1, +m1[1]);
+        else if (m2) dt = new Date(+m2[1], +m2[2]-1, +m2[3]);
+      }
+      const tipo = r["TIPO"] != null ? String(r["TIPO"]).trim().toUpperCase() : "";
+      if (!["CORRETIVO","PREVENTIVO"].includes(tipo)) return null;
+      return { cod, dt, tipo };
+    }).filter(Boolean) : null;
+    out.capacidadeRealizadaDispo = !!rawCapReal;
+
     return out;
   }
 };
@@ -930,7 +824,7 @@ function buildNameRegistry(processed){
 }
 
 /* ---------------------------------------------------------------------- */
-/* MODULE: Production (fonte: 8460, TIPOOS = 58, data = DTFIMSEPARACAO)     */
+/* MODULE: Production (fonte: 8460, TIPOOS = 58, data = DTINICIOOS)        */
 /* ---------------------------------------------------------------------- */
 const Production = {
   state: {
@@ -938,11 +832,10 @@ const Production = {
     dataInicial: null,
     dataFinal: null,
     employees: [],            // codKeys selecionados (vazio = todos)
-    quadroAtual: "NAO",
+    quadroAtual: "SIM",
     weekCompareMode: "anterior", // anterior | mesCorrespondente
     mesmaPeriodicidade: "SIM",
-    projectionBase: 1,
-    dailyChartMes: 1  // 0=mês atual, 1=mês anterior (mês fechado) — usado só no gráfico Produção Diária
+    projectionBase: 0
   },
 
   getBaseRows(){
@@ -1171,31 +1064,6 @@ const Production = {
       const y = Math.floor(k/10000), m = Math.floor((k%10000)/100)-1, d = k%100;
       return { date:new Date(y,m,d), total: byDay.get(k), media };
     });
-  },
-
-  // Série diária usada especificamente no gráfico "Produção Diária" — independente
-  // do filtro Data Inicial/Data Final do painel. state.dailyChartMes escolhe qual mês
-  // mostrar: 0 = mês atual (dia 1 até hoje), 1 = mês anterior (mês fechado, completo).
-  // Preenche todos os dias do intervalo (mesmo sem produção) para o eixo ficar completo.
-  dailySeriesForChart(){
-    const opt = this.state.dailyChartMes===0 ? 0 : 1;
-    const hoje = this.maxDataDate() || new Date();
-    const y = hoje.getFullYear(), m = hoje.getMonth();
-    const targetM = opt===0 ? m : m-1;
-    const ini = dateOnly(new Date(y, targetM, 1));
-    const fim = opt===0 ? dateOnly(hoje) : dateOnly(new Date(y, targetM+1, 0));
-    const rows = this.getBaseRows().filter(r=>{ const d=dateOnly(r.dtinicio); return d>=ini && d<=fim; });
-    const byDay = this.countByDay(rows);
-    const vals = Array.from(byDay.values());
-    const media = vals.length ? avg(vals) : 0;
-    const out = [];
-    let cur = new Date(ini);
-    while(cur<=fim){
-      const k = ymdKey(cur);
-      out.push({ date:new Date(cur), total: byDay.get(k)||0, media });
-      cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()+1);
-    }
-    return out;
   },
 
   weeklyTable(){
@@ -1832,10 +1700,6 @@ const Audit = {
 // "com ocorrência". A qualidade média de um conjunto = % de auditorias sem
 // nenhuma ocorrência (impecáveis) sobre o total.
 const AUDITORIA_ONLINE_SHEET_ID = "1_WCpwtsyUJbc3j3v2oX9TuwzBZxnFwIobPEzg19Umy0";
-// Peso de cada critério na qualidade "por critério" (usada quando a rua da auditoria
-// não tem itens cadastrados na 8022 — nesse caso não dá pra calcular por volume, então
-// cai nessa fórmula ponderada). Critério OK (valor 0) soma o peso; senão soma 0.
-const AUDITORIA_PESOS_CRITERIOS = { avariado:6, pickErrado:2, proxVenc:2, semSaldo:2 };
 const AUDITORIA_ONLINE_GID = "0";
 // status de qualidade por faixa (usado em toda a Auditoria): Excelente/Boa/Atenção/Crítica
 function auditoriaStatusQual(v){
@@ -1958,13 +1822,9 @@ const AuditOnline = {
       const proxVenc = iProxVenc!==-1 ? numOr0(cols[iProxVenc]) : 0;
       const semSaldo = iSemSaldo!==-1 ? numOr0(cols[iSemSaldo]) : 0;
       const totalOcorrencias = pickErrado + avariado + proxVenc + semSaldo;
-      // qualidade por critério (ponderada): cada critério OK (valor 0) soma seu peso;
-      // qualidade = soma dos pesos OK / soma total dos pesos × 100
-      const pesos = AUDITORIA_PESOS_CRITERIOS;
-      const pesoTotal = pesos.avariado + pesos.pickErrado + pesos.proxVenc + pesos.semSaldo;
-      const pesoOk = (avariado===0?pesos.avariado:0) + (pickErrado===0?pesos.pickErrado:0) + (proxVenc===0?pesos.proxVenc:0) + (semSaldo===0?pesos.semSaldo:0);
+      // qualidade por critério: cada um dos 4 vale 25% — 0 = OK, >0 = falha nesse critério
       const criteriosOk = (pickErrado===0?1:0)+(avariado===0?1:0)+(proxVenc===0?1:0)+(semSaldo===0?1:0);
-      const qualidade = pesoOk/pesoTotal*100;
+      const qualidade = criteriosOk/4*100;
       const possuiImagem = iPossuiImagem!==-1 ? /^S/i.test(trimStr(cols[iPossuiImagem])) : false;
       const foto = iFoto!==-1 ? trimStr(cols[iFoto]) : "";
       const foto2 = iFoto2!==-1 ? trimStr(cols[iFoto2]) : "";
@@ -1997,31 +1857,10 @@ const AuditOnline = {
     return rows;
   },
 
-  // "penalidade" de uma linha, em item-equivalentes: cada ocorrência de um critério
-  // "consome" o peso daquele critério em itens da rua. Ex.: 1 avaria (peso 6) tira
-  // 6 dos itens da rua; 3 avarias tiram 18.
-  penalidadeLinha(row){
-    const p = AUDITORIA_PESOS_CRITERIOS;
-    return row.pickErrado*p.pickErrado + row.avariado*p.avariado + row.proxVenc*p.proxVenc + row.semSaldo*p.semSaldo;
-  },
-
-  // qualidade de UMA linha = (itens cadastrados na 8022 da rua - penalidade ponderada
-  // daquela auditoria) / itens da rua. Ex.: rua com 100 itens e 1 avaria (peso 6) →
-  // (100-6)/100 = 94%. Quando a rua não tem itens conhecidos na 8022, cai para a nota
-  // por critério em percentual (peso OK / peso total × 100).
-  qualidadeLinha(row){
-    const itens = this.ruaItensMap().get(String(row.rua)) || 0;
-    if(itens>0){
-      const pen = this.penalidadeLinha(row);
-      return Math.max(0, Math.min(100, (itens-pen)/itens*100));
-    }
-    return row.qualidade;
-  },
-
-  // qualidade média de um conjunto de linhas — média da qualidade (por volume ponderado,
-  // com fallback por critério) de cada uma
+  // qualidade média de um conjunto de linhas — cada auditoria vale 0-100% conforme
+  // quantos dos 4 critérios estão OK (valor 0); a média do conjunto é a qualidade geral
   qualidadeDe(rows){
-    return rows.length ? avg(rows.map(r=>this.qualidadeLinha(r))) : null;
+    return rows.length ? avg(rows.map(r=>r.qualidade)) : null;
   },
 
   // qualidade média num intervalo [ini,fim], respeitando os filtros de repositor/rua/
@@ -2038,19 +1877,6 @@ const AuditOnline = {
       if(codes) rows = rows.filter(r=>r.codKey && codes.has(r.codKey));
     }
     return this.qualidadeDe(rows);
-  },
-
-  // qualidade por repositor num intervalo [ini,fim] — ignora TODOS os filtros da tela
-  // de Auditoria (usado por outras telas, como o Ranking de Repositores do Feedback,
-  // que precisam de um número "cru" e estável independente do que está selecionado
-  // em Gestão > Auditoria no momento)
-  qualidadePorRepositorNoIntervalo(ini, fim){
-    const rows = (this.rows||[]).filter(r=>{ const d=dateOnly(r.data); return d>=ini && d<=fim && r.codKey; });
-    const map = new Map();
-    rows.forEach(r=>{ if(!map.has(r.codKey)) map.set(r.codKey, []); map.get(r.codKey).push(r); });
-    const out = new Map();
-    map.forEach((rs,codKey)=>{ out.set(codKey, { auditorias: rs.length, qualidadeMedia: this.qualidadeDe(rs) }); });
-    return out;
   },
 
   cards(){
@@ -2153,15 +1979,12 @@ const AuditOnline = {
     return map;
   },
 
-  // Qualidade agregada de uma rua = (itens cadastrados na 8022 - soma da penalidade
-  // ponderada de todas as auditorias daquela rua) / itens. Sem itens conhecidos,
-  // cai para a média da nota por critério.
+  // Qualidade de uma rua = (itens cadastrados na 8022 para essa rua - ocorrências
+  // encontradas nas auditorias) / itens cadastrados, em %. Se a 8022 não tiver dados
+  // para essa rua (itens=0/indisponível), cai para a média por critério (qualidadeDe).
   qualidadeRuaPorCatalogo(rua, ocorrencias, rowsDaRua){
     const itens = this.ruaItensMap().get(String(rua)) || 0;
-    if(itens>0){
-      const penTotal = sum(rowsDaRua.map(r=>this.penalidadeLinha(r)));
-      return { qualidade: Math.max(0, Math.min(100, (itens-penTotal)/itens*100)), itens };
-    }
+    if(itens>0) return { qualidade: Math.max(0, Math.min(100, (itens-ocorrencias)/itens*100)), itens };
     return { qualidade: this.qualidadeDe(rowsDaRua), itens: 0 };
   },
 
@@ -2273,16 +2096,6 @@ const Commission = {
   findException(codKey, cod, exceptions){
     return (exceptions||[]).find(e=> e.active!==false && e.codigo && normStr(e.codigo)===normStr(cod||"") );
   },
-  // Fator de ajuste por qualidade, aplicado SEMPRE em cima da comissão normal (por
-  // faixa/exceção) — não é um modelo alternativo, é um multiplicador sobre o valor já
-  // calculado: <50%=0 (zera) · 50-69,99%=0.5 (metade) · >=70%=qualidade/100 (proporcional,
-  // ex.: 71% de qualidade mantém 71% do valor da comissão).
-  qualityFactor(qualidade){
-    if(qualidade===null || qualidade===undefined) return null; // sem dado de auditoria — não penaliza, mantém valor cheio
-    if(qualidade < 50) return 0;
-    if(qualidade < 70) return 0.5;
-    return qualidade/100;
-  },
   computeAll(dataInicial, dataFinal, considerarMissoes){
     considerarMissoes = considerarMissoes !== false; // default true
     const cfg = window.APP_STATE.commissionConfig;
@@ -2308,28 +2121,10 @@ const Commission = {
       }
     });
 
-    // % Qualidade — vem da Auditoria online (Gestão > Auditoria, mesma planilha Google
-    // Sheets), calculada no MESMO período filtrado nesta tela (mês/intervalo selecionado
-    // em Gestão > Comissão). Sem filtro de data ativo, usa o mês atual até o momento
-    // (maxDataDate), que é o período padrão exibido.
-    const maxDateProd = Production.maxDataDate();
-    let qIni, qFim;
-    if(dataInicial || dataFinal){
-      qIni = dataInicial ? dateOnly(dataInicial) : dateOnly(new Date(dataFinal.getFullYear(), dataFinal.getMonth(), 1));
-      qFim = dataFinal ? dateOnly(dataFinal) : dateOnly(maxDateProd||new Date());
-    } else if(maxDateProd){
-      qIni = dateOnly(new Date(maxDateProd.getFullYear(), maxDateProd.getMonth(), 1));
-      qFim = dateOnly(maxDateProd);
-    }
-    const qualidadePorRep = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
-
     return Array.from(map.values()).map(e=>{
       const missaoInfo = missoesPorFuncionario.get(e.codKey);
       const missoesOs = missaoInfo ? missaoInfo.totalOs : 0;
       const pontos = considerarMissoes ? (e.producao + missoesOs) : e.producao;
-      const qInfo = qualidadePorRep.get(e.codKey);
-      const qualidade = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null;
-
       const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
       let valorPonto, regra, band;
       if(exc){
@@ -2339,23 +2134,10 @@ const Commission = {
         valorPonto = band ? band.value : 0;
         regra = band ? "Regra Normal" : "Sem faixa aplicável";
       }
-      const comissaoBase = pontos * valorPonto;
-
-      const fator = this.qualityFactor(qualidade);
-      const comissaoComDesconto = fator===null ? comissaoBase : comissaoBase*fator;
-      if(fator===null) regra += " — sem auditoria no período (comissão integral)";
-      else if(fator===0) regra += ` — qualidade ${fmtNum(qualidade,1)}% (<50%): comissão zerada`;
-      else if(fator===0.5) regra += ` — qualidade ${fmtNum(qualidade,1)}% (50-69%): metade da comissão`;
-      else regra += ` — qualidade ${fmtNum(qualidade,1)}%: ${fmtNum(fator*100,1)}% da comissão`;
-
-      // comissaoTotal = o valor "oficial" exibido/exportado, conforme o toggle
-      // "Aplicar desconto por qualidade?" — comissaoBase e comissaoComDesconto ficam
-      // sempre disponíveis nos dois totais do resumo, independente do toggle.
-      const comissaoTotal = commissionAplicarDesconto==="SIM" ? comissaoComDesconto : comissaoBase;
-
+      const comissaoTotal = pontos * valorPonto;
       return {
-        ...e, missoesOs, pontos, valorPonto, regra, band, qualidade,
-        comissaoBase, comissaoComDesconto, comissaoTotal
+        ...e, missoesOs, pontos, valorPonto, regra, band,
+        comissaoTotal
       };
     }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
   }
@@ -2548,14 +2330,6 @@ const FeedbackDoc = {
         ${cardHtml("O.S. Última Semana", fmtNum(hist.osSemana))}
         ${cardHtml("O.S. Mês Anterior", fmtNum(hist.osMesAnterior), hist.mesAnteriorLabel)}
         ${cardHtml("O.S. Últimos 3 Meses", fmtNum(hist.os3Meses))}
-      </div>
-
-      <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">🔍 Qualidade — Auditoria (Últimos 3 Meses)</div>
-      <div style="display:flex;gap:8px;margin-bottom:10px;">
-        ${cardHtml("% Qualidade (3m)",
-          (employee.qualidade!==null && employee.qualidade!==undefined) ? fmtNum(employee.qualidade,1)+'%' : 'Sem auditoria no período',
-          'Fonte: Gestão > Auditoria',
-          (employee.qualidade===null||employee.qualidade===undefined) ? '#7a8798' : employee.qualidade>=90 ? '#1a9c62' : employee.qualidade>=70 ? '#e08a1f' : '#d64545')}
       </div>
 
       <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">📈 Indicadores de Desempenho — Comparação Modo Mês</div>
@@ -2813,10 +2587,6 @@ const Export = {
     const target = targetOverride || this.currentArea();
     if(!target){ toast("Nada para exportar.","error"); return; }
     toast("Gerando imagem PNG...");
-    // trava animações/transições antes do screenshot, para não capturar o pane/card
-    // ainda no meio do fade-in (opacidade parcial) — ver .export-no-anim no CSS
-    document.body.classList.add("export-no-anim");
-    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const canvas = await html2canvas(target, { backgroundColor:"#f4f6f9", scale:2, useCORS:true });
       const link = document.createElement("a");
@@ -2827,8 +2597,6 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PNG: "+err.message,"error");
-    }finally{
-      document.body.classList.remove("export-no-anim");
     }
   },
 
@@ -2919,16 +2687,11 @@ const Export = {
     const hiddenEls = Array.from(target.querySelectorAll(".pdf-hide-geral"));
     const prevDisplay = hiddenEls.map(el=>el.style.display);
     hiddenEls.forEach(el=>{ el.style.display="none"; });
-    // trava animações/transições antes do screenshot, para não capturar o pane/card
-    // ainda no meio do fade-in (opacidade parcial) — ver .export-no-anim no CSS
-    document.body.classList.add("export-no-anim");
-    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const scale = 2;
       const units = this.findBreakUnits(target);
       const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale, useCORS:true });
       hiddenEls.forEach((el,i)=>{ el.style.display = prevDisplay[i]; });
-      document.body.classList.remove("export-no-anim");
 
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
@@ -2980,7 +2743,6 @@ const Export = {
       toast("PDF exportado com sucesso.","success");
     }catch(err){
       hiddenEls.forEach((el,i)=>{ el.style.display = prevDisplay[i]; });
-      document.body.classList.remove("export-no-anim");
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
     }
@@ -2992,8 +2754,6 @@ const Export = {
     const target = targetOverride || this.currentArea();
     if(!target){ toast("Nada para exportar.","error"); return; }
     toast("Gerando PDF em 1 página...");
-    document.body.classList.add("export-no-anim");
-    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale:2, useCORS:true });
       const { jsPDF } = window.jspdf;
@@ -3021,8 +2781,6 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
-    }finally{
-      document.body.classList.remove("export-no-anim");
     }
   },
 
@@ -3031,8 +2789,6 @@ const Export = {
   async toPDFMultiPage(targets, filenamePrefix, orientation){
     if(!targets || !targets.length){ toast("Nada para exportar.","error"); return; }
     toast(`Gerando PDF com ${targets.length} página(s)...`);
-    document.body.classList.add("export-no-anim");
-    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const { jsPDF } = window.jspdf;
       const orient = orientation || "landscape";
@@ -3062,8 +2818,6 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
-    }finally{
-      document.body.classList.remove("export-no-anim");
     }
   }
 };
@@ -3171,7 +2925,8 @@ const UI = {
       { id:"individual", label:"Acompanhamento Individual" },
       { id:"avaria", label:"Avaria XML" },
       { id:"operadores", label:"Produção Operadores" },
-      { id:"relacoes", label:"Relações Rep" }
+      { id:"relacoes", label:"Relações Rep" },
+      { id:"capacidade", label:"Capacidade CD" }
     ],
     gestao: [
       { id:"feedbacks", label:"Feedbacks" },
@@ -3209,17 +2964,12 @@ const UI = {
 
   async handleFile(file){
     $("#empty-error").innerHTML = "";
-    LoadingScreen.show(file.name);
+    toast("Lendo arquivo "+file.name+"...");
     let stage = "leitura do arquivo (Excel Loader)";
     try{
-      await LoadingScreen.step("recebido", 5);
-      await LoadingScreen.step("lendo", 20);
       const raw = await ExcelLoader.load(file);
 
-      await LoadingScreen.step("validando", 45);
-
       stage = "processamento dos dados (Data Processor)";
-      await LoadingScreen.step("sheets", 60);
       const processed = DataProcessor.process(raw);
 
       stage = "identificação do quadro atual (Current Team)";
@@ -3227,8 +2977,6 @@ const UI = {
 
       stage = "montagem do cadastro de nomes";
       const nameRegistry = buildNameRegistry(processed);
-
-      await LoadingScreen.step("processando", 85);
 
       window.APP_STATE.raw = raw;
       window.APP_STATE.processed = processed;
@@ -3253,39 +3001,25 @@ const UI = {
         if(currentTeam.cargoCounts.NAO_INFORMADO>0) extras.push(currentTeam.cargoCounts.NAO_INFORMADO+" sem cargo informado");
         if(extras.length) badgeText += " (+" + extras.join(", ") + ")";
       }
+      $("#quadro-badge").textContent = badgeText;
+      $("#empty-state").style.display = "none";
+      $("#main-content").style.display = "block";
+      $("#btn-export-png").disabled = false;
+      $("#btn-export-pdf").disabled = false;
 
-      await LoadingScreen.step("finalizando", 100);
-      stage = "montagem do log de importação";
-      LoadingScreen.hide();
+      // Restaura o botão Gestão caso tenha sido bloqueado pelo modo "sem arquivo"
+      const gestaoBtn = $(".nav-btn[data-view='gestao']");
+      if(gestaoBtn){ gestaoBtn.style.opacity=""; gestaoBtn.style.pointerEvents=""; gestaoBtn.title=""; }
+      // Remove hint de "sem arquivo" se existir
+      const hint = document.getElementById('avaria-sem-arquivo-hint');
+      if(hint) hint.remove();
 
-      // Só revela o dashboard quando o usuário clicar em "Acessar Dashboard" na
-      // tela de log — até lá, a interface continua na tela de boas-vindas por trás
-      // do overlay, então nunca aparece "meio carregada".
-      ImportLog.show(file, raw,
-        /* onAccessDashboard */ () => {
-          $("#quadro-badge").textContent = badgeText;
-          $("#empty-state").style.display = "none";
-          $("#main-content").style.display = "block";
-          $("#btn-export-png").disabled = false;
-          $("#btn-export-pdf").disabled = false;
+      toast("Arquivo carregado com sucesso.","success");
 
-          const gestaoBtn = $(".nav-btn[data-view='gestao']");
-          if(gestaoBtn){ gestaoBtn.style.opacity=""; gestaoBtn.style.pointerEvents=""; gestaoBtn.title=""; }
-          const hint = document.getElementById('avaria-sem-arquivo-hint');
-          if(hint) hint.remove();
-
-          toast("Arquivo carregado com sucesso.","success");
-          this.switchView("indicadores", true);
-          $("#file-input").value = "";
-        },
-        /* onLoadAnother */ () => {
-          $("#file-input").value = "";
-          $("#file-input").click();
-        }
-      );
+      stage = "renderização do painel (UI)";
+      this.switchView("indicadores", true);
     }catch(err){
       console.error("[Central de Reposição] Erro na etapa:", stage, err);
-      LoadingScreen.hide();
       const msg = (err && err.message) ? err.message : String(err);
       const stackHint = (err && err.stack) ? "\n\nDetalhe técnico (stack):\n" + err.stack.split("\n").slice(0,4).join("\n") : "";
       $("#empty-error").innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;white-space:pre-line;">` +
@@ -3294,8 +3028,8 @@ const UI = {
       toast("Erro ao carregar arquivo.","error");
       // garante que a interface não fica "meio carregada"
       window.APP_STATE.ready = false;
-      $("#file-input").value = "";
     }
+    $("#file-input").value = "";
   },
 
   buildSubnav(){
@@ -3344,7 +3078,7 @@ const UI = {
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
-      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes
+      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD
     };
     if(fns[pane]) fns[pane]();
   },
@@ -3422,11 +3156,6 @@ function atalhoOp8457(tipo){
   const {ini,fim}=periodoAtalho(tipo);
   Op8457State.ini=ini; Op8457State.fim=fim;
   renderOperadores();
-}
-function atalhoTurnover(tipo){
-  const {ini,fim}=periodoAtalho(tipo);
-  TurnoverState.filtroIni = ini; TurnoverState.filtroFim = fim; TurnoverState.atalhoSel = tipo;
-  renderTurnover();
 }
 
 function periodoAtalho(tipo){
@@ -3569,7 +3298,7 @@ function renderProducao(){
     st.employees = e.target.value ? [e.target.value] : []; renderProducao();
   });
   $("#prod-clear").addEventListener("click", ()=>{
-    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"NAO", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:1, dailyChartMes:1 };
+    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"SIM", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:0 };
     renderProducao();
   });
 
@@ -3593,7 +3322,7 @@ function renderProducaoContent(){
   const cmp = Production.modeComparison();
   const yearCmp = Production.yearComparison();
   const ytd = Production.ytd();
-  const daily = Production.dailySeriesForChart();
+  const daily = Production.dailySeries();
 
   // Duas projeções fixas — sempre presentes no topo independente do filtro "Base" do painel:
   //   projMesAtual  → base = média dos dias úteis já passados neste mês (projectionBase=0)
@@ -3652,7 +3381,7 @@ function renderProducaoContent(){
 
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><h3>Evolução Mensal — O.S. 58</h3><span class="panel-note">Fonte: 8460 · DTFIMSEPARACAO</span></div>
+        <div class="panel-header"><h3>Evolução Mensal — O.S. 58</h3><span class="panel-note">Fonte: 8460 · DTINICIOOS</span></div>
         <div class="chart-wrap"><canvas id="chart-evo-mensal"></canvas></div>
       </div>
       <div class="panel">
@@ -3703,13 +3432,7 @@ function renderProducaoContent(){
 
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header">
-          <h3>Produção Diária</h3>
-          <select id="prod-daily-mes-select" style="font-size:12px;padding:4px 8px;border:1px solid #dde3ea;border-radius:6px;">
-            <option value="0" ${Production.state.dailyChartMes===0?'selected':''}>Mês Atual</option>
-            <option value="1" ${Production.state.dailyChartMes!==0?'selected':''}>Mês Anterior (fechado)</option>
-          </select>
-        </div>
+        <div class="panel-header"><h3>Produção Diária</h3></div>
         ${daily.length ? `
         <div class="card" style="margin-bottom:10px;display:inline-flex;align-items:center;gap:14px;padding:10px 16px;border-left:4px solid var(--orange);">
           <div><div class="card-label">Média Diária</div><div style="font-size:22px;font-weight:800;color:var(--orange);">${fmtNum(daily[0]?daily[0].media:0,1)}</div></div>
@@ -3819,19 +3542,13 @@ function renderProducaoContent(){
     type:"bar",
     data:{ labels: daily.map(d=>fmtDateBR(d.date)), datasets:[
       { type:"bar", label:"O.S. 58", data: daily.map(d=>d.total), backgroundColor:Charts.colors.blueLight, borderRadius:4 },
-      { type:"line", label:"Média", data: daily.map(d=>d.media), borderColor:Charts.colors.orange, borderWidth:2, pointRadius:0, tension:0, datalabels:{ display:false } }
+      { type:"line", label:"Média", data: daily.map(d=>d.media), borderColor:Charts.colors.orange, borderWidth:2, pointRadius:0, tension:0 }
     ]},
     options: Charts.baseOptions({ plugins:{ tooltip:{ callbacks:{ label:(ctx)=>{
       const d = daily[ctx.dataIndex];
       if(ctx.dataset.label==="Média") return `Média: ${fmtNum(d.media,1)}`;
       return `Quantidade: ${fmtNum(d.total)} (dif. média: ${fmtNum(d.total-d.media,1)})`;
     }}}}})
-  });
-
-  const dailyMesSel = $("#prod-daily-mes-select");
-  if(dailyMesSel) dailyMesSel.addEventListener("change", e=>{
-    Production.state.dailyChartMes = Number(e.target.value);
-    renderProducaoContent();
   });
 
   // gráfico anual com barra do mês atual destacada
@@ -3868,14 +3585,6 @@ function renderProducaoContent(){
   const pbase = $("#proj-base-select");
   if(pbase) pbase.addEventListener("change", e=>{ Production.state.projectionBase = Number(e.target.value); renderProjecaoExpandida(Production.projection()); });
   renderProjecaoExpandida(proj);
-
-  // Semana atual sempre expandida por padrão (sem precisar clicar)
-  const hojeWk = weekOfYearMonday(Production.maxDataDate() || new Date());
-  const hojeWeekKey = hojeWk.year*100+hojeWk.week;
-  const semanaAtual = weekly.find(w=>w.weekKey===hojeWeekKey);
-  if(semanaAtual){
-    showWeekDrilldown(semanaAtual.weekKey, semanaAtual.anteriorWeekKey, semanaAtual.label, semanaAtual.anterior);
-  }
 }
 
 function renderProjecaoExpandida(proj){
@@ -4063,29 +3772,12 @@ function getRankingRows(periodoKey){
     if(repositorSet) filtered = filtered.filter(r=>repositorSet.has(r.codKey));
   }
 
-  // --- O.S. 58 Mês Anterior (mesmo período): dia 1 até o mesmo dia-do-mês de hoje,
-  // só que no mês anterior — ex.: hoje é dia 14, compara com dia 1-14 do mês passado.
-  // Independe do periodoKey selecionado acima (é sempre essa mesma janela fixa).
-  const diaAtual = maxDate.getDate();
-  const mesAntAno = maxDate.getMonth()-1<0 ? maxDate.getFullYear()-1 : maxDate.getFullYear();
-  const mesAntMes = (maxDate.getMonth()-1+12)%12;
-  const mesAntIni = dateOnly(new Date(mesAntAno, mesAntMes, 1));
-  const ultimoDiaMesAnt = new Date(mesAntAno, mesAntMes+1, 0).getDate();
-  const mesAntFim = dateOnly(new Date(mesAntAno, mesAntMes, Math.min(diaAtual, ultimoDiaMesAnt)));
-  let rowsMesAnt = allRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=mesAntIni && d<=mesAntFim; });
-  if(producaoOnlyRepositor){
-    const repositorSet = getRepositorCodeSet();
-    if(repositorSet) rowsMesAnt = rowsMesAnt.filter(r=>repositorSet.has(r.codKey));
-  }
-  const mapAnt = new Map();
-  rowsMesAnt.forEach(r=>{ mapAnt.set(r.codKey, (mapAnt.get(r.codKey)||0)+1); });
-
   const map = new Map();
   filtered.forEach(r=>{
     if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, nome: registry.get(r.codKey)||r.nome, total:0 });
     map.get(r.codKey).total++;
   });
-  return Array.from(map.values()).map(e=>({...e, osMesAnterior: mapAnt.get(e.codKey)||0})).sort((a,b)=>b.total-a.total);
+  return Array.from(map.values()).sort((a,b)=>b.total-a.total);
 }
 
 function renderRankingSection(periodoKey){
@@ -4115,7 +3807,7 @@ function renderRankingSection(periodoKey){
       <div class="grid-2">
         <!-- MELHORES -->
         <div>
-          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">📈 Destaques em Produtividade</div>
+          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🏆 Top 5 Melhores Repositores</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             ${top5.map((r,i)=>`<div class="card pos" style="min-width:140px;flex:1;">
               <div class="card-label">${medalha(i)}</div>
@@ -4126,19 +3818,19 @@ function renderRankingSection(periodoKey){
           </div>
           <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
             <table class="data-table">
-              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
               <tbody>
-                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
+                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
         </div>
         <!-- PIORES -->
         <div>
-          <div style="font-size:13px;font-weight:700;color:var(--orange);margin-bottom:10px;">🎯 Oportunidades de Desenvolvimento</div>
+          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:10px;">⚠️ Top 5 Piores Repositores</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             ${bot5.map((r,i)=>`<div class="card neg" style="min-width:140px;flex:1;">
-              <div class="card-label">Atenção</div>
+              <div class="card-label">${i+1}º pior</div>
               <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:4px;">${escapeHtml(r.nome.split(" ")[0])} ${escapeHtml(r.nome.split(" ").slice(-1)[0])}</div>
               <div class="card-value neg" style="font-size:20px;">${fmtNum(r.total)}</div>
               <div class="card-sub">O.S. 58</div>
@@ -4146,9 +3838,9 @@ function renderRankingSection(periodoKey){
           </div>
           <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
             <table class="data-table">
-              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
               <tbody>
-                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
+                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -4372,12 +4064,7 @@ function getFeedbackRankingData(){
   const currentTeam = window.APP_STATE.currentTeam;
   const registry = window.APP_STATE.nameRegistry;
   const maxDate = Production.maxDataDate();
-  // Qualidade % vem da Auditoria online (Gestão > Auditoria, mesma planilha Google
-  // Sheets), sempre nos últimos 3 meses (mesma janela usada em "O.S. Últimos 3 Meses"
-  // abaixo) — independente de qualquer filtro que esteja ativo na tela de Auditoria.
-  const qIni = maxDate ? addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2) : null;
-  const qFim = maxDate ? dateOnly(maxDate) : null;
-  const auditByEmp = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
+  const auditByEmp = new Map(Audit.byRepositor().map(e=>[e.codKey,e]));
   const rows58 = processed.p8460.filter(r=>r.tipoos===58);
 
   // base de funcionários: quadro atual ou todo o histórico, conforme o toggle
@@ -4464,7 +4151,7 @@ function renderFeedbackRankingPanel(){
           <thead><tr>
             <th style="width:30px;"><input type="checkbox" id="feedback-select-all" ${allSelected?'checked':''}></th>
             <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
-            <th>O.S. Último Dia</th><th>Auditorias (3m)</th><th>Qualidade % (3m)</th>
+            <th>O.S. Último Dia</th><th>Auditorias Realizadas</th><th>Qualidade %</th>
           </tr></thead>
           <tbody>
             ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployees.has(e.codKey)?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="toggleFeedbackEmployee('${escapeHtml(e.codKey)}')">
@@ -4524,12 +4211,6 @@ function getFeedbackFiltered(){
 function renderFeedbacks(){
   const pane = $("#pane-feedbacks");
   const st = FeedbackState;
-  // % Qualidade (últimos 3 meses) no ranking vem do AuditOnline (Gestão > Auditoria,
-  // planilha Google Sheets) — carrega em background se ainda não tiver sido carregado
-  // (ex.: usuário nunca visitou a aba Auditoria nesta sessão) e re-renderiza quando chegar.
-  if(AuditOnline.rows===null && !AuditOnline.loading){
-    AuditOnline.load().then(()=> renderFeedbacksContent());
-  }
   pane.innerHTML = `
     <div class="toolbar">
       <div class="filter-group"><label>Data Inicial</label><input type="date" id="fb-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
@@ -5478,7 +5159,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua − penalidade) / Itens, onde penalidade = Avariados×6 + Prox.Vencimento×2 + Picking Errado×2 + Sem Saldo×2. Ex.: rua com 100 itens e 1 avaria = (100−6)/100 = 94%. Sem itens conhecidos na 8022, usa a nota por critério (peso OK / 12 × 100). Qualidade do grupo = media das auditorias.</div>
+    <div class="hint-box">Qualidade de uma auditoria = % dos 4 criterios OK (Picking Errado, Avariados, Prox. Vencimento, Sem Saldo = 0). Qualidade do grupo = media das auditorias.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
@@ -5542,7 +5223,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Repositor e Rua</h3>
-        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×6 + Prox.Venc×2 + Picking×2 + SemSaldo×2</span>
+        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens · quando a rua nao tem itens na 8022, usa a media por auditoria</span>
       </div>
       <div class="table-wrap" style="max-height:400px;overflow-y:auto;"><table class="data-table">
         <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
@@ -5553,7 +5234,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Resumo</h3>
-        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×6 + Prox.Venc×2 + Picking×2 + SemSaldo×2</span>
+        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens</span>
       </div>
       <div class="table-wrap"><table class="data-table">
         <thead><tr><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Problemas</th><th>Qualidade Media</th><th>Status</th></tr></thead>
@@ -5665,7 +5346,6 @@ let commissionShowMissoes = true; // visibilidade da coluna Missões
 let commissionShowValorPonto = true; // visibilidade da coluna Valor/Ponto
 let commissionShowComissaoTotal = true; // visibilidade da coluna Comissão Total
 let commissionShowRegra = true; // visibilidade da coluna Regra
-let commissionAplicarDesconto = "SIM"; // se o desconto por % Qualidade é aplicado na Comissão Total exibida/exportada
 const CommissionState = { dataInicial: null, dataFinal: null };
 
 function renderComissao(){
@@ -5673,12 +5353,6 @@ function renderComissao(){
   const cfg = window.APP_STATE.commissionConfig;
   const currentTeam = window.APP_STATE.currentTeam;
   const st = CommissionState;
-
-  // % Qualidade (coluna + modelo por qualidade) vem do AuditOnline (Gestão > Auditoria) —
-  // carrega em background se ainda não tiver sido carregado nesta sessão.
-  if(AuditOnline.rows===null && !AuditOnline.loading){
-    AuditOnline.load().then(()=> renderCommissionTable());
-  }
 
   const badgePeriodo = (st.dataInicial || st.dataFinal)
     ? `<span class="hint-box" style="margin:0;padding:6px 12px;">📅 <strong>${st.dataInicial?fmtDateBR(st.dataInicial):'início'}</strong> até <strong>${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}</strong></span>`
@@ -5722,20 +5396,6 @@ function renderComissao(){
     </div>
     ${commissionOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
 
-    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
-      <div class="panel-header"><h3>🔍 Desconto por % Qualidade</h3></div>
-      <div class="toolbar" style="margin-bottom:0;">
-        <div class="filter-group">
-          <label>Aplicar desconto por qualidade?</label>
-          <div class="toggle-group" id="comm-desconto-toggle">
-            <button data-v="SIM" class="${commissionAplicarDesconto==='SIM'?'active':''}">Sim</button>
-            <button data-v="NAO" class="${commissionAplicarDesconto==='NAO'?'active':''}">Não</button>
-          </div>
-        </div>
-        <span class="small-muted">Qualidade &lt;50% zera a comissão · 50-69% paga metade · ≥70% paga o % da qualidade sobre o valor normal (ex.: 71% de qualidade = 71% da comissão). Sem auditoria no período, fica integral. Os dois totais (com e sem desconto) aparecem sempre no resumo abaixo — este toggle só decide qual valor conta como "Comissão Total" na tabela e na exportação.</span>
-      </div>
-    </div>
-
     <div class="grid-2">
       <div class="panel">
         <div class="panel-header"><h3>Faixas de Pontuação</h3><div class="panel-actions"><button class="btn btn-outline btn-sm" id="add-band">+ Adicionar faixa</button></div></div>
@@ -5778,11 +5438,6 @@ function renderComissao(){
     </div>
   `;
 
-  $("#comm-desconto-toggle").addEventListener("click", e=>{
-    const b = e.target.closest("button"); if(!b) return;
-    commissionAplicarDesconto = b.dataset.v;
-    renderCommissionTable();
-  });
   $("#comm-quadro-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
     commissionQuadroAtual = b.dataset.v;
@@ -5954,18 +5609,15 @@ function getComissaoTableData(){
 function renderCommissionTable(){
   const data = getComissaoTableData();
   const st = CommissionState;
-  const qualClass = (v) => v===null||v===undefined ? '' : v>=90 ? 'cell-pos' : v>=70 ? 'cell-warn' : 'cell-neg';
-  const qualLabel = (v) => v===null||v===undefined ? '<span class="small-muted">Sem auditoria</span>' : fmtNum(v,1)+'%';
 
   // cabeçalho dinâmico conforme colunas visíveis
   const theadHtml = `<tr>
     <th>Código</th><th>Repositor</th><th>Produção (O.S. 58)</th>
     ${commissionShowMissoes?'<th>Missões (O.S. equiv.)</th>':''}
     <th>Pontos</th>
-    <th>% Qualidade (período)</th>
     ${commissionShowValorPonto?'<th>Valor/Ponto</th>':''}
     ${commissionShowRegra?'<th>Regra</th>':''}
-    ${commissionShowComissaoTotal?'<th>Comissão Base</th><th>Comissão Total (c/ ajuste)</th>':''}
+    ${commissionShowComissaoTotal?'<th>Comissão Total</th>':''}
   </tr>`;
   $("#commission-thead").innerHTML = theadHtml;
 
@@ -5974,26 +5626,19 @@ function renderCommissionTable(){
       <td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${fmtNum(e.producao)}</td>
       ${commissionShowMissoes?`<td>${e.missoesOs>0?`<span class="tag-pos">+${fmtNum(e.missoesOs)}</span>`:'-'}</td>`:''}
       <td><strong>${fmtNum(e.pontos)}</strong></td>
-      <td class="${qualClass(e.qualidade)}">${qualLabel(e.qualidade)}</td>
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
-      ${commissionShowRegra?`<td>${e.regra.startsWith('Exceção Individual')?`<span class="tag-warn">${e.regra}</span>`:e.regra.startsWith('Regra Normal')?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
-      ${commissionShowComissaoTotal?`<td class="small-muted">${fmtBRL(e.comissaoBase)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
-    </tr>`).join("") || `<tr><td colspan="10" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
+      ${commissionShowRegra?`<td>${e.regra==='Exceção Individual'?`<span class="tag-warn">${e.regra}</span>`:e.regra==='Regra Normal'?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
+      ${commissionShowComissaoTotal?`<td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
+    </tr>`).join("") || `<tr><td colspan="8" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
 
-  // resumo: período selecionado + os dois totais (com e sem desconto), sempre os dois —
-  // o toggle "Aplicar desconto?" só decide qual vira a "Comissão Total" oficial da tabela/export
+  // resumo: período selecionado + valor total (respeitando todos os filtros/toggles ativos)
   const periodoLabel = (st.dataInicial || st.dataFinal)
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'início'} até ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
     : "todo o histórico";
-  const totalSemDesconto = sum(data.map(e=>e.comissaoBase));
-  const totalComDesconto = sum(data.map(e=>e.comissaoComDesconto));
+  const totalGeral = sum(data.map(e=>e.comissaoTotal));
   const resumoEl = $("#commissao-resumo-periodo");
   if(resumoEl){
-    resumoEl.innerHTML = `📅 Período: <strong>${periodoLabel}</strong> &nbsp;·&nbsp; 👥 ${data.length} repositor(es)<br>` +
-      `💰 Total <strong>sem</strong> desconto: <strong>${fmtBRL(totalSemDesconto)}</strong>` +
-      (commissionAplicarDesconto==='NAO' ? ' <span class="tag-pos">valor aplicado ✓</span>' : '') +
-      ` &nbsp;·&nbsp; 💰 Total <strong>com</strong> desconto: <strong>${fmtBRL(totalComDesconto)}</strong>` +
-      (commissionAplicarDesconto==='SIM' ? ' <span class="tag-pos">valor aplicado ✓</span>' : '') +
+    resumoEl.innerHTML = `📅 Período: <strong>${periodoLabel}</strong> &nbsp;·&nbsp; 👥 ${data.length} repositor(es) &nbsp;·&nbsp; 💰 Valor Total: <strong>${fmtBRL(totalGeral)}</strong>` +
       (commissionConsiderarMissoes==='NAO' ? ' <span class="tag-neutral">missões não consideradas</span>' : '') +
       (commissionOnlyRepositor ? ' <span class="tag-neutral">somente cargo Repositor</span>' : '');
   }
@@ -6013,25 +5658,21 @@ function exportComissaoToExcel(){
   const header = ["Código", "Repositor", "Produção (O.S. 58)"];
   if(commissionShowMissoes) header.push("Missões (O.S. equiv.)");
   header.push("Pontos");
-  header.push("% Qualidade (período)");
   if(commissionShowValorPonto) header.push("Valor/Ponto (R$)");
   if(commissionShowRegra) header.push("Regra");
-  if(commissionShowComissaoTotal) header.push("Comissão Base (R$)", "Comissão Total c/ ajuste (R$)");
+  if(commissionShowComissaoTotal) header.push("Comissão Total (R$)");
 
   const periodoLabel = (st.dataInicial || st.dataFinal)
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'inicio'} ate ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
     : "todo o historico";
-  const totalSemDesconto = sum(data.map(e=>e.comissaoBase));
-  const totalComDesconto = sum(data.map(e=>e.comissaoComDesconto));
+  const totalGeral = sum(data.map(e=>e.comissaoTotal));
 
   const aoa = [
     ["Comissão Calculada — Núcleo Reposição"],
     ["Período:", periodoLabel],
     ["Considerar Missões:", commissionConsiderarMissoes==='SIM' ? 'Sim' : 'Não'],
     ["Apenas Repositor:", commissionOnlyRepositor ? 'Sim' : 'Não'],
-    ["Aplicar Desconto por Qualidade (valor usado como Comissão Total):", commissionAplicarDesconto==='SIM' ? 'Sim' : 'Não'],
-    ["Total SEM desconto:", totalSemDesconto],
-    ["Total COM desconto:", totalComDesconto],
+    ["Valor Total:", totalGeral],
     [],
     header
   ];
@@ -6039,10 +5680,9 @@ function exportComissaoToExcel(){
     const row = [e.cod||'-', e.nome, e.producao];
     if(commissionShowMissoes) row.push(e.missoesOs);
     row.push(e.pontos);
-    row.push(e.qualidade!==null && e.qualidade!==undefined ? +e.qualidade.toFixed(1) : 'Sem auditoria');
     if(commissionShowValorPonto) row.push(+e.valorPonto.toFixed(2));
     if(commissionShowRegra) row.push(e.regra);
-    if(commissionShowComissaoTotal){ row.push(+e.comissaoBase.toFixed(2)); row.push(+e.comissaoTotal.toFixed(2)); }
+    if(commissionShowComissaoTotal) row.push(+e.comissaoTotal.toFixed(2));
     aoa.push(row);
   });
 
@@ -6693,10 +6333,7 @@ function renderIndividualResult(){
 /* ---------------------------------------------------------------------- */
 /* MODULE: Turnover (Gestão → Turnover)                                    */
 /* ---------------------------------------------------------------------- */
-// filtroIni/filtroFim = filtro de período aplicado (controla TODO o painel Turnover:
-// indicadores, admissões, desligamentos, transferências, comparações e tabelas).
-// null em ambos = usa o padrão (últimos 3 meses), igual ao comportamento anterior.
-const TurnoverState = { periodoMeses: 3, filtroIni: null, filtroFim: null, atalhoSel: null, transfIni: null, transfFim: null };
+const TurnoverState = { periodoMeses: 3 }; // quantos meses atrás calcular
 
 function computeTurnover(){
   const processed = window.APP_STATE.processed;
@@ -6710,48 +6347,26 @@ function computeTurnover(){
   const quadroCadastrado = ativos.length;
 
   // --- Período de análise ---
-  // Controla TODO o painel (indicadores, admissões, desligamentos, transferências,
-  // comparações e tabelas). Se o usuário aplicou um filtro de Data Inicial/Data Final,
-  // usa exatamente esse intervalo; senão cai no padrão de sempre (últimos 3 meses).
-  const filtroAtivo = !!(TurnoverState.filtroIni || TurnoverState.filtroFim);
   const meses = TurnoverState.periodoMeses || 3;
-  let periodoIni, periodoFim;
-  if(filtroAtivo){
-    periodoFim = TurnoverState.filtroFim ? dateOnly(TurnoverState.filtroFim) : dateOnly(hoje);
-    periodoIni = TurnoverState.filtroIni ? dateOnly(TurnoverState.filtroIni) : new Date(2000,0,1);
-  } else {
-    periodoFim = hoje;
-    periodoIni = addMonths(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -meses+1);
-    periodoIni.setDate(1);
-  }
+  const periodoFim = hoje;
+  const periodoIni = addMonths(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -meses+1);
+  periodoIni.setDate(1);
 
   const noPeriodo = (dt) => dt && dt >= periodoIni && dt <= periodoFim;
 
   // --- Contratações / Desligamentos / Transferências no período ---
-  // Considera transferido quem tiver: TIPO contendo "transfer" (TRANSFERIDO,
-  // TRANSFERENCIA etc.) OU a coluna DATA TRANSFERENCIA preenchida — o que vier
-  // primeiro já classifica a linha como transferência, mesmo que o TIPO esteja em
-  // branco ou com outro texto. Isso conta só no card 🔀 Transferências, nunca em
-  // ➖ Desligamentos.
+  // TIPO="TRANSFERIDO"/"TRANSFERENCIA" (ou qualquer variação contendo "transfer") conta só no
+  // card 🔀 Transferências, nunca em ➖ Desligamentos — por isso os dois filtros
+  // usam a mesma checagem (.includes("transfer")) para não haver contagem dupla
+  // nem TRANSFERIDO escapando da exclusão em Desligamentos.
   // Data de referência da transferência: prioriza a coluna DATA TRANSFERENCIA;
   // se não estiver preenchida, cai para DATA DESLIGAMENTO (transferido pra fora do
   // time) e por último DATA CONTRATAÇÃO (funcionário ATIVO=SIM que chegou via
   // transferência e não tem nenhuma das duas outras datas).
-  const isTransferencia = r => normStr(r.tipo||"").includes("transfer") || !!r.dtTransf;
+  const isTransferencia = r => normStr(r.tipo||"").includes("transfer");
   const contratacoes = tv.filter(r=>noPeriodo(r.dtAdm));
   const desligamentos = tv.filter(r=>r.dtDesl && noPeriodo(r.dtDesl) && !isTransferencia(r));
   const transferencias = tv.filter(r=>isTransferencia(r) && noPeriodo(r.dtTransf || r.dtDesl || r.dtAdm));
-
-  // --- Transferências: filtro dedicado por intervalo de datas (independente do
-  // período de análise geral) — usa DATA TRANSFERENCIA como referência; ignora
-  // linhas sem essa data preenchida.
-  const tIni = TurnoverState.transfIni, tFim = TurnoverState.transfFim;
-  const transferenciasFiltro = tv.filter(r=>{
-    if(!isTransferencia(r) || !r.dtTransf) return false;
-    if(tIni && r.dtTransf < dateOnly(tIni)) return false;
-    if(tFim && r.dtTransf > dateOnly(tFim)) return false;
-    return true;
-  }).sort((a,b)=>b.dtTransf-a.dtTransf);
 
   // --- Quadro médio para Turnover ---
   const quadroInicial = tv.filter(r=>{
@@ -6809,22 +6424,15 @@ function computeTurnover(){
   const scounts = { PRESENTE:0, SEGUNDO_TURNO:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0 };
   quadroRows.forEach(r=>{ scounts[r.bucket] = (scounts[r.bucket]||0)+1; });
 
-  // Quadro Geral (tabela) — quando o filtro de período está ativo, mostra só quem
-  // teve algum evento (admissão, desligamento ou transferência) dentro do intervalo;
-  // sem filtro, mostra o cadastro completo (comportamento de sempre).
-  const tvFiltrado = filtroAtivo
-    ? tv.filter(r => noPeriodo(r.dtAdm) || noPeriodo(r.dtDesl) || noPeriodo(r.dtTransf))
-    : tv;
-
   return {
-    hoje, periodoIni, periodoFim, meses, filtroAtivo,
+    hoje, periodoIni, periodoFim, meses,
     quadroCadastrado, quadroChamada, quadroInicial, quadroFinal, quadroMedio,
-    contratacoes, desligamentos, transferencias, transferenciasFiltro,
+    contratacoes, desligamentos, transferencias,
     turnoverTotal, turnoverEntrada, turnoverSaida,
     probatorio, efetivados, alertas, urgencias, semData,
     noTurnoverNaoChamada, naChamadaNaoTurnover,
     conciliados, pctConferencia,
-    scounts, ativos, tvFiltrado
+    scounts, ativos
   };
 }
 
@@ -6878,33 +6486,20 @@ function renderTurnover(){
   const corTurnover = d.turnoverTotal<=5?'#1a9c62':d.turnoverTotal<=10?'#e08a1f':'#d64545';
   const statusConf = d.noTurnoverNaoChamada.length===0 && d.naChamadaNaoTurnover.length===0;
 
-  const periodoLabel = d.filtroAtivo
-    ? `${fmtDateBR(d.periodoIni)} até ${fmtDateBR(d.periodoFim)}`
-    : `Últimos ${meses===1?'30 dias (mês atual)':meses+' meses'} (padrão)`;
-
   pane.innerHTML = `
-    <!-- ======================== FILTRO DE PERÍODO — controla todo o painel ======================== -->
-    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
-      <div class="panel-header">
-        <h3>🗓️ Filtro de Período</h3>
-        <span class="panel-note" style="font-weight:700;color:#123a6b;">Ativo: ${periodoLabel}</span>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-        ${renderAtalhos(TurnoverState.atalhoSel, 'atalhoTurnover', ['mes_atual','mes_ant','ultimos_3m','ano_atual','ano_ant','tudo'])}
-      </div>
-      <div class="toolbar" style="margin-bottom:0;">
-        <div class="filter-group"><label>Data Inicial</label><input type="date" id="tv-filtro-ini" value="${TurnoverState.filtroIni?toInputDate(TurnoverState.filtroIni):''}"></div>
-        <div class="filter-group"><label>Data Final</label><input type="date" id="tv-filtro-fim" value="${TurnoverState.filtroFim?toInputDate(TurnoverState.filtroFim):''}"></div>
-        <div class="spacer"></div>
-        <button class="btn btn-outline btn-sm" id="tv-filtro-limpar">Limpar filtro</button>
-        <button class="btn btn-primary btn-sm" id="tv-filtro-aplicar">Aplicar filtro</button>
-      </div>
-    </div>
-
     <!-- ======================== RESUMO + CARDS ======================== -->
     <div class="panel">
       <div class="panel-header">
         <h3>📊 Turnover — Painel de Controle</h3>
+        <div class="panel-actions">
+          <label style="font-size:11px;color:#7a8798;">Período de análise:</label>
+          <select id="tv-periodo-select" style="font-size:12px;padding:4px 8px;border:1px solid #dde3ea;border-radius:6px;">
+            <option value="1" ${meses===1?'selected':''}>Mês atual</option>
+            <option value="3" ${meses===3?'selected':''}>Últimos 3 meses</option>
+            <option value="6" ${meses===6?'selected':''}>Últimos 6 meses</option>
+            <option value="12" ${meses===12?'selected':''}>Últimos 12 meses</option>
+          </select>
+        </div>
       </div>
 
       <!-- linha 1: quadro + chamada + turnover -->
@@ -6934,40 +6529,11 @@ function renderTurnover(){
       ${!statusConf ? `<div class="warn-box">⚠️ ATENÇÃO: O quadro da Reposição não está 100% conciliado com a chamada. ${d.noTurnoverNaoChamada.length} no Turnover sem chamada · ${d.naChamadaNaoTurnover.length} na chamada sem Turnover.</div>` : ''}
     </div>
 
-    <!-- ======================== TRANSFERÊNCIAS — DETALHAMENTO ======================== -->
-    <div class="panel">
-      <div class="panel-header">
-        <h3>🔀 Transferências — Detalhamento</h3>
-        <span class="panel-note">Filtra por DATA TRANSFERENCIA · independente do período de análise acima</span>
-      </div>
-      <div class="toolbar" style="margin-bottom:10px;">
-        <div class="filter-group"><label>Data Início</label><input type="date" id="tv-transf-ini" value="${TurnoverState.transfIni?toInputDate(TurnoverState.transfIni):''}"></div>
-        <div class="filter-group"><label>Data Fim</label><input type="date" id="tv-transf-fim" value="${TurnoverState.transfFim?toInputDate(TurnoverState.transfFim):''}"></div>
-        <div class="spacer"></div>
-        <button class="btn btn-outline btn-sm" id="tv-transf-clear">Limpar</button>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Matrícula</th><th>Nome</th><th>Data Transferência</th><th>Tipo</th><th>Ativo</th></tr></thead>
-          <tbody>
-            ${d.transferenciasFiltro.length ? d.transferenciasFiltro.map(r=>`
-              <tr>
-                <td>${escapeHtml(r.matric||'—')}</td>
-                <td><strong>${escapeHtml(r.nome||'—')}</strong></td>
-                <td>${fmtDateBR(r.dtTransf)}</td>
-                <td>${escapeHtml(r.tipo||'—')}</td>
-                <td>${r.ativo?'✅ Sim':'❌ Não'}</td>
-              </tr>`).join('') : `<tr><td colspan="5" style="text-align:center;color:#7a8798;padding:14px;">${TurnoverState.transfIni||TurnoverState.transfFim ? 'Nenhuma transferência no intervalo selecionado.' : 'Nenhum registro com DATA TRANSFERENCIA preenchida.'}</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
     <!-- ======================== TABELA GERAL ======================== -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 Quadro Geral — ${d.filtroAtivo?'Funcionários com Evento no Período':'Todos os Funcionários'}</h3>
-        <span class="panel-note">${d.tvFiltrado.length} registro(s)${d.filtroAtivo?' no período filtrado':''} · ${d.quadroCadastrado} ativos no total</span>
+        <h3>📋 Quadro Geral — Todos os Funcionários</h3>
+        <span class="panel-note">${tv.length} registros · ${d.quadroCadastrado} ativos</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -6985,7 +6551,7 @@ function renderTurnover(){
             </tr>
           </thead>
           <tbody>
-            ${d.tvFiltrado.map(r=>{
+            ${tv.map(r=>{
               const prob = statusProb(r);
 
               // Data contratação
@@ -7051,34 +6617,9 @@ function renderTurnover(){
     </div>` : ''}
   `;
 
-  const tvFiltroAplicar = document.getElementById("tv-filtro-aplicar");
-  const tvFiltroLimpar = document.getElementById("tv-filtro-limpar");
-  if(tvFiltroAplicar) tvFiltroAplicar.addEventListener("click", ()=>{
-    const iniVal = document.getElementById("tv-filtro-ini").value;
-    const fimVal = document.getElementById("tv-filtro-fim").value;
-    TurnoverState.filtroIni = iniVal ? new Date(iniVal+"T00:00:00") : null;
-    TurnoverState.filtroFim = fimVal ? new Date(fimVal+"T00:00:00") : null;
-    TurnoverState.atalhoSel = null;
-    renderTurnover();
-  });
-  if(tvFiltroLimpar) tvFiltroLimpar.addEventListener("click", ()=>{
-    TurnoverState.filtroIni = null; TurnoverState.filtroFim = null; TurnoverState.atalhoSel = null;
-    renderTurnover();
-  });
-
-  const tvTransfIni = document.getElementById("tv-transf-ini");
-  const tvTransfFim = document.getElementById("tv-transf-fim");
-  const tvTransfClear = document.getElementById("tv-transf-clear");
-  if(tvTransfIni) tvTransfIni.addEventListener("change", e=>{
-    TurnoverState.transfIni = e.target.value ? new Date(e.target.value+"T00:00:00") : null;
-    renderTurnover();
-  });
-  if(tvTransfFim) tvTransfFim.addEventListener("change", e=>{
-    TurnoverState.transfFim = e.target.value ? new Date(e.target.value+"T00:00:00") : null;
-    renderTurnover();
-  });
-  if(tvTransfClear) tvTransfClear.addEventListener("click", ()=>{
-    TurnoverState.transfIni = null; TurnoverState.transfFim = null;
+  const selPeriodo = document.getElementById("tv-periodo-select");
+  if(selPeriodo) selPeriodo.addEventListener("change", e=>{
+    TurnoverState.periodoMeses = Number(e.target.value);
     renderTurnover();
   });
 }
@@ -7102,14 +6643,9 @@ function computeFerias(){
   const linhas = ativos.map(r=>{
     // primeira data de férias do ciclo: admissão + 13 meses
     let dataFerias = addMonths(r.dtAdm, 13);
-    // Dedução de ciclos já tirados: se o ciclo está vencido há mais de 4 meses (120 dias),
-    // presume-se que o funcionário já tirou essas férias (mesmo sem registro), e avança
-    // pro próximo ciclo (+12 meses). Repete em cascata pra cada ano — assim alguém com
-    // vários anos de casa "pula" automaticamente todos os ciclos antigos presumidos como
-    // já tirados, e para exatamente no ciclo vigente a partir do ano atual.
-    // Ex.: admissão 11/09/2019 → ciclos 2020..2025 todos vencidos há mais de 4 meses →
-    // presume-se tirados → para no ciclo 2026 (11/10/2026), ainda não vencido.
-    while((hoje - dataFerias) / 86400000 > 120){ dataFerias = addMonths(dataFerias, 12); }
+    // avança de 12 em 12 meses até achar o ciclo vigente (o mais próximo de hoje,
+    // sem "pular" um ciclo ainda não vencido)
+    while(addMonths(dataFerias, 12) <= hoje){ dataFerias = addMonths(dataFerias, 12); }
 
     const diffDias = Math.round((dataFerias - hoje) / 86400000);
 
@@ -7158,7 +6694,7 @@ function renderFerias(){
     <div class="panel">
       <div class="panel-header">
         <h3>🏖️ Férias — Painel de Controle</h3>
-        <span class="panel-note">Cálculo: Data de Contratação + 12 meses (fecha 1 ano) → férias programadas para o mês seguinte · ciclo se repete a cada 12 meses · ciclos vencidos há mais de 4 meses são presumidos como já tirados e avançam pro próximo ano</span>
+        <span class="panel-note">Cálculo: Data de Contratação + 12 meses (fecha 1 ano) → férias programadas para o mês seguinte · ciclo se repete a cada 12 meses</span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${mc('vencida','Vencidas', d.counts.vencida, '#d64545', FeriasState.filtro==='vencida')}
@@ -10037,4 +9573,659 @@ function relRenderCharts(){
   mkChart('rel-chart-mes',    [...mesMapT.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([,v])=>v));
 
 
+}
+
+/* ============================================================
+   CAPACIDADE CD — módulo completo
+   ============================================================ */
+
+/* Estado da guia */
+const CapCDState = {
+  mostrarDetalhes: false,   // toggle Sim/Não
+  filtroIni: null,          // Date | null — filtro de data início
+  filtroFim: null,          // Date | null — filtro de data fim
+  rankPage: 0,              // paginação do ranking
+  detPage: 0,               // paginação tabela detalhada
+  tblPage: 0,               // paginação tabela principal
+  rankPageSize: 15,
+  detPageSize: 20,
+  tblPageSize: 25,
+  charts: {}                // referências dos Chart.js
+};
+
+/* Helpers de data locais */
+const capDK = d => {
+  if(!d || !(d instanceof Date) || isNaN(d)) return null;
+  const y = d.getFullYear(), m = d.getMonth()+1, dd = d.getDate();
+  return `${y}-${String(m).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+};
+const capDateLabel = d => {
+  if(!d) return '';
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+};
+// Semana ISO-like: usa segunda-feira como início
+const capWeekKey = d => {
+  const dow = d.getDay(); // 0=dom
+  const diff = dow === 0 ? -6 : 1 - dow;
+  const seg = new Date(d); seg.setDate(d.getDate() + diff);
+  return capDK(seg);
+};
+const capWeekLabel = d => {
+  const dow = d.getDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  const seg = new Date(d); seg.setDate(d.getDate() + diff);
+  const fim = new Date(seg); fim.setDate(seg.getDate() + 6);
+  return `${String(seg.getDate()).padStart(2,'0')}/${String(seg.getMonth()+1).padStart(2,'0')} – ${String(fim.getDate()).padStart(2,'0')}/${String(fim.getMonth()+1).padStart(2,'0')}`;
+};
+
+/* Destroi charts anteriores */
+function capDestroyCharts() {
+  Object.values(CapCDState.charts).forEach(c => { try { c.destroy(); } catch(e){} });
+  CapCDState.charts = {};
+}
+
+/* Compute principal — chama 1× por renderização */
+function capCompute(processed) {
+  const rows8022   = processed.p8022CDRows || [];      // NIVEL=1 já filtrado
+  const rows8022N  = processed.p8022Nova   || [];      // snapshot atualizado
+  const rawCR      = processed.capacidadeRealizada || []; // todas ocorrências
+
+  // — Filtra por período se definido —
+  const {filtroIni, filtroFim} = CapCDState;
+  const cr = rawCR.filter(r => {
+    if(!r.dt) return false;
+    if(filtroIni && r.dt < filtroIni) return false;
+    if(filtroFim && r.dt > filtroFim) return false;
+    return true;
+  });
+
+  // — Estoque elegível (NIVEL=1, únicos) —
+  const elegiveisSet = new Set(rows8022.map(r => r.codprod));
+  const totalElegiveis = elegiveisSet.size;
+
+  // — Validações: NÃO deduplicar — cada ocorrência conta —
+  // — porém só conta para COBERTURA produtos que existem em 8022 NIVEL=1 —
+  const validacoesAll = cr; // todas (sem filtro de elegibilidade para produtividade)
+  const validacoesElegiveis = cr.filter(r => elegiveisSet.has(r.cod));
+
+  // Produtos únicos validados (para cobertura)
+  const uniqueValidados = new Set(validacoesElegiveis.map(r => r.cod));
+  const totalUnicoValidados = uniqueValidados.size;
+  const cobertura = totalElegiveis > 0 ? totalUnicoValidados / totalElegiveis * 100 : 0;
+  const pendentes = totalElegiveis - totalUnicoValidados;
+
+  // — Produtividade (total de ocorrências, sem dedup) —
+  const totalValidacoes  = cr.length;
+  const totalPreventivo  = cr.filter(r => r.tipo === 'PREVENTIVO').length;
+  const totalCorretivo   = cr.filter(r => r.tipo === 'CORRETIVO').length;
+
+  // — Recorrência —
+  // Para cada produto elegível, contar quantas vezes aparece
+  const prodContagem = new Map(); // codprod → {total, prev, corr, datas}
+  validacoesElegiveis.forEach(r => {
+    if(!prodContagem.has(r.cod)) prodContagem.set(r.cod, {total:0, prev:0, corr:0, datas:[]});
+    const e = prodContagem.get(r.cod);
+    e.total++;
+    if(r.tipo==='PREVENTIVO') e.prev++; else e.corr++;
+    if(r.dt) e.datas.push(r.dt);
+  });
+
+  const prodsRecorrencia = [...prodContagem.values()].filter(e => e.total > 1).length;
+  const pctRecorrencia = totalUnicoValidados > 0 ? prodsRecorrencia / totalUnicoValidados * 100 : 0;
+  const revalidacoes = totalValidacoes - totalUnicoValidados;
+
+  // — Gráfico diário — todas as ocorrências (não só elegíveis)
+  const diaMap = new Map();
+  cr.forEach(r => {
+    if(!r.dt) return;
+    const dk = capDK(r.dt);
+    if(!dk) return;
+    if(!diaMap.has(dk)) diaMap.set(dk, {label: capDateLabel(r.dt), prev:0, corr:0});
+    const e = diaMap.get(dk);
+    if(r.tipo==='PREVENTIVO') e.prev++; else e.corr++;
+  });
+  const diasOrdenados = [...diaMap.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+
+  // — Análise semanal —
+  const semMap = new Map();
+  validacoesElegiveis.forEach(r => {
+    if(!r.dt) return;
+    const wk = capWeekKey(r.dt);
+    if(!wk) return;
+    if(!semMap.has(wk)) semMap.set(wk, {
+      label: capWeekLabel(r.dt),
+      unicos: new Set(),
+      total: 0, prev:0, corr:0,
+      diasComValidacao: new Set()
+    });
+    const e = semMap.get(wk);
+    e.unicos.add(r.cod);
+    e.total++;
+    if(r.tipo==='PREVENTIVO') e.prev++; else e.corr++;
+    const dk = capDK(r.dt);
+    if(dk) e.diasComValidacao.add(dk);
+  });
+  const semanasOrdenadas = [...semMap.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([wk, e])=>({
+    semana: e.label,
+    unicos: e.unicos.size,
+    total: e.total,
+    prev: e.prev,
+    corr: e.corr,
+    revalidacoes: e.total - e.unicos.size,
+    pendentes: totalElegiveis - e.unicos.size,
+    cobertura: totalElegiveis > 0 ? e.unicos.size / totalElegiveis * 100 : 0,
+    mediaDiaria: e.diasComValidacao.size > 0 ? e.unicos.size / e.diasComValidacao.size : 0
+  }));
+
+  // — Previsão —
+  const diasComValidacao = new Set(validacoesElegiveis.filter(r=>r.dt).map(r=>capDK(r.dt)).filter(Boolean));
+  const mediaDiariaUnicos = diasComValidacao.size > 0 ? totalUnicoValidados / diasComValidacao.size : 0;
+  const previsaoDias = mediaDiariaUnicos > 0 ? Math.ceil(pendentes / mediaDiariaUnicos) : null;
+
+  // — Comparação 8022 × 8022 Nova —
+  const novaMap = new Map(rows8022N.map(r => [r.codprod, r]));
+  let ajustePos=0, ajusteNeg=0, nenhumAjuste=0;
+  const ajustesDetalhes = []; // para tabela validações
+  rows8022.forEach(row => {
+    if(!uniqueValidados.has(row.codprod)) return; // só validados
+    const nova = novaMap.get(row.codprod);
+    const capIni  = row.capacidade;
+    const capAtual = nova ? nova.capacidade : null;
+    let diff = null, status = 'N/D';
+    if(capIni !== null && capAtual !== null) {
+      diff = capAtual - capIni;
+      if(diff > 0)      { status = 'Ajuste Positivo';  ajustePos++; }
+      else if(diff < 0) { status = 'Ajuste Negativo';  ajusteNeg++; }
+      else              { status = 'Nenhum Ajuste';     nenhumAjuste++; }
+    } else {
+      status = processed.p8022NovaDispo ? 'Sem Correspondência' : 'N/D';
+    }
+    ajustesDetalhes.push({ codprod: row.codprod, descricao: row.descricao, capIni, capAtual, diff, status, rua: row.rua, predio: row.predio, apto: row.apto });
+  });
+
+  // — Tabela detalhada de validações (todas ocorrências) —
+  // JOIN: validacoesElegiveis × rows8022 × ajustesDetalhes
+  const prod8022Map = new Map(rows8022.map(r => [r.codprod, r]));
+  const ajusteMap   = new Map(ajustesDetalhes.map(r => [r.codprod, r]));
+  const tblDetalhada = validacoesElegiveis.map(r => {
+    const base  = prod8022Map.get(r.cod) || {};
+    const ajust = ajusteMap.get(r.cod) || {};
+    return {
+      codprod:   r.cod,
+      descricao: base.descricao || '',
+      capIni:    ajust.capIni   != null ? ajust.capIni  : null,
+      capAtual:  ajust.capAtual != null ? ajust.capAtual: null,
+      diff:      ajust.diff     != null ? ajust.diff    : null,
+      status:    ajust.status   || (processed.p8022NovaDispo ? 'Sem Dados' : 'N/D'),
+      tipo:      r.tipo,
+      dt:        r.dt,
+      rua:       base.rua    || '',
+      predio:    base.predio || '',
+      apto:      base.apto   || '',
+    };
+  });
+
+  // — Ranking de produtos com mais validações —
+  const ranking = [...prodContagem.entries()].map(([cod, e]) => {
+    const base = prod8022Map.get(cod) || {};
+    const ult  = e.datas.length > 0 ? new Date(Math.max(...e.datas.map(d=>d.getTime()))) : null;
+    return { cod, descricao: base.descricao||'', total:e.total, prev:e.prev, corr:e.corr, revalidacoes: e.total-1, ultima: ult };
+  }).sort((a,b) => b.total - a.total || a.cod.localeCompare(b.cod));
+
+  return {
+    dispo8022: processed.p8022CDDispo,
+    dispoCR: processed.capacidadeRealizadaDispo,
+    dispoCRNova: processed.p8022NovaDispo,
+    // Indicadores
+    totalElegiveis, totalUnicoValidados, cobertura, pendentes,
+    totalValidacoes, totalPreventivo, totalCorretivo,
+    prodsRecorrencia, pctRecorrencia, revalidacoes,
+    ajustePos, ajusteNeg, nenhumAjuste,
+    mediaDiariaUnicos, previsaoDias,
+    // Análises
+    diasOrdenados,
+    semanasOrdenadas,
+    ranking,
+    tblDetalhada,
+    rows8022, // para tabela principal
+    ajustesDetalhes,
+  };
+}
+
+/* ---- RENDER PRINCIPAL ---- */
+function renderCapacidadeCD() {
+  const pane = $('#pane-capacidade');
+  if (!pane) return;
+  capDestroyCharts();
+
+  const processed = window.APP_STATE && window.APP_STATE.processed ? window.APP_STATE.processed : null;
+  if (!processed) {
+    pane.innerHTML = `<div class="panel-section" style="text-align:center;padding:60px 20px;color:#7a8798;">Nenhum arquivo carregado. Faça o upload do arquivo NUCLEO REPOSIÇÃO.</div>`;
+    return;
+  }
+
+  // Validação das abas
+  const avisos = [];
+  if (!processed.p8022CDDispo)               avisos.push('⚠️ A aba <strong>8022</strong> não foi encontrada. A análise de Capacidade CD não pode ser calculada.');
+  if (!processed.capacidadeRealizadaDispo)   avisos.push('⚠️ A aba <strong>Capacidade Realizada</strong> não foi encontrada. Os indicadores de validação não estarão disponíveis.');
+  if (!processed.p8022NovaDispo)             avisos.push('⚠️ A aba <strong>8022 Nova</strong> não foi encontrada. A análise de ajustes de capacidade não está disponível.');
+
+  if (!processed.p8022CDDispo) {
+    pane.innerHTML = `<div class="panel-section">${avisos.map(a=>`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px;">${a}</div>`).join('')}</div>`;
+    return;
+  }
+
+  const comp = capCompute(processed);
+
+  // ---- Formatos ----
+  const fN  = n => (n==null||isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR');
+  const fP  = n => (n==null||isNaN(n)) ? '—' : n.toFixed(1)+'%';
+  const fDt = d => !d ? '—' : `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  const fDiff = n => n==null ? '—' : (n>0?'+':'')+n;
+
+  // Construção de um card de indicador
+  const mkCard = (icon, label, value, sub='', cor='#1a4480') =>
+    `<div class="cap-card"><div class="cap-card-icon" style="color:${cor}">${icon}</div>
+      <div class="cap-card-label">${label}</div>
+      <div class="cap-card-value" style="color:${cor}">${value}</div>
+      ${sub?`<div class="cap-card-sub">${sub}</div>`:''}
+    </div>`;
+
+  // Badge status ajuste
+  const badgeAjuste = s => {
+    const map = {'Ajuste Positivo':['#1a9c62','#e6f9f0'],'Ajuste Negativo':['#d64545','#fdf0f0'],'Nenhum Ajuste':['#7a8798','#f4f6f8'],'N/D':['#bdbdbd','#f9f9f9'],'Sem Dados':['#bdbdbd','#f9f9f9'],'Sem Correspondência':['#bdbdbd','#f9f9f9']};
+    const [c,bg] = map[s] || ['#7a8798','#f4f6f8'];
+    return `<span style="background:${bg};color:${c};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;border:1px solid ${c}30;">${s}</span>`;
+  };
+
+  // ---- Filtro de período ----
+  const fmtInputDate = d => !d ? '' : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const filtroHTML = `
+    <div class="cap-filtro-row">
+      <label>Período:</label>
+      <input type="date" id="cap-dt-ini" value="${fmtInputDate(CapCDState.filtroIni)}" onchange="CapCDState.filtroIni=this.value?new Date(this.value+'T00:00:00'):null;CapCDState.detPage=0;renderCapacidadeCD();">
+      <span style="margin:0 6px;">até</span>
+      <input type="date" id="cap-dt-fim" value="${fmtInputDate(CapCDState.filtroFim)}" onchange="CapCDState.filtroFim=this.value?new Date(this.value+'T23:59:59'):null;CapCDState.detPage=0;renderCapacidadeCD();">
+      ${(CapCDState.filtroIni||CapCDState.filtroFim)?`<button onclick="CapCDState.filtroIni=null;CapCDState.filtroFim=null;renderCapacidadeCD();" class="cap-btn-clear">✕ Limpar</button>`:''}
+    </div>`;
+
+  // ---- Avisos de abas ausentes ----
+  const avisosHTML = avisos.map(a=>`<div class="cap-aviso">${a}</div>`).join('');
+
+  // ---- Cards linha 1: Cobertura ----
+  const l1 = `
+    <div class="cap-cards-row">
+      ${mkCard('📦','Total de Itens Elegíveis', fN(comp.totalElegiveis), 'NIVEL = 1 na sheet 8022')}
+      ${mkCard('✅','Itens Únicos Validados', fN(comp.totalUnicoValidados), `de ${fN(comp.totalElegiveis)} elegíveis`,'#1a9c62')}
+      ${mkCard('📊','Cobertura do Estoque', fP(comp.cobertura), 'Únicos validados / Elegíveis', comp.cobertura>=100?'#1a9c62':comp.cobertura>=70?'#1a4480':'#e07b00')}
+      ${mkCard('⏳','Itens Pendentes', fN(comp.pendentes), 'Ainda não validados','#d64545')}
+    </div>`;
+
+  // ---- Cards linha 2: Produtividade ----
+  const l2 = `
+    <div class="cap-cards-row">
+      ${mkCard('🔢','Total de Validações', fN(comp.totalValidacoes), 'Todas as ocorrências')}
+      ${mkCard('🛡️','Preventivas', fN(comp.totalPreventivo), comp.totalValidacoes>0?fP(comp.totalPreventivo/comp.totalValidacoes*100)+' do total':'')}
+      ${mkCard('🔧','Corretivas', fN(comp.totalCorretivo), comp.totalValidacoes>0?fP(comp.totalCorretivo/comp.totalValidacoes*100)+' do total':'')}
+      ${mkCard('🔁','Revalidações', fN(comp.revalidacoes), 'Validações além da 1ª por produto','#7a5af8')}
+    </div>`;
+
+  // ---- Cards linha 3: Recorrência ----
+  const l3 = `
+    <div class="cap-cards-row">
+      ${mkCard('🔄','Produtos c/ Recorrência', fN(comp.prodsRecorrencia), 'Mais de 1 validação','#e07b00')}
+      ${mkCard('%','% com Recorrência', fP(comp.pctRecorrencia), 'Sobre únicos validados','#e07b00')}
+    </div>`;
+
+  // ---- Cards linha 4: Ajustes ----
+  const ajHTML = !processed.p8022NovaDispo ?
+    `<div class="cap-aviso-inline">⚠️ 8022 Nova não carregada — análise de ajustes indisponível</div>` :
+    `<div class="cap-cards-row">
+      ${mkCard('📈','Ajustes Positivos', fN(comp.ajustePos), 'Capacidade aumentou','#1a9c62')}
+      ${mkCard('📉','Ajustes Negativos', fN(comp.ajusteNeg), 'Capacidade diminuiu','#d64545')}
+      ${mkCard('🔵','Nenhum Ajuste', fN(comp.nenhumAjuste), 'Capacidade mantida','#1a4480')}
+      ${mkCard('✅','Total Validado (ajustes)', fN(comp.ajustePos+comp.ajusteNeg+comp.nenhumAjuste), '')}
+    </div>`;
+
+  // ---- Card previsão ----
+  const previsaoHTML = `
+    <div class="cap-previsao-card">
+      <div class="cap-previsao-title">🗓️ Previsão para Zerar Pendências</div>
+      <div class="cap-previsao-row">
+        <div class="cap-previsao-item"><span class="cap-previsao-num">${fN(Math.round(comp.mediaDiariaUnicos*10)/10)}</span><span class="cap-previsao-lbl">itens únicos/dia</span></div>
+        <div class="cap-previsao-item"><span class="cap-previsao-num">${fN(comp.pendentes)}</span><span class="cap-previsao-lbl">pendentes</span></div>
+        <div class="cap-previsao-item"><span class="cap-previsao-num" style="color:${comp.previsaoDias===null?'#7a8798':comp.previsaoDias<=7?'#1a9c62':'#e07b00'}">${comp.previsaoDias===null?'—':comp.previsaoDias+' dias'}</span><span class="cap-previsao-lbl">previsão</span></div>
+      </div>
+      ${comp.previsaoDias===null?`<div style="font-size:11px;color:#7a8798;margin-top:6px;">Dados insuficientes para projeção</div>`:''}
+    </div>`;
+
+  // ---- Tabela semanal ----
+  const semHTML = `
+    <div class="cap-section-title">📅 Análise Semanal</div>
+    <div class="cap-table-wrap">
+    <table class="cap-table">
+      <thead><tr>
+        <th>Semana</th><th>Únicos Validados</th><th>Total Validações</th>
+        <th>Preventivo</th><th>Corretivo</th><th>Revalidações</th>
+        <th>Pendentes</th><th>Cobertura</th><th>Média Diária</th>
+      </tr></thead>
+      <tbody>
+      ${comp.semanasOrdenadas.length===0?`<tr><td colspan="9" style="text-align:center;color:#7a8798;padding:20px;">Sem dados no período</td></tr>`:
+        comp.semanasOrdenadas.map(s=>`<tr>
+          <td>${s.semana}</td>
+          <td>${fN(s.unicos)}</td>
+          <td>${fN(s.total)}</td>
+          <td>${fN(s.prev)}</td>
+          <td>${fN(s.corr)}</td>
+          <td>${fN(s.revalidacoes)}</td>
+          <td>${fN(s.pendentes)}</td>
+          <td><span style="color:${s.cobertura>=100?'#1a9c62':s.cobertura>=70?'#1a4480':'#e07b00'};font-weight:700;">${fP(s.cobertura)}</span></td>
+          <td>${s.mediaDiaria>0?s.mediaDiaria.toFixed(1):'—'}</td>
+        </tr>`).join('')
+      }
+      </tbody>
+    </table>
+    </div>`;
+
+  // ---- Ranking ----
+  const rankTotal = comp.ranking.length;
+  const rankStart = CapCDState.rankPage * CapCDState.rankPageSize;
+  const rankSlice = comp.ranking.slice(rankStart, rankStart + CapCDState.rankPageSize);
+  const rankPages = Math.ceil(rankTotal / CapCDState.rankPageSize);
+  const rankHTML = `
+    <div class="cap-section-title">🏆 Ranking — Produtos com Mais Validações</div>
+    <div class="cap-table-wrap">
+    <table class="cap-table">
+      <thead><tr>
+        <th>#</th><th>CODPROD</th><th>Descrição</th><th>Total</th>
+        <th>Preventivo</th><th>Corretivo</th><th>Revalidações</th><th>Última Validação</th>
+      </tr></thead>
+      <tbody>
+      ${rankSlice.length===0?`<tr><td colspan="8" style="text-align:center;color:#7a8798;padding:20px;">Sem dados</td></tr>`:
+        rankSlice.map((r,i)=>`<tr>
+          <td style="font-weight:700;color:#7a8798;">${rankStart+i+1}</td>
+          <td><strong>${escapeHtml(r.cod)}</strong></td>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
+          <td><span style="font-weight:700;color:#1a4480;">${fN(r.total)}</span></td>
+          <td>${fN(r.prev)}</td><td>${fN(r.corr)}</td>
+          <td>${fN(r.revalidacoes)}</td>
+          <td>${fDt(r.ultima)}</td>
+        </tr>`).join('')
+      }
+      </tbody>
+    </table>
+    </div>
+    ${rankPages>1?`<div class="cap-pag">
+      <button onclick="CapCDState.rankPage=Math.max(0,CapCDState.rankPage-1);renderCapacidadeCD();" ${CapCDState.rankPage===0?'disabled':''}>◀</button>
+      <span>${CapCDState.rankPage+1} / ${rankPages}</span>
+      <button onclick="CapCDState.rankPage=Math.min(${rankPages-1},CapCDState.rankPage+1);renderCapacidadeCD();" ${CapCDState.rankPage===rankPages-1?'disabled':''}>▶</button>
+    </div>`:''}`;
+
+  // ---- Tabela detalhada de validações ----
+  const detTotal = comp.tblDetalhada.length;
+  const detStart = CapCDState.detPage * CapCDState.detPageSize;
+  const detSlice = comp.tblDetalhada.slice(detStart, detStart + CapCDState.detPageSize);
+  const detPages = Math.ceil(detTotal / CapCDState.detPageSize);
+  const detHTML = `
+    <div class="cap-section-title">📋 Tabela Detalhada de Validações <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(detTotal)} ocorrências)</span></div>
+    <div class="cap-table-wrap">
+    <table class="cap-table">
+      <thead><tr>
+        <th>CODPROD</th><th>Descrição</th>
+        <th>Cap. Inicial</th><th>Cap. Atual</th><th>Diferença</th>
+        <th>Status Ajuste</th><th>Tipo</th><th>Data</th>
+        <th>RUA</th><th>PREDIO</th><th>APTO</th>
+      </tr></thead>
+      <tbody>
+      ${detSlice.length===0?`<tr><td colspan="11" style="text-align:center;color:#7a8798;padding:20px;">Sem dados no período</td></tr>`:
+        detSlice.map(r=>`<tr>
+          <td><strong>${escapeHtml(r.codprod)}</strong></td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
+          <td>${r.capIni!=null?fN(r.capIni):'—'}</td>
+          <td>${r.capAtual!=null?fN(r.capAtual):'—'}</td>
+          <td style="font-weight:700;color:${r.diff==null?'#7a8798':r.diff>0?'#1a9c62':r.diff<0?'#d64545':'#7a8798'}">${fDiff(r.diff)}</td>
+          <td>${badgeAjuste(r.status)}</td>
+          <td><span style="background:${r.tipo==='PREVENTIVO'?'#e6f9f0':'#fdf0f0'};color:${r.tipo==='PREVENTIVO'?'#1a9c62':'#d64545'};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${escapeHtml(r.tipo)}</span></td>
+          <td>${fDt(r.dt)}</td>
+          <td>${escapeHtml(r.rua)}</td><td>${escapeHtml(r.predio)}</td><td>${escapeHtml(r.apto)}</td>
+        </tr>`).join('')
+      }
+      </tbody>
+    </table>
+    </div>
+    ${detPages>1?`<div class="cap-pag">
+      <button onclick="CapCDState.detPage=Math.max(0,CapCDState.detPage-1);renderCapacidadeCD();" ${CapCDState.detPage===0?'disabled':''}>◀</button>
+      <span>${CapCDState.detPage+1} / ${detPages}</span>
+      <button onclick="CapCDState.detPage=Math.min(${detPages-1},CapCDState.detPage+1);renderCapacidadeCD();" ${CapCDState.detPage===detPages-1?'disabled':''}>▶</button>
+    </div>`:''}`;
+
+  // ---- Tabela principal 8022 ----
+  // Ordenação: RUA ASC → PREDIO ASC → NIVEL ASC → APTO ASC
+  const sortedRows = [...comp.rows8022].sort((a,b)=>{
+    const ruaA = a.rua||'', ruaB = b.rua||'';
+    if(ruaA!==ruaB) return ruaA.localeCompare(ruaB,undefined,{numeric:true});
+    const prA = a.predio||'', prB = b.predio||'';
+    if(prA!==prB) return prA.localeCompare(prB,undefined,{numeric:true});
+    const nvA = a.nivel||'', nvB = b.nivel||'';
+    if(nvA!==nvB) return nvA.localeCompare(nvB,undefined,{numeric:true});
+    return (a.apto||'').localeCompare(b.apto||'',undefined,{numeric:true});
+  });
+
+  const COLS_ALL = ['codprod','descricao','codauxiliar2','codauxiliar','lastropal','alturapal','qttotpal','codfornec','fornecedor','revenda','capacidade','pontoreposicao','pkestru','pk_end','codendereco','rua','predio','nivel','apto','caracteristica','pulmao','tipo_1'];
+  const COLS_SHORT = ['codprod','descricao','capacidade','pontoreposicao','rua','predio','apto'];
+  const HEADERS = {codprod:'CODPROD',descricao:'DESCRIÇÃO',codauxiliar2:'COD.AUX2',codauxiliar:'COD.AUX',lastropal:'LASTROPAL',alturapal:'ALTURAPAL',qttotpal:'QTTOTPAL',codfornec:'CODFORNEC',fornecedor:'FORNECEDOR',revenda:'REVENDA',capacidade:'CAPACIDADE',pontoreposicao:'P.REPOS.',pkestru:'PKESTRU',pk_end:'PK_END',codendereco:'CODENDERECO',rua:'RUA',predio:'PRÉDIO',nivel:'NÍVEL',apto:'APTO',caracteristica:'CARACT.',pulmao:'PULMÃO',tipo_1:'TIPO_1'};
+
+  const activeCols = CapCDState.mostrarDetalhes ? COLS_ALL : COLS_SHORT;
+
+  const tblTotal = sortedRows.length;
+  const tblStart = CapCDState.tblPage * CapCDState.tblPageSize;
+  const tblSlice = sortedRows.slice(tblStart, tblStart + CapCDState.tblPageSize);
+  const tblPages = Math.ceil(tblTotal / CapCDState.tblPageSize);
+
+  const tblHTML = `
+    <div class="cap-section-title">📦 Tabela Principal — Estoque Elegível 8022
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(tblTotal)} itens NIVEL=1)</span>
+    </div>
+    <div class="cap-controls-row">
+      <label class="cap-toggle-label">Mostrar detalhes:</label>
+      <div class="cap-toggle-group">
+        <button onclick="CapCDState.mostrarDetalhes=true;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${CapCDState.mostrarDetalhes?'active':''}">Sim</button>
+        <button onclick="CapCDState.mostrarDetalhes=false;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${!CapCDState.mostrarDetalhes?'active':''}">Não</button>
+      </div>
+      <button class="cap-btn-pdf" onclick="capExportPDF()">📄 Extrair PDF</button>
+    </div>
+    <div class="cap-table-wrap" id="cap-main-table-wrap">
+    <table class="cap-table" id="cap-main-table">
+      <thead><tr>${activeCols.map(c=>`<th>${HEADERS[c]}</th>`).join('')}</tr></thead>
+      <tbody>
+      ${tblSlice.length===0?`<tr><td colspan="${activeCols.length}" style="text-align:center;color:#7a8798;padding:20px;">Sem dados</td></tr>`:
+        tblSlice.map(r=>`<tr>${activeCols.map(c=>`<td>${escapeHtml(String(r[c]??''))}</td>`).join('')}</tr>`).join('')
+      }
+      </tbody>
+    </table>
+    </div>
+    ${tblPages>1?`<div class="cap-pag">
+      <button onclick="CapCDState.tblPage=Math.max(0,CapCDState.tblPage-1);renderCapacidadeCD();" ${CapCDState.tblPage===0?'disabled':''}>◀</button>
+      <span>${CapCDState.tblPage+1} / ${tblPages}</span>
+      <button onclick="CapCDState.tblPage=Math.min(${tblPages-1},CapCDState.tblPage+1);renderCapacidadeCD();" ${CapCDState.tblPage===tblPages-1?'disabled':''}>▶</button>
+    </div>`:''}`;
+
+  // ---- Monta HTML final ----
+  pane.innerHTML = `
+    <div class="panel-section cap-root">
+      <div class="cap-header">
+        <h2 class="cap-title">📦 Capacidade CD</h2>
+        ${filtroHTML}
+      </div>
+      ${avisosHTML}
+      ${l1}${l2}${l3}
+      ${ajHTML}
+      <div class="cap-charts-row">
+        <div class="cap-chart-box">
+          <div class="cap-chart-title">Validações por Dia</div>
+          <div style="height:220px;"><canvas id="cap-chart-dia"></canvas></div>
+        </div>
+        <div class="cap-chart-box">
+          <div class="cap-chart-title">Preventivo × Corretivo</div>
+          <div style="height:220px;"><canvas id="cap-chart-tipo"></canvas></div>
+        </div>
+        <div class="cap-chart-box">
+          <div class="cap-chart-title">Cobertura Semanal (%)</div>
+          <div style="height:220px;"><canvas id="cap-chart-semanal"></canvas></div>
+        </div>
+      </div>
+      ${previsaoHTML}
+      ${semHTML}
+      ${rankHTML}
+      ${detHTML}
+      ${tblHTML}
+    </div>`;
+
+  // ---- Renderiza gráficos ----
+  requestAnimationFrame(() => capRenderCharts(comp));
+}
+
+function capRenderCharts(comp) {
+  if (typeof Chart === 'undefined') return;
+
+  // Gráfico 1: Barras empilhadas por dia
+  const ctx1 = document.getElementById('cap-chart-dia');
+  if (ctx1) {
+    const dias = comp.diasOrdenados;
+    CapCDState.charts['dia'] = new Chart(ctx1, {
+      type: 'bar',
+      data: {
+        labels: dias.map(([,d])=>d.label),
+        datasets: [
+          { label:'Preventivo', data: dias.map(([,d])=>d.prev), backgroundColor:'#1a9c62cc', stack:'s' },
+          { label:'Corretivo',  data: dias.map(([,d])=>d.corr), backgroundColor:'#d64545cc', stack:'s' },
+        ]
+      },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:true,position:'top',labels:{font:{size:10}}},
+          tooltip:{callbacks:{title:ctx=>ctx[0].label}} },
+        scales:{ x:{ticks:{color:'#7a8798',font:{size:9}},grid:{color:'#eef1f4'},stacked:true},
+          y:{ticks:{color:'#7a8798',font:{size:9}},beginAtZero:true,stacked:true,grid:{color:'#eef1f4'}} } }
+    });
+  }
+
+  // Gráfico 2: Doughnut Preventivo × Corretivo
+  const ctx2 = document.getElementById('cap-chart-tipo');
+  if (ctx2) {
+    CapCDState.charts['tipo'] = new Chart(ctx2, {
+      type: 'doughnut',
+      data: {
+        labels: ['Preventivo','Corretivo'],
+        datasets: [{ data:[comp.totalPreventivo, comp.totalCorretivo], backgroundColor:['#1a9c62','#d64545'], borderWidth:2 }]
+      },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:true,position:'bottom',labels:{font:{size:10}}},
+          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.parsed} (${comp.totalValidacoes>0?(ctx.parsed/comp.totalValidacoes*100).toFixed(1)+'%':'—'})`}} } }
+    });
+  }
+
+  // Gráfico 3: Linha de cobertura semanal
+  const ctx3 = document.getElementById('cap-chart-semanal');
+  if (ctx3) {
+    CapCDState.charts['semanal'] = new Chart(ctx3, {
+      type: 'line',
+      data: {
+        labels: comp.semanasOrdenadas.map(s=>s.semana),
+        datasets: [{
+          label:'Cobertura (%)', data: comp.semanasOrdenadas.map(s=>parseFloat(s.cobertura.toFixed(1))),
+          borderColor:'#1a4480', backgroundColor:'#1a448020', fill:true, tension:0.3, pointRadius:4
+        }]
+      },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false} },
+        scales:{ x:{ticks:{color:'#7a8798',font:{size:9}},grid:{color:'#eef1f4'}},
+          y:{ticks:{color:'#7a8798',font:{size:9},callback:v=>v+'%'},beginAtZero:true,max:100,grid:{color:'#eef1f4'}} } }
+    });
+  }
+}
+
+/* ---- EXPORTAÇÃO PDF ---- */
+function capExportPDF() {
+  const processed = window.APP_STATE && window.APP_STATE.processed ? window.APP_STATE.processed : null;
+  if (!processed || !processed.p8022CDRows) { toast('Sem dados para exportar.','error'); return; }
+
+  if (typeof window.jspdf === 'undefined') { toast('jsPDF não disponível.','error'); return; }
+
+  const rows = [...(processed.p8022CDRows||[])].sort((a,b)=>{
+    const ruaA = a.rua||'', ruaB = b.rua||'';
+    if(ruaA!==ruaB) return ruaA.localeCompare(ruaB,undefined,{numeric:true});
+    const prA = a.predio||'', prB = b.predio||'';
+    if(prA!==prB) return prA.localeCompare(prB,undefined,{numeric:true});
+    const nvA = a.nivel||'', nvB = b.nivel||'';
+    if(nvA!==nvB) return nvA.localeCompare(nvB,undefined,{numeric:true});
+    return (a.apto||'').localeCompare(b.apto||'',undefined,{numeric:true});
+  });
+
+  const COLS_ALL  = ['codprod','descricao','codauxiliar2','codauxiliar','lastropal','alturapal','qttotpal','codfornec','fornecedor','revenda','capacidade','pontoreposicao','pkestru','pk_end','codendereco','rua','predio','nivel','apto','caracteristica','pulmao','tipo_1'];
+  const COLS_SHORT= ['codprod','descricao','capacidade','pontoreposicao','rua','predio','apto'];
+  const HEADERS   = {codprod:'CODPROD',descricao:'DESCRIÇÃO',codauxiliar2:'COD.AUX2',codauxiliar:'COD.AUX',lastropal:'LASTROPAL',alturapal:'ALTURAPAL',qttotpal:'QTTOTPAL',codfornec:'CODFORNEC',fornecedor:'FORNECEDOR',revenda:'REVENDA',capacidade:'CAPACIDADE',pontoreposicao:'P.REPOS.',pkestru:'PKESTRU',pk_end:'PK_END',codendereco:'CODENDERECO',rua:'RUA',predio:'PRÉDIO',nivel:'NÍVEL',apto:'APTO',caracteristica:'CARACT.',pulmao:'PULMÃO',tipo_1:'TIPO_1'};
+
+  const activeCols = CapCDState.mostrarDetalhes ? COLS_ALL : COLS_SHORT;
+
+  // Agrupa por RUA
+  const ruaMap = new Map();
+  rows.forEach(r => {
+    const rua = r.rua || '(sem rua)';
+    if(!ruaMap.has(rua)) ruaMap.set(rua, []);
+    ruaMap.get(rua).push(r);
+  });
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit:'pt', format:'a4', putOnlyUsedFonts:true });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 30;
+    const colW = Math.floor((pageW - margin*2) / activeCols.length);
+    const rowH = 14, headerH = 18;
+    let y = margin;
+    let firstRua = true;
+
+    const addHeader = (rua) => {
+      doc.setFillColor(26,68,128); doc.rect(margin, y, pageW-margin*2, headerH, 'F');
+      doc.setTextColor(255,255,255); doc.setFontSize(10); doc.setFont('helvetica','bold');
+      doc.text(`RUA ${rua} — Capacidade CD`, margin+6, y+12);
+      y += headerH + 4;
+      // Cabeçalho das colunas
+      doc.setFillColor(240,244,250); doc.rect(margin, y, pageW-margin*2, rowH, 'F');
+      doc.setTextColor(26,68,128); doc.setFontSize(7); doc.setFont('helvetica','bold');
+      activeCols.forEach((c,i) => {
+        doc.text(String(HEADERS[c]||c).substring(0,12), margin+i*colW+2, y+9, {maxWidth:colW-4});
+      });
+      y += rowH;
+      doc.setFont('helvetica','normal'); doc.setTextColor(40,40,40);
+    };
+
+    [...ruaMap.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true})).forEach(([rua, ruaRows]) => {
+      if(!firstRua) { doc.addPage(); y = margin; }
+      firstRua = false;
+      addHeader(rua);
+      doc.setFontSize(7);
+      ruaRows.forEach((r, ri) => {
+        if(y + rowH > pageH - margin) {
+          doc.addPage(); y = margin;
+          addHeader(rua + ' (cont.)');
+          doc.setFontSize(7);
+        }
+        if(ri%2===0) { doc.setFillColor(248,250,253); doc.rect(margin, y, pageW-margin*2, rowH, 'F'); }
+        doc.setTextColor(40,40,40);
+        activeCols.forEach((c,i) => {
+          const val = String(r[c]??'').substring(0,18);
+          doc.text(val, margin+i*colW+2, y+9, {maxWidth:colW-4});
+        });
+        y += rowH;
+      });
+    });
+
+    doc.save('Capacidade_CD.pdf');
+    toast('PDF gerado com sucesso!', 'success');
+  } catch(err) {
+    console.error('capExportPDF erro:', err);
+    toast('Erro ao gerar PDF: '+err.message, 'error');
+  }
 }
