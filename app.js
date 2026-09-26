@@ -9587,9 +9587,13 @@ const CapCDState = {
   rankPage: 0,              // paginação do ranking
   detPage: 0,               // paginação tabela detalhada
   tblPage: 0,               // paginação tabela principal
+  entradosPage: 0,          // paginação itens entrados
+  saidosPage: 0,            // paginação itens saídos
   rankPageSize: 15,
   detPageSize: 20,
   tblPageSize: 25,
+  entradosPageSize: 10,
+  saidosPageSize: 10,
   charts: {}                // referências dos Chart.js
 };
 
@@ -9651,8 +9655,24 @@ function capCompute(processed) {
   // Produtos únicos validados (para cobertura)
   const uniqueValidados = new Set(validacoesElegiveis.map(r => r.cod));
   const totalUnicoValidados = uniqueValidados.size;
+
+  // — Itens Entrados/Saídos são calculados aqui para ajustar pendentes —
+  // (cálculo completo feito mais abaixo, após novaMap)
+  const _set8022Early = new Set(rows8022.map(r => r.codprod));
+  const _set8022NovaEarly = new Set(rows8022N.map(r => r.codprod));
+  // Saídos = em 8022 mas não em 8022 Nova — não precisam ser validados
+  const _saidosSet = processed.p8022NovaDispo
+    ? new Set(rows8022.filter(r => !_set8022NovaEarly.has(r.codprod)).map(r => r.codprod))
+    : new Set();
+  // Entrados = em 8022 Nova mas não em 8022 — devem ser contabilizados como pendentes
+  const _entradosCount = processed.p8022NovaDispo
+    ? rows8022N.filter(r => !_set8022Early.has(r.codprod)).length
+    : 0;
+  // Pendentes efetivos: elegíveis não validados (excl. saídos) + entrados não validados
+  const pendentesBase = [...elegiveisSet].filter(cod => !uniqueValidados.has(cod) && !_saidosSet.has(cod)).length;
+  const pendentes = pendentesBase + _entradosCount;
+
   const cobertura = totalElegiveis > 0 ? totalUnicoValidados / totalElegiveis * 100 : 0;
-  const pendentes = totalElegiveis - totalUnicoValidados;
 
   // — Produtividade (total de ocorrências, sem dedup) —
   const totalValidacoes  = cr.length;
@@ -9997,113 +10017,110 @@ function renderCapacidadeCD() {
     </div>
     ${comp.ultimoDiaRows.length===0?`<div class="cap-aviso-inline">⚠️ Sem dados de validação disponíveis.</div>`:
     `<div class="cap-table-wrap">
-    <table class="cap-table cap-sortable" data-tbl="ultval">
+    <table class="cap-table data-table">
       <thead><tr>
-        <th data-col="codprod" data-dir="asc" onclick="capSortTable(this,'ultval')">CODPROD ↕</th>
-        <th data-col="descricao" data-dir="asc" onclick="capSortTable(this,'ultval')">Descrição ↕</th>
-        <th data-col="capIni" data-dir="asc" onclick="capSortTable(this,'ultval')">Cap. Inicial ↕</th>
-        <th data-col="capAtual" data-dir="asc" onclick="capSortTable(this,'ultval')">Cap. Atual ↕</th>
-        <th data-col="diff" data-dir="desc" class="cap-sort-active" onclick="capSortTable(this,'ultval')">Diferença ↓</th>
-        <th data-col="tipo" data-dir="asc" onclick="capSortTable(this,'ultval')">Tipo ↕</th>
-        <th data-col="rua" data-dir="asc" onclick="capSortTable(this,'ultval')">RUA ↕</th>
-        <th data-col="predio" data-dir="asc" onclick="capSortTable(this,'ultval')">PRÉDIO ↕</th>
-        <th data-col="apto" data-dir="asc" onclick="capSortTable(this,'ultval')">APTO ↕</th>
+        <th>CODPROD</th>
+        <th>Descrição</th>
+        <th>Cap. Inicial</th>
+        <th>Cap. Atual</th>
+        <th>Diferença</th>
+        <th>Tipo</th>
+        <th>RUA</th>
+        <th>PRÉDIO</th>
+        <th>APTO</th>
       </tr></thead>
       <tbody>
       ${comp.ultimoDiaRows.map(r=>`<tr>
         <td><strong>${escapeHtml(r.codprod)}</strong></td>
         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
-        <td>${r.capIni!=null?fN(r.capIni):'—'}</td>
-        <td>${r.capAtual!=null?fN(r.capAtual):'—'}</td>
-        <td>${fDiffCol(r.diff)}</td>
+        <td>${r.capIni!=null?r.capIni:'—'}</td>
+        <td>${r.capAtual!=null?r.capAtual:'—'}</td>
+        <td style="font-weight:700;color:${r.diff==null?'#7a8798':r.diff>0?'#1a9c62':r.diff<0?'#d64545':'#7a8798'}">${r.diff!=null?r.diff:'—'}</td>
         <td><span style="background:${r.tipo==='PREVENTIVO'?'#e6f9f0':'#fdf0f0'};color:${r.tipo==='PREVENTIVO'?'#1a9c62':'#d64545'};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${escapeHtml(r.tipo||'')}</span></td>
         <td>${escapeHtml(r.rua)}</td><td>${escapeHtml(r.predio)}</td><td>${escapeHtml(r.apto)}</td>
       </tr>`).join('')}
       </tbody>
     </table></div>`}`;
 
-  // ---- Itens Entrados no Estoque ----
+  // ---- Itens Entrados no Estoque (paginado) ----
+  const entTotal = comp.itensEntrados.length;
+  const entStart = CapCDState.entradosPage * CapCDState.entradosPageSize;
+  const entSlice = comp.itensEntrados.slice(entStart, entStart + CapCDState.entradosPageSize);
+  const entPages = Math.ceil(entTotal / CapCDState.entradosPageSize);
+  const mkEntRow = r => `<tr>
+    <td><strong>${escapeHtml(r.codprod)}</strong></td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
+    <td>${r.capacidade!=null?r.capacidade:'—'}</td>
+    <td>${escapeHtml(r.codendereco)}</td>
+    <td>${escapeHtml(r.pk_end)}</td>
+    <td>${escapeHtml(r.rua)}</td><td>${escapeHtml(r.predio)}</td><td>${escapeHtml(r.apto)}</td>
+  </tr>`;
   const entradosHTML = !processed.p8022NovaDispo ? '' : `
     <div class="cap-section-title">🟢 Itens que Entraram no Estoque
-      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(comp.itensEntrados.length)} itens em 8022 Nova mas não em 8022)</span>
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(entTotal)} itens em 8022 Nova mas não em 8022)</span>
     </div>
-    ${comp.itensEntrados.length===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item novo no estoque.</div>`:
+    ${entTotal===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item novo no estoque.</div>`:
     `<div class="cap-table-wrap">
-    <table class="cap-table cap-sortable" data-tbl="entrados">
+    <table class="cap-table data-table">
       <thead><tr>
-        <th data-col="codprod" data-dir="asc" onclick="capSortTable(this,'entrados')">CODPROD ↕</th>
-        <th data-col="descricao" data-dir="asc" onclick="capSortTable(this,'entrados')">Descrição ↕</th>
-        <th data-col="capacidade" data-dir="asc" onclick="capSortTable(this,'entrados')">Capacidade ↕</th>
-        <th data-col="codendereco" data-dir="asc" onclick="capSortTable(this,'entrados')">Endereço ↕</th>
-        <th data-col="pk_end" data-dir="asc" onclick="capSortTable(this,'entrados')">PK_END ↕</th>
-        <th data-col="rua" data-dir="asc" onclick="capSortTable(this,'entrados')">RUA ↕</th>
-        <th data-col="predio" data-dir="asc" onclick="capSortTable(this,'entrados')">PRÉDIO ↕</th>
-        <th data-col="apto" data-dir="asc" onclick="capSortTable(this,'entrados')">APTO ↕</th>
+        <th>CODPROD</th><th>Descrição</th><th>Capacidade</th>
+        <th>Endereço</th><th>PK_END</th><th>RUA</th><th>PRÉDIO</th><th>APTO</th>
       </tr></thead>
-      <tbody>
-      ${comp.itensEntrados.map(r=>`<tr>
-        <td><strong>${escapeHtml(r.codprod)}</strong></td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
-        <td>${r.capacidade!=null?fN(r.capacidade):'—'}</td>
-        <td>${escapeHtml(r.codendereco)}</td>
-        <td>${escapeHtml(r.pk_end)}</td>
-        <td>${escapeHtml(r.rua)}</td><td>${escapeHtml(r.predio)}</td><td>${escapeHtml(r.apto)}</td>
-      </tr>`).join('')}
-      </tbody>
-    </table></div>`}`;
+      <tbody>${entSlice.map(mkEntRow).join('')}</tbody>
+    </table></div>
+    ${entPages>1?`<div class="cap-pag">
+      <button onclick="CapCDState.entradosPage=Math.max(0,CapCDState.entradosPage-1);renderCapacidadeCD();" ${CapCDState.entradosPage===0?'disabled':''}>◀</button>
+      <span>${CapCDState.entradosPage+1} / ${entPages}</span>
+      <button onclick="CapCDState.entradosPage=Math.min(${entPages-1},CapCDState.entradosPage+1);renderCapacidadeCD();" ${CapCDState.entradosPage===entPages-1?'disabled':''}>▶</button>
+    </div>`:''}`}`;
 
-  // ---- Itens Saídos do Estoque ----
+  // ---- Itens Saídos do Estoque (paginado) ----
+  const saiTotal = comp.itensSaidos.length;
+  const saiStart = CapCDState.saidosPage * CapCDState.saidosPageSize;
+  const saiSlice = comp.itensSaidos.slice(saiStart, saiStart + CapCDState.saidosPageSize);
+  const saiPages = Math.ceil(saiTotal / CapCDState.saidosPageSize);
+  const mkSaiRow = r => `<tr>
+    <td><strong>${escapeHtml(r.codprod)}</strong></td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
+    <td>${r.capacidade!=null?r.capacidade:'—'}</td>
+    <td>${escapeHtml(r.codendereco)}</td>
+    <td>${escapeHtml(r.pk_end)}</td>
+    <td>${escapeHtml(r.rua)}</td><td>${escapeHtml(r.predio)}</td><td>${escapeHtml(r.apto)}</td>
+  </tr>`;
   const saidosHTML = !processed.p8022NovaDispo ? '' : `
     <div class="cap-section-title">🔴 Itens que Saíram do Estoque
-      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(comp.itensSaidos.length)} itens em 8022 mas não em 8022 Nova)</span>
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(saiTotal)} itens em 8022 mas não em 8022 Nova — excluídos dos pendentes)</span>
     </div>
-    ${comp.itensSaidos.length===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item saiu do estoque.</div>`:
+    ${saiTotal===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item saiu do estoque.</div>`:
     `<div class="cap-table-wrap">
-    <table class="cap-table cap-sortable" data-tbl="saidos">
+    <table class="cap-table data-table">
       <thead><tr>
-        <th data-col="codprod" data-dir="asc" onclick="capSortTable(this,'saidos')">CODPROD ↕</th>
-        <th data-col="descricao" data-dir="asc" onclick="capSortTable(this,'saidos')">Descrição ↕</th>
-        <th data-col="capacidade" data-dir="asc" onclick="capSortTable(this,'saidos')">Capacidade ↕</th>
-        <th data-col="codendereco" data-dir="asc" onclick="capSortTable(this,'saidos')">Endereço ↕</th>
-        <th data-col="pk_end" data-dir="asc" onclick="capSortTable(this,'saidos')">PK_END ↕</th>
-        <th data-col="rua" data-dir="asc" onclick="capSortTable(this,'saidos')">RUA ↕</th>
-        <th data-col="predio" data-dir="asc" onclick="capSortTable(this,'saidos')">PRÉDIO ↕</th>
-        <th data-col="apto" data-dir="asc" onclick="capSortTable(this,'saidos')">APTO ↕</th>
+        <th>CODPROD</th><th>Descrição</th><th>Capacidade</th>
+        <th>Endereço</th><th>PK_END</th><th>RUA</th><th>PRÉDIO</th><th>APTO</th>
       </tr></thead>
-      <tbody>
-      ${comp.itensSaidos.map(r=>`<tr>
-        <td><strong>${escapeHtml(r.codprod)}</strong></td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
-        <td>${r.capacidade!=null?fN(r.capacidade):'—'}</td>
-        <td>${escapeHtml(r.codendereco)}</td>
-        <td>${escapeHtml(r.pk_end)}</td>
-        <td>${escapeHtml(r.rua)}</td><td>${escapeHtml(r.predio)}</td><td>${escapeHtml(r.apto)}</td>
-      </tr>`).join('')}
-      </tbody>
-    </table></div>`}`;
+      <tbody>${saiSlice.map(mkSaiRow).join('')}</tbody>
+    </table></div>
+    ${saiPages>1?`<div class="cap-pag">
+      <button onclick="CapCDState.saidosPage=Math.max(0,CapCDState.saidosPage-1);renderCapacidadeCD();" ${CapCDState.saidosPage===0?'disabled':''}>◀</button>
+      <span>${CapCDState.saidosPage+1} / ${saiPages}</span>
+      <button onclick="CapCDState.saidosPage=Math.min(${saiPages-1},CapCDState.saidosPage+1);renderCapacidadeCD();" ${CapCDState.saidosPage===saiPages-1?'disabled':''}>▶</button>
+    </div>`:''}`}`;
 
   // ---- Itens Transferidos ----
   const urgCount = comp.itensTransferidos.filter(r=>r.urgencia==='URGENTE').length;
   const normCount = comp.itensTransferidos.filter(r=>r.urgencia==='NORMAL').length;
   const transferidosHTML = !processed.p8022NovaDispo ? '' : `
     <div class="cap-section-title">🔄 Itens Transferidos (Endereço Alterado)
-      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(comp.itensTransferidos.length)} total — ${fN(urgCount)} <span style="color:#d64545;font-weight:700;">URGENTE</span> · ${fN(normCount)} Normal)</span>
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(comp.itensTransferidos.length)} total — ${fN(urgCount)} URGENTE · ${fN(normCount)} Normal)</span>
     </div>
     ${comp.itensTransferidos.length===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item transferido.</div>`:
     `<div class="cap-table-wrap">
-    <table class="cap-table cap-sortable" data-tbl="transf">
+    <table class="cap-table data-table">
       <thead><tr>
-        <th data-col="codprod" data-dir="asc" onclick="capSortTable(this,'transf')">CODPROD ↕</th>
-        <th data-col="descricao" data-dir="asc" onclick="capSortTable(this,'transf')">Descrição ↕</th>
-        <th data-col="urgencia" data-dir="asc" onclick="capSortTable(this,'transf')">Urgência ↕</th>
-        <th data-col="capIni" data-dir="asc" onclick="capSortTable(this,'transf')">Cap. Ant. ↕</th>
-        <th data-col="capNova" data-dir="asc" onclick="capSortTable(this,'transf')">Cap. Nova ↕</th>
-        <th data-col="diff" data-dir="desc" class="cap-sort-active" onclick="capSortTable(this,'transf')">Diferença ↓</th>
-        <th data-col="endOrig" data-dir="asc" onclick="capSortTable(this,'transf')">End. Anterior ↕</th>
-        <th data-col="endNova" data-dir="asc" onclick="capSortTable(this,'transf')">End. Novo ↕</th>
-        <th data-col="pkOrig" data-dir="asc" onclick="capSortTable(this,'transf')">PK_END Ant. ↕</th>
-        <th data-col="pkNova" data-dir="asc" onclick="capSortTable(this,'transf')">PK_END Novo ↕</th>
-        <th data-col="ruaNova" data-dir="asc" onclick="capSortTable(this,'transf')">RUA Nova ↕</th>
+        <th>CODPROD</th><th>Descrição</th><th>Urgência</th>
+        <th>Cap. Ant.</th><th>Cap. Nova</th><th>Diferença</th>
+        <th>End. Anterior</th><th>End. Novo</th>
+        <th>PK_END Ant.</th><th>PK_END Novo</th><th>RUA Nova</th>
       </tr></thead>
       <tbody>
       ${[...comp.itensTransferidos].sort((a,b)=>{
@@ -10117,9 +10134,9 @@ function renderCapacidadeCD() {
           <td><strong>${escapeHtml(r.codprod)}</strong></td>
           <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
           <td><span style="background:${urgBg};color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">${r.urgencia}</span></td>
-          <td>${r.capIni!=null?fN(r.capIni):'—'}</td>
-          <td>${r.capNova!=null?fN(r.capNova):'—'}</td>
-          <td>${fDiffCol(r.diff)}</td>
+          <td>${r.capIni!=null?r.capIni:'—'}</td>
+          <td>${r.capNova!=null?r.capNova:'—'}</td>
+          <td style="font-weight:700;color:${r.diff==null?'#7a8798':r.diff>0?'#1a9c62':r.diff<0?'#d64545':'#7a8798'}">${r.diff!=null?r.diff:'—'}</td>
           <td style="font-size:11px;">${escapeHtml(r.endOrig)}</td>
           <td style="font-size:11px;">${escapeHtml(r.endNova)}</td>
           <td><span style="${r.pkMudou?'color:#d64545;font-weight:700;':''}">${escapeHtml(r.pkOrig)}</span></td>
@@ -10166,16 +10183,16 @@ function renderCapacidadeCD() {
   const rankHTML = `
     <div class="cap-section-title">🏆 Ranking — Produtos com Mais Validações</div>
     <div class="cap-table-wrap">
-    <table class="cap-table cap-sortable" data-tbl="rank">
+    <table class="cap-table data-table">
       <thead><tr>
         <th>#</th>
-        <th data-col="cod" data-dir="asc" onclick="capSortTable(this,'rank')">CODPROD ↕</th>
-        <th data-col="descricao" data-dir="asc" onclick="capSortTable(this,'rank')">Descrição ↕</th>
-        <th data-col="total" data-dir="desc" class="cap-sort-active" onclick="capSortTable(this,'rank')">Total ↓</th>
-        <th data-col="prev" data-dir="asc" onclick="capSortTable(this,'rank')">Preventivo ↕</th>
-        <th data-col="corr" data-dir="asc" onclick="capSortTable(this,'rank')">Corretivo ↕</th>
-        <th data-col="revalidacoes" data-dir="asc" onclick="capSortTable(this,'rank')">Revalidações ↕</th>
-        <th data-col="ultima" data-dir="asc" onclick="capSortTable(this,'rank')">Última Validação ↕</th>
+        <th>CODPROD</th>
+        <th>Descrição</th>
+        <th>Total</th>
+        <th>Preventivo</th>
+        <th>Corretivo</th>
+        <th>Revalidações</th>
+        <th>Última Validação</th>
       </tr></thead>
       <tbody>
       ${rankSlice.length===0?`<tr><td colspan="8" style="text-align:center;color:#7a8798;padding:20px;">Sem dados</td></tr>`:
@@ -10211,19 +10228,19 @@ function renderCapacidadeCD() {
   const detHTML = `
     <div class="cap-section-title">📋 Tabela Detalhada de Validações <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(detTotal)} ocorrências)</span></div>
     <div class="cap-table-wrap">
-    <table class="cap-table cap-sortable" data-tbl="det">
+    <table class="cap-table data-table">
       <thead><tr>
-        <th data-col="codprod" data-dir="asc" onclick="capSortTable(this,'det')">CODPROD ↕</th>
-        <th data-col="descricao" data-dir="asc" onclick="capSortTable(this,'det')">Descrição ↕</th>
-        <th data-col="capIni" data-dir="asc" onclick="capSortTable(this,'det')">Cap. Inicial ↕</th>
-        <th data-col="capAtual" data-dir="asc" onclick="capSortTable(this,'det')">Cap. Atual ↕</th>
-        <th data-col="diff" data-dir="desc" class="cap-sort-active" onclick="capSortTable(this,'det')">Diferença ↓</th>
-        <th data-col="status" data-dir="asc" onclick="capSortTable(this,'det')">Status Ajuste ↕</th>
-        <th data-col="tipo" data-dir="asc" onclick="capSortTable(this,'det')">Tipo ↕</th>
-        <th data-col="dt" data-dir="asc" onclick="capSortTable(this,'det')">Data ↕</th>
-        <th data-col="rua" data-dir="asc" onclick="capSortTable(this,'det')">RUA ↕</th>
-        <th data-col="predio" data-dir="asc" onclick="capSortTable(this,'det')">PRÉDIO ↕</th>
-        <th data-col="apto" data-dir="asc" onclick="capSortTable(this,'det')">APTO ↕</th>
+        <th>CODPROD</th>
+        <th>Descrição</th>
+        <th>Cap. Inicial</th>
+        <th>Cap. Atual</th>
+        <th>Diferença</th>
+        <th>Status Ajuste</th>
+        <th>Tipo</th>
+        <th>Data</th>
+        <th>RUA</th>
+        <th>PRÉDIO</th>
+        <th>APTO</th>
       </tr></thead>
       <tbody>
       ${detSlice.length===0?`<tr><td colspan="11" style="text-align:center;color:#7a8798;padding:20px;">Sem dados no período</td></tr>`:
@@ -10334,49 +10351,13 @@ function renderCapacidadeCD() {
       ${tblHTML}
     </div>`;
 
-  // ---- Renderiza gráficos ----
-  requestAnimationFrame(() => capRenderCharts(comp));
+  // ---- Renderiza gráficos e ativa sort ----
+  requestAnimationFrame(() => { capRenderCharts(comp); capActivateSortable(); });
 }
 
-/* ---- SORT HELPER ---- */
-function capSortTable(th, tblId) {
-  const table = th.closest('table');
-  if (!table) return;
-  const col = th.dataset.col;
-  const currentDir = th.dataset.dir || 'asc';
-  const newDir = currentDir === 'asc' ? 'desc' : 'asc';
-  // Reset all headers in this table
-  table.querySelectorAll('th').forEach(t => {
-    t.classList.remove('cap-sort-active');
-    t.dataset.dir = t.dataset.dir || 'asc';
-    // Reset arrow indicators
-    t.textContent = t.textContent.replace(/ [↑↓]$/, '') + ' ↕';
-  });
-  th.classList.add('cap-sort-active');
-  th.dataset.dir = newDir;
-  th.textContent = th.textContent.replace(/ [↕↑↓]$/, '') + (newDir === 'asc' ? ' ↑' : ' ↓');
-  // Re-attach onclick (lost when textContent changed) — use data attributes only
-  const tbody = table.querySelector('tbody');
-  if (!tbody) return;
-  const rows = [...tbody.querySelectorAll('tr')];
-  const isNum = col => ['capIni','capAtual','capNova','diff','total','prev','corr','capacidade','revalidacoes'].includes(col);
-  rows.sort((a, b) => {
-    const cells = a.querySelectorAll('td');
-    const cellsB = b.querySelectorAll('td');
-    const ths = table.querySelectorAll('th');
-    const idx = [...ths].findIndex(t => t.dataset.col === col);
-    if (idx < 0) return 0;
-    const va = (cells[idx]?.textContent||'').trim().replace(/[+,]/g,'');
-    const vb = (cellsB[idx]?.textContent||'').trim().replace(/[+,]/g,'');
-    if (isNum(col)) {
-      const na = parseFloat(va), nb = parseFloat(vb);
-      const an = isNaN(na), bn = isNaN(nb);
-      if (an && bn) return 0; if (an) return 1; if (bn) return -1;
-      return newDir === 'asc' ? na - nb : nb - na;
-    }
-    return newDir === 'asc' ? va.localeCompare(vb, undefined, {numeric:true}) : vb.localeCompare(va, undefined, {numeric:true});
-  });
-  rows.forEach(r => tbody.appendChild(r));
+/* ---- Ativa sortable em tabelas cap após render ---- */
+function capActivateSortable() {
+  document.querySelectorAll('table.cap-table.data-table').forEach(makeSortable);
 }
 
 function capRenderCharts(comp) {
