@@ -9826,12 +9826,17 @@ function capCompute(processed) {
         const capIni  = base.capacidade != null ? base.capacidade : null;
         const capAtual = nova.capacidade != null ? nova.capacidade : null;
         const diff = (capIni !== null && capAtual !== null) ? capAtual - capIni : null;
+        // Prioriza dados de "8022 Nova" para itens que não existem na "8022" original
+        const descricao = base.descricao || nova.descricao || '';
+        const rua    = base.rua    || nova.rua    || '';
+        const predio = base.predio || nova.predio || '';
+        const apto   = base.apto   || nova.apto   || '';
         return {
           codprod: r.cod,
-          descricao: base.descricao || '',
+          descricao,
           capIni, capAtual, diff,
           tipo: r.tipo,
-          rua: base.rua || '', predio: base.predio || '', apto: base.apto || ''
+          rua, predio, apto
         };
       }).sort((a,b) => {
         // Maior diferença primeiro (nulls vão ao fim)
@@ -9849,27 +9854,29 @@ function capCompute(processed) {
   const ajusteMap   = new Map(ajustesDetalhes.map(r => [r.codprod, r]));
   const tblDetalhada = validacoesElegiveis.map(r => {
     const base  = prod8022Map.get(r.cod) || {};
+    const nova2 = novaMap.get(r.cod) || {};
     const ajust = ajusteMap.get(r.cod) || {};
     return {
       codprod:   r.cod,
-      descricao: base.descricao || '',
+      descricao: base.descricao || nova2.descricao || '',
       capIni:    ajust.capIni   != null ? ajust.capIni  : null,
       capAtual:  ajust.capAtual != null ? ajust.capAtual: null,
       diff:      ajust.diff     != null ? ajust.diff    : null,
       status:    ajust.status   || (processed.p8022NovaDispo ? 'Sem Dados' : 'N/D'),
       tipo:      r.tipo,
       dt:        r.dt,
-      rua:       base.rua    || '',
-      predio:    base.predio || '',
-      apto:      base.apto   || '',
+      rua:       base.rua    || nova2.rua    || '',
+      predio:    base.predio || nova2.predio || '',
+      apto:      base.apto   || nova2.apto   || '',
     };
   });
 
   // — Ranking de produtos com mais validações —
   const ranking = [...prodContagem.entries()].map(([cod, e]) => {
-    const base = prod8022Map.get(cod) || {};
+    const base  = prod8022Map.get(cod) || {};
+    const nova2 = novaMap.get(cod) || {};
     const ult  = e.datas.length > 0 ? new Date(Math.max(...e.datas.map(d=>d.getTime()))) : null;
-    return { cod, descricao: base.descricao||'', total:e.total, prev:e.prev, corr:e.corr, revalidacoes: e.total-1, ultima: ult };
+    return { cod, descricao: base.descricao || nova2.descricao || '', total:e.total, prev:e.prev, corr:e.corr, revalidacoes: e.total-1, ultima: ult };
   }).sort((a,b) => b.total - a.total || a.cod.localeCompare(b.cod));
 
   return {
