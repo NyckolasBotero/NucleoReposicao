@@ -9783,6 +9783,24 @@ function capCompute(processed) {
 
   // — Itens Transferidos (CODENDERECO diferente entre 8022 e 8022 Nova) —
   const PK_END_INTEIRO_TYPES = new Set(['1-INTEIRO (1,9)', '1-INTEIRO(1,9)', '1-INTEIRO']);
+  // Hierarquia de espaço dos tipos de endereço (rank menor = mais espaço)
+  const capPkRank = pk => {
+    const s = String(pk||'').trim();
+    if (s.startsWith('1')) return 1; // 1-INTEIRO (maior)
+    if (s.startsWith('2')) return 2; // 2-DRIVE-IN
+    if (s.startsWith('8')) return 3; // 8-MEIO
+    if (s.startsWith('9')) return 4; // 9-TERCO (menor)
+    return 0; // desconhecido
+  };
+  const capPkLabel = pk => {
+    const s = String(pk||'').trim();
+    if (s.startsWith('1')) return '1-INTEIRO';
+    if (s.startsWith('2')) return '2-DRIVE-IN';
+    if (s.startsWith('8')) return '8-MEIO';
+    if (s.startsWith('9')) return '9-TERCO';
+    return pk || '—';
+  };
+
   const itensTransferidos = processed.p8022NovaDispo ? rows8022N.filter(r => {
     const orig = orig8022Map.get(r.codprod);
     if(!orig) return false;
@@ -9797,9 +9815,43 @@ function capCompute(processed) {
     const pkOrig = (orig ? orig.pk_end || '' : '').trim();
     const pkNova = (r.pk_end || '').trim();
     const pkMudou = pkOrig !== pkNova;
-    const capIgual = capIni !== null && capNova !== null && capIni === capNova;
-    let urgencia = 'NORMAL';
-    if (capIgual && pkMudou) urgencia = 'URGENTE';
+    const ruaOrig  = orig ? orig.rua    || '' : '';
+    const ruaNova  = r.rua    || '';
+    const mesmaRua = ruaOrig && ruaNova && ruaOrig === ruaNova;
+
+    // Ranks: 1=INTEIRO(maior), 2=DRIVE-IN, 3=MEIO, 4=TERCO(menor); 0=desconhecido
+    const rankOrig = capPkRank(pkOrig);
+    const rankNova = capPkRank(pkNova);
+    const tipoOrigLabel = capPkLabel(pkOrig);
+    const tipoNovaLabel = capPkLabel(pkNova);
+
+    // — Cálculo de urgência —
+    let urgencia = 'Normal';
+
+    if (rankOrig > 0 && rankNova > 0 && pkMudou) {
+      // Endereço ficou menor (rank aumentou) — perdeu espaço
+      if (rankNova > rankOrig) {
+        // INTEIRO → DRIVE-IN ou DRIVE-IN → INTEIRO (vizinhos diretos na hierarquia): Média
+        // Qualquer outro salto para lugar menor: Alta
+        const salto = rankNova - rankOrig;
+        urgencia = salto === 1 ? 'Média' : 'Alta';
+      }
+      // Endereço ficou maior (rank diminuiu) — ganhou espaço
+      else if (rankNova < rankOrig) {
+        // Qualquer mudança para endereço maior é Média (precisará revalidar capacidade)
+        urgencia = 'Média';
+      }
+      // Mesmo tipo de PK mas CODENDERECO diferente: Normal (já filtrado para mesmo rank)
+    } else if (!pkMudou) {
+      urgencia = 'Normal'; // mesmo tipo, apenas localização diferente
+    }
+
+    // — Critério Máxima: foi para endereço MAIOR mas capacidade DIMINUIU —
+    // Paradoxo operacional: mais espaço → menos capacidade
+    if (rankOrig > 0 && rankNova > 0 && rankNova < rankOrig && diff !== null && diff < 0) {
+      urgencia = 'Máxima';
+    }
+
     return {
       codprod: r.codprod,
       descricao: r.descricao || (orig ? orig.descricao : '') || '',
@@ -9807,7 +9859,9 @@ function capCompute(processed) {
       endOrig: orig ? orig.codendereco || '' : '',
       endNova: r.codendereco || '',
       pkOrig, pkNova, pkMudou,
-      ruaOrig: orig ? orig.rua || '' : '', ruaNova: r.rua || '',
+      tipoOrigLabel, tipoNovaLabel,
+      rankOrig, rankNova,
+      ruaOrig, ruaNova, mesmaRua,
       predioOrig: orig ? orig.predio || '' : '', predioNova: r.predio || '',
       aptoOrig: orig ? orig.apto || '' : '', aptoNova: r.apto || '',
       urgencia
@@ -10117,11 +10171,27 @@ function renderCapacidadeCD() {
     </div>`:''}`}`;
 
   // ---- Itens Transferidos ----
-  const urgCount = comp.itensTransferidos.filter(r=>r.urgencia==='URGENTE').length;
-  const normCount = comp.itensTransferidos.filter(r=>r.urgencia==='NORMAL').length;
+  const urgOrdem  = {'Máxima':0,'Alta':1,'Média':2,'Normal':3};
+  const urgBgMap  = {'Máxima':'#7c1d1d','Alta':'#d64545','Média':'#e07b00','Normal':'#2563aa'};
+  const urgRowBg  = {'Máxima':'#fce8e8','Alta':'#fdf0f0','Média':'#fff8ee','Normal':''};
+  const maxCount  = comp.itensTransferidos.filter(r=>r.urgencia==='Máxima').length;
+  const altaCount = comp.itensTransferidos.filter(r=>r.urgencia==='Alta').length;
+  const medCount  = comp.itensTransferidos.filter(r=>r.urgencia==='Média').length;
+  const normCount = comp.itensTransferidos.filter(r=>r.urgencia==='Normal').length;
   const transferidosHTML = !processed.p8022NovaDispo ? '' : `
     <div class="cap-section-title">🔄 Itens Transferidos (Endereço Alterado)
-      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(comp.itensTransferidos.length)} total — ${fN(urgCount)} URGENTE · ${fN(normCount)} Normal)</span>
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(comp.itensTransferidos.length)} total —
+        ${maxCount?`<span style="color:#7c1d1d;font-weight:700;">${fN(maxCount)} Máxima</span> · `:''}
+        ${altaCount?`<span style="color:#d64545;font-weight:700;">${fN(altaCount)} Alta</span> · `:''}
+        ${medCount?`<span style="color:#e07b00;font-weight:700;">${fN(medCount)} Média</span> · `:''}
+        <span style="color:#2563aa;">${fN(normCount)} Normal</span>)</span>
+    </div>
+    <div style="font-size:11px;color:#7a8798;margin:-6px 0 10px;line-height:1.8;">
+      <strong>Legenda:</strong>
+      <span style="background:#7c1d1d;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Máxima</span> Endereço maior, capacidade caiu (paradoxo) &nbsp;|&nbsp;
+      <span style="background:#d64545;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Alta</span> Mudou 2+ níveis ou veio de TERCO/MEIO &nbsp;|&nbsp;
+      <span style="background:#e07b00;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Média</span> Mudou 1 nível (INTEIRO↔DRIVE-IN) &nbsp;|&nbsp;
+      <span style="background:#2563aa;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Normal</span> Mesmo tipo PK, só localização mudou
     </div>
     ${comp.itensTransferidos.length===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item transferido.</div>`:
     `<div class="cap-table-wrap">
@@ -10129,29 +10199,36 @@ function renderCapacidadeCD() {
       <thead><tr>
         <th>CODPROD</th><th>Descrição</th><th>Urgência</th>
         <th>Cap. Ant.</th><th>Cap. Nova</th><th>Diferença</th>
+        <th>Tipo Ant.</th><th>Tipo Novo</th>
+        <th>Rua Ant.</th><th>Rua Nova</th><th>Mesma Rua</th>
         <th>End. Anterior</th><th>End. Novo</th>
-        <th>PK_END Ant.</th><th>PK_END Novo</th><th>RUA Nova</th>
       </tr></thead>
       <tbody>
       ${[...comp.itensTransferidos].sort((a,b)=>{
-        if(a.urgencia!==b.urgencia) return a.urgencia==='URGENTE'?-1:1;
+        const oa=urgOrdem[a.urgencia]??9, ob=urgOrdem[b.urgencia]??9;
+        if(oa!==ob) return oa-ob;
         if(a.diff===null&&b.diff===null) return 0;
         if(a.diff===null) return 1; if(b.diff===null) return -1;
         return Math.abs(b.diff)-Math.abs(a.diff);
       }).map(r=>{
-        const urgBg = r.urgencia==='URGENTE'?'#d64545':'#e07b00';
-        return `<tr style="${r.urgencia==='URGENTE'?'background:#fdf0f0;':''}">
+        const bg  = urgBgMap[r.urgencia]  || '#2563aa';
+        const rbg = urgRowBg[r.urgencia]  || '';
+        const diffColor = r.diff==null?'#7a8798':r.diff>0?'#1a9c62':r.diff<0?'#d64545':'#7a8798';
+        const ruaMudou  = r.ruaOrig && r.ruaNova && r.ruaOrig !== r.ruaNova;
+        return `<tr style="${rbg?'background:'+rbg+';':''}">
           <td><strong>${escapeHtml(r.codprod)}</strong></td>
           <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
-          <td><span style="background:${urgBg};color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">${r.urgencia}</span></td>
+          <td><span style="background:${bg};color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">${r.urgencia}</span></td>
           <td>${r.capIni!=null?r.capIni:'—'}</td>
           <td>${r.capNova!=null?r.capNova:'—'}</td>
-          <td style="font-weight:700;color:${r.diff==null?'#7a8798':r.diff>0?'#1a9c62':r.diff<0?'#d64545':'#7a8798'}">${r.diff!=null?r.diff:'—'}</td>
-          <td style="font-size:11px;">${escapeHtml(r.endOrig)}</td>
-          <td style="font-size:11px;">${escapeHtml(r.endNova)}</td>
-          <td><span style="${r.pkMudou?'color:#d64545;font-weight:700;':''}">${escapeHtml(r.pkOrig)}</span></td>
-          <td><span style="${r.pkMudou?'color:#d64545;font-weight:700;':''}">${escapeHtml(r.pkNova)}</span></td>
-          <td>${escapeHtml(r.ruaNova)}</td>
+          <td style="font-weight:700;color:${diffColor}">${r.diff!=null?r.diff:'—'}</td>
+          <td style="font-size:11px;font-weight:600;color:${r.pkMudou?'#d64545':'#7a8798'}">${escapeHtml(r.tipoOrigLabel||r.pkOrig||'—')}</td>
+          <td style="font-size:11px;font-weight:600;color:${r.pkMudou?'#1a9c62':'#7a8798'}">${escapeHtml(r.tipoNovaLabel||r.pkNova||'—')}</td>
+          <td style="font-weight:${ruaMudou?'700':'400'};color:${ruaMudou?'#d64545':'inherit'}">${escapeHtml(r.ruaOrig||'—')}</td>
+          <td style="font-weight:${ruaMudou?'700':'400'};color:${ruaMudou?'#1a9c62':'inherit'}">${escapeHtml(r.ruaNova||'—')}</td>
+          <td style="text-align:center">${r.mesmaRua?'<span style="color:#1a9c62;font-size:14px;font-weight:700;">✔</span>':'<span style="color:#d64545;font-size:14px;font-weight:700;">✘</span>'}</td>
+          <td style="font-size:11px;">${escapeHtml(r.endOrig||'—')}</td>
+          <td style="font-size:11px;">${escapeHtml(r.endNova||'—')}</td>
         </tr>`;
       }).join('')}
       </tbody>
