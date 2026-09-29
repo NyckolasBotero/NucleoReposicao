@@ -9638,6 +9638,7 @@ const CapCDState = {
   demandaRuaFim: '',              // número da rua final
   demandaQtdItens: '',            // qtd total de itens a diluir no intervalo
   demandaRuaPorPagina: true,      // true = 1 rua por página no PDF
+  ultValSoUltimoDia: true,        // true = mostra só último dia com dados; false = todas as validações
   rankPage: 0,              // paginação do ranking
   detPage: 0,               // paginação tabela detalhada
   tblPage: 0,               // paginação tabela principal
@@ -10988,17 +10989,41 @@ function renderCapacidadeCD() {
       ${comp.previsaoDias===null?`<div style="font-size:11px;color:#7a8798;margin-top:6px;">Dados insuficientes para projeção</div>`:''}
     </div>`;
 
-  // ---- Tabela Capacidade Ultima Validação ----
+  // ---- Tabela Capacidade Ultima Validação (agora = Detalhada + toggle de filtro) ----
   const fDiffCol = (n) => n==null ? '—' : (n>0?`<span style="color:#1a9c62;font-weight:700;">+${n}</span>`:(n<0?`<span style="color:#d64545;font-weight:700;">${n}</span>`:`<span style="color:#7a8798;">0</span>`));
   const ultDtLabel = comp.ultimoDiaValidado ? (() => {
     const [y,m,d] = comp.ultimoDiaValidado.split('-');
     return `${d}/${m}/${y}`;
   })() : '—';
+
+  // Fonte: toggle SIM → só último dia com dados; NÃO → todo período filtrado
+  const _ultValBase = [...comp.tblDetalhada];
+  const ultValRows = CapCDState.ultValSoUltimoDia
+    ? _ultValBase.filter(r => r.dt && comp.ultimoDiaValidado && r.dt.toISOString().slice(0,10) === comp.ultimoDiaValidado)
+    : _ultValBase;
+  ultValRows.sort((a,b)=>{
+    if(a.diff===null&&b.diff===null) return 0;
+    if(a.diff===null) return 1; if(b.diff===null) return -1;
+    return Math.abs(b.diff)-Math.abs(a.diff);
+  });
+  const ultValTotal = ultValRows.length;
+  const _ultValPage = CapCDState.ultValPage||0;
+  const ultValSlice = ultValRows.slice(_ultValPage * CapCDState.detPageSize, (_ultValPage+1) * CapCDState.detPageSize);
+  const ultValPages = Math.ceil(ultValTotal / CapCDState.detPageSize);
+
   const ultimoValHTML = `
-    <div class="cap-section-title">📋 Tabela Capacidade Ultima Validação
-      <span style="font-size:12px;font-weight:400;color:#7a8798;">${comp.ultimoDiaValidado?'Último dia: '+ultDtLabel:''}</span>
+    <div class="cap-section-title">📋 Tabela Capacidade — Última Validação
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">${comp.ultimoDiaValidado?'Último dia c/ dados: '+ultDtLabel:''} &nbsp;·&nbsp; ${fN(ultValTotal)} ocorrências</span>
     </div>
-    ${comp.ultimoDiaRows.length===0?`<div class="cap-aviso-inline">⚠️ Sem dados de validação disponíveis.</div>`:
+    <div class="cap-controls-row" style="margin-bottom:8px;">
+      <label class="cap-toggle-label" style="font-weight:600;font-size:12px;">Mostrar Últimas Validações:</label>
+      <div class="cap-toggle-group">
+        ${capToggleBtn('SIM', CapCDState.ultValSoUltimoDia, "CapCDState.ultValSoUltimoDia=true;CapCDState.ultValPage=0;renderCapacidadeCD();")}
+        ${capToggleBtn('NÃO', !CapCDState.ultValSoUltimoDia, "CapCDState.ultValSoUltimoDia=false;CapCDState.ultValPage=0;renderCapacidadeCD();")}
+      </div>
+      <span style="font-size:10px;color:#7a8798;margin-left:8px;">${CapCDState.ultValSoUltimoDia ? 'Exibindo apenas ' + ultDtLabel : 'Exibindo todo o período filtrado'}</span>
+    </div>
+    ${ultValTotal===0?`<div class="cap-aviso-inline">⚠️ Sem dados de validação${CapCDState.ultValSoUltimoDia?' para o último dia':' no período'}.</div>`:
     `<div class="cap-table-wrap">
     <table class="cap-table data-table">
       <thead><tr>
@@ -11007,23 +11032,32 @@ function renderCapacidadeCD() {
         <th>Cap. Inicial</th>
         <th>Cap. Atual</th>
         <th>Diferença</th>
+        <th>Status Ajuste</th>
         <th>Tipo</th>
+        <th>Data</th>
         <th>RUA</th>
         <th>PRÉDIO</th>
         <th>APTO</th>
       </tr></thead>
       <tbody>
-      ${comp.ultimoDiaRows.map(r=>`<tr>
+      ${ultValSlice.map(r=>`<tr>
         <td><strong>${escapeHtml(r.codprod)}</strong></td>
         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
-        <td>${r.capIni!=null?r.capIni:'—'}</td>
-        <td>${r.capAtual!=null?r.capAtual:'—'}</td>
-        <td style="font-weight:700;color:${r.diff==null?'#7a8798':r.diff>0?'#1a9c62':r.diff<0?'#d64545':'#7a8798'}">${r.diff!=null?r.diff:'—'}</td>
+        <td>${r.capIni!=null?fN(r.capIni):'—'}</td>
+        <td>${r.capAtual!=null?fN(r.capAtual):'—'}</td>
+        <td style="font-weight:700;color:${r.diff==null?'#7a8798':r.diff>0?'#1a9c62':r.diff<0?'#d64545':'#7a8798'}">${fDiff(r.diff)}</td>
+        <td>${badgeAjuste(r.status)}</td>
         <td><span style="background:${r.tipo==='PREVENTIVO'?'#e6f9f0':'#fdf0f0'};color:${r.tipo==='PREVENTIVO'?'#1a9c62':'#d64545'};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${escapeHtml(r.tipo||'')}</span></td>
+        <td>${fDt(r.dt)}</td>
         <td>${escapeHtml(r.rua)}</td><td>${escapeHtml(r.predio)}</td><td>${escapeHtml(r.apto)}</td>
       </tr>`).join('')}
       </tbody>
-    </table></div>`}`;
+    </table></div>
+    ${ultValPages>1?`<div class="cap-pag">
+      <button onclick="CapCDState.ultValPage=Math.max(0,(CapCDState.ultValPage||0)-1);renderCapacidadeCD();" ${_ultValPage===0?'disabled':''}>◀</button>
+      <span>${_ultValPage+1} / ${ultValPages}</span>
+      <button onclick="CapCDState.ultValPage=Math.min(${ultValPages-1},(CapCDState.ultValPage||0)+1);renderCapacidadeCD();" ${_ultValPage===ultValPages-1?'disabled':''}>▶</button>
+    </div>`:''}`}`;
 
   // ---- Itens Entrados no Estoque (paginado) ----
   const entTotal = comp.itensEntrados.length;
