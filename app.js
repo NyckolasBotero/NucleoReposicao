@@ -10746,59 +10746,115 @@ function capRenderCharts(comp) {
     });
   }
 
-  // Gráfico 4: Cobertura por Rua (barras full-width)
+  // Gráfico 4: Cobertura por Rua — barra empilhada 0–100% por rua
   const ctx4 = document.getElementById('cap-chart-rua');
   if (ctx4 && comp.rows8022N && comp.uniqueValidadosPorCod) {
-    // Monta mapa: rua → { total, validados }
+    // Monta mapa: rua → { total, valid }
     const ruaMap = new Map();
     (comp.rows8022N || []).forEach(r => {
       const rua = String(r.rua||'?').trim();
       if(!ruaMap.has(rua)) ruaMap.set(rua,{total:0,valid:0});
       ruaMap.get(rua).total++;
-      if(comp.uniqueValidadosPorCod && comp.uniqueValidadosPorCod.has(r.codprod)) ruaMap.get(rua).valid++;
+      if(comp.uniqueValidadosPorCod.has(r.codprod)) ruaMap.get(rua).valid++;
     });
     const ruasSorted = [...ruaMap.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true}));
-    const labels4  = ruasSorted.map(([rua])=>rua);
-    const totais4  = ruasSorted.map(([,v])=>v.total);
-    const validos4 = ruasSorted.map(([,v])=>v.valid);
-    // Ajusta largura do canvas para caber todas as barras
-    const minW = Math.max(ctx4.parentElement.offsetWidth||800, labels4.length*32);
-    ctx4.style.width = minW+'px';
-    ctx4.width = minW;
+    const labels4   = ruasSorted.map(([rua])=>'Rua '+rua);
+    // Converte para percentual: validado% e restante%
+    const pctValid  = ruasSorted.map(([,v])=> v.total>0 ? Math.round(v.valid/v.total*100) : 0);
+    const pctRest   = pctValid.map(p => 100 - p);
+    // Armazena totais para tooltip
+    const totaisMap = new Map(ruasSorted.map(([rua,v])=>['Rua '+rua, v]));
+
+    // Ajusta largura do canvas para caber todas as barras (mínimo 36px por rua)
+    const minW = Math.max(ctx4.parentElement.offsetWidth || 800, labels4.length * 36);
+    ctx4.style.width  = minW + 'px';
+    ctx4.width        = minW;
+
     CapCDState.charts['rua'] = new Chart(ctx4, {
       type: 'bar',
       data: {
         labels: labels4,
         datasets: [
           {
-            label:'Total', data: totais4,
-            backgroundColor:'#cce4f7',
-            borderColor:'#8bbdd9', borderWidth:1,
-            order:2
+            // Série inferior: % validado — cor sólida azul
+            label: 'Validado (%)',
+            data: pctValid,
+            backgroundColor: '#1a6db5',
+            borderColor: '#1a4480',
+            borderWidth: 1,
+            stack: 'rua',
+            datalabels: {
+              display: ctx => pctValid[ctx.dataIndex] >= 8, // só exibe se tiver espaço
+              color: '#ffffff',
+              font: { weight: 'bold', size: 10 },
+              anchor: 'center',
+              align: 'center',
+              formatter: (v, ctx) => v + '%'
+            }
           },
           {
-            label:'Validados', data: validos4,
-            backgroundColor:'#1a6db5cc',
-            borderColor:'#1a4480', borderWidth:1,
-            order:1
+            // Série superior: % restante — cor fundo bem clara
+            label: 'Pendente (%)',
+            data: pctRest,
+            backgroundColor: '#dceeff',
+            borderColor: '#b0cce8',
+            borderWidth: 1,
+            stack: 'rua',
+            datalabels: {
+              display: ctx => pctRest[ctx.dataIndex] >= 14,
+              color: '#4a6fa5',
+              font: { weight: '600', size: 9 },
+              anchor: 'center',
+              align: 'center',
+              formatter: (v, ctx) => {
+                const entry = totaisMap.get(labels4[ctx.dataIndex]) || {total:0,valid:0};
+                return entry.total - entry.valid > 0 ? (entry.total - entry.valid) + ' pend.' : '';
+              }
+            }
           }
         ]
       },
       options: {
-        responsive:false, maintainAspectRatio:false,
-        plugins:{
-          legend:{display:true,position:'top',labels:{font:{size:10},color:'#3a4a5c'}},
-          tooltip:{callbacks:{label: ctx=>{
-            const rua = ctx.label;
-            const entry = ruaMap.get(rua)||{total:0,valid:0};
-            const pct = entry.total>0?(entry.valid/entry.total*100).toFixed(0)+'%':'0%';
-            if(ctx.datasetIndex===1) return `Validados: ${ctx.parsed.y} (${pct})`;
-            return `Total: ${ctx.parsed.y}`;
-          }}}
+        responsive: false,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true, position: 'top',
+            labels: { font:{ size:11 }, color:'#3a4a5c',
+              generateLabels: chart => [
+                { text:'Validado (%)', fillStyle:'#1a6db5', strokeStyle:'#1a4480', lineWidth:1 },
+                { text:'Pendente (%)', fillStyle:'#dceeff', strokeStyle:'#b0cce8', lineWidth:1 }
+              ]
+            }
+          },
+          datalabels: {},
+          tooltip: {
+            callbacks: {
+              title: items => items[0].label,
+              label: ctx => {
+                const entry = totaisMap.get(ctx.label) || {total:0,valid:0};
+                const pct   = entry.total > 0 ? Math.round(entry.valid/entry.total*100) : 0;
+                return [
+                  `Total na rua: ${entry.total} itens`,
+                  `Validados:    ${entry.valid} (${pct}%)`,
+                  `Pendentes:    ${entry.total - entry.valid} (${100-pct}%)`
+                ];
+              }
+            }
+          }
         },
-        scales:{
-          x:{ticks:{color:'#7a8798',font:{size:9}},grid:{display:false}},
-          y:{ticks:{color:'#7a8798',font:{size:9}},beginAtZero:true,grid:{color:'#eef1f4'}}
+        scales: {
+          x: {
+            stacked: true,
+            ticks: { color:'#7a8798', font:{ size:9 }, maxRotation:45 },
+            grid: { display:false }
+          },
+          y: {
+            stacked: true,
+            min: 0, max: 100,
+            ticks: { color:'#7a8798', font:{ size:9 }, callback: v => v + '%' },
+            grid: { color:'#eef1f4' }
+          }
         }
       }
     });
