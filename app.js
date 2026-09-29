@@ -10127,7 +10127,7 @@ function capDemandaExportPDF() {
   }
 
   function drawRuaBar(rua, y) {
-    doc.setFillColor(168, 216, 200); // COR_PREV
+    doc.setFillColor(116, 163, 255); // COR_PREV #74A3FF
     doc.rect(ML, y, CW - ML - MR, RUA_HDR - 1, 'F');
     doc.setTextColor(26, 46, 68);
     doc.setFontSize(6.5);
@@ -11637,9 +11637,9 @@ function capActivateSortable() {
 function capRenderCharts(comp) {
   if (typeof Chart === 'undefined') return;
 
-  // Cores padrão: Preventivo = claro (#a8d8c8), Corretivo = escuro (#1a2e44)
-  const COR_PREV = '#a8d8c8';
-  const COR_CORR = '#1a2e44';
+  // Cores padrão: Preventivo = claro (#74A3FF), Corretivo = escuro (#0000DE)
+  const COR_PREV = '#74A3FF';
+  const COR_CORR = '#0000DE';
 
   // Gráfico 1: Barras empilhadas por dia
   const ctx1 = document.getElementById('cap-chart-dia');
@@ -11653,7 +11653,7 @@ function capRenderCharts(comp) {
           {
             label:'Preventivo', data: dias.map(([,d])=>d.prev),
             backgroundColor: COR_PREV, stack:'s',
-            datalabels: { color:'#1a4480', font:{weight:'bold',size:9}, anchor:'center', align:'center',
+            datalabels: { color:'#000000', font:{weight:'bold',size:9}, anchor:'center', align:'center',
               formatter: v => v > 0 ? v : '' }
           },
           {
@@ -11685,7 +11685,7 @@ function capRenderCharts(comp) {
         datasets: [{
           data:[comp.totalPreventivo, comp.totalCorretivo],
           backgroundColor:[COR_PREV, COR_CORR],
-          borderColor:['#6bbfa8','#0a1824'],
+          borderColor:['#4a7fe8','#0000aa'],
           borderWidth:2
         }]
       },
@@ -11694,7 +11694,7 @@ function capRenderCharts(comp) {
           legend:{display:true,position:'bottom',labels:{font:{size:10},color:'#3a4a5c'}},
           tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.parsed} (${comp.totalValidacoes>0?(ctx.parsed/comp.totalValidacoes*100).toFixed(1)+'%':'—'})`}},
           datalabels: {
-            color: ctx => ctx.dataIndex===0 ? '#1a4480' : '#ffffff',
+            color: ctx => ctx.dataIndex===0 ? '#000000' : '#ffffff',
             font:{weight:'bold',size:11},
             formatter: (v, ctx2) => {
               const total = ctx2.dataset.data.reduce((a,b)=>a+b,0);
@@ -11746,8 +11746,8 @@ function capRenderCharts(comp) {
     const totaisMap = new Map(ruasSorted.map(([rua,v])=>[rua, v]));
 
     // Paleta igual ao gráfico Preventivo×Corretivo: escuro=validado, claro=pendente
-    const COR_VALID = '#1a2e44'; // escuro — mesmo COR_CORR
-    const COR_PEND  = '#a8d8c8'; // claro — mesmo COR_PREV
+    const COR_VALID = '#0000DE'; // escuro — mesmo COR_CORR
+    const COR_PEND  = '#74A3FF'; // claro — mesmo COR_PREV
 
     // Canvas responsivo: ocupa toda a largura do container, altura generosa
     // Sem expansão horizontal — todas as ruas cabem na área visível
@@ -11788,7 +11788,7 @@ function capRenderCharts(comp) {
             stack: 'rua',
             datalabels: {
               display: ctx => pctRest[ctx.dataIndex] >= 16,
-              color: '#1a4480',
+              color: '#000000',
               font: { weight: 'bold', size: 9 },
               anchor: 'center',
               align: 'center',
