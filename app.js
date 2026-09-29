@@ -9244,6 +9244,18 @@ function capToggleDetalhamento(){
   CapCDState.detAberto = !aberto;
 }
 
+function capToggleSemanal(){
+  const wrap  = document.getElementById('cap-sem-wrap');
+  const icon  = document.getElementById('cap-sem-icon');
+  const label = document.getElementById('cap-sem-label');
+  if(!wrap) return;
+  const aberto = wrap.style.display !== 'none';
+  wrap.style.display = aberto ? 'none' : 'block';
+  icon.textContent   = aberto ? '▶' : '▼';
+  label.textContent  = aberto ? 'Mostrar tabelas abaixo' : 'Ocultar tabelas abaixo';
+  CapCDState.semAberto = !aberto;
+}
+
 function relSort(col){
   if(RelState.sortCol===col) RelState.sortDir*=-1;
   else { RelState.sortCol=col; RelState.sortDir=-1; }
@@ -9663,6 +9675,7 @@ const CapCDState = {
   entradosPageSize: 10,
   saidosPageSize: 10,
   demandaPageSize: 30,
+  semAberto: false,          // toggle Análise Semanal — oculta tabelas abaixo por padrão
   detAberto: false,          // toggle Mostrar Detalhamento — Tabela Detalhada de Validações
   charts: {}                // referências dos Chart.js
 };
@@ -11315,6 +11328,17 @@ function renderCapacidadeCD() {
       }
       </tbody>
     </table>
+    </div>
+    <!-- TOGGLE ABAIXO DA ANÁLISE SEMANAL -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;padding-top:8px;border-top:1px solid #e2e8f0;">
+      <button id="cap-sem-toggle-btn" onclick="capToggleSemanal()"
+        style="padding:6px 16px;font-size:12px;font-weight:700;border-radius:6px;
+               border:1.5px solid #1a4480;background:#fff;color:#1a4480;
+               cursor:pointer;display:flex;align-items:center;gap:6px;">
+        <span id="cap-sem-icon">${CapCDState.semAberto?'▼':'▶'}</span>
+        <span id="cap-sem-label">${CapCDState.semAberto?'Ocultar tabelas abaixo':'Mostrar tabelas abaixo'}</span>
+      </button>
+      <span style="font-size:11px;color:#7a8798;">Rankings, validações, pendentes e demanda · ocultos por padrão</span>
     </div>`;
 
   // ---- Ranking ----
@@ -11384,6 +11408,7 @@ function renderCapacidadeCD() {
     ${rankHTML}
     ${entradosHTML}
     ${saidosHTML}
+    ${tblHTML}
     <div class="cap-section-title">📋 Tabela Detalhada de Validações <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(detTotal)} ocorrências)</span></div>
     <div class="cap-table-wrap">
     <table class="cap-table data-table">
@@ -11680,10 +11705,11 @@ function renderCapacidadeCD() {
       ${transferidosHTML}
       ${ultimoValHTML}
       ${semHTML}
+      <div id="cap-sem-wrap" style="display:${CapCDState.semAberto?'block':'none'};">
       ${detHTML}
-      ${tblHTML}
       ${demandaHTML}
       ${resumoTipoHTML}
+      </div><!-- /cap-sem-wrap -->
     </div>`;
 
   // ---- Renderiza gráficos e ativa sort ----
