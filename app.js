@@ -9232,6 +9232,18 @@ function relToggleDetalhamento(){
   RelState._detAberto = !aberto;
 }
 
+function capToggleDetalhamento(){
+  const wrap  = document.getElementById('cap-det-wrap');
+  const icon  = document.getElementById('cap-det-icon');
+  const label = document.getElementById('cap-det-label');
+  if(!wrap) return;
+  const aberto = wrap.style.display !== 'none';
+  wrap.style.display = aberto ? 'none' : 'block';
+  icon.textContent   = aberto ? '▶' : '▼';
+  label.textContent  = aberto ? 'Mostrar Detalhamento' : 'Ocultar Detalhamento';
+  CapCDState.detAberto = !aberto;
+}
+
 function relSort(col){
   if(RelState.sortCol===col) RelState.sortDir*=-1;
   else { RelState.sortCol=col; RelState.sortDir=-1; }
@@ -9651,6 +9663,7 @@ const CapCDState = {
   entradosPageSize: 10,
   saidosPageSize: 10,
   demandaPageSize: 30,
+  detAberto: false,          // toggle Mostrar Detalhamento — Tabela Detalhada de Validações
   charts: {}                // referências dos Chart.js
 };
 
@@ -11355,6 +11368,19 @@ function renderCapacidadeCD() {
   const detSlice = detSorted.slice(detStart, detStart + CapCDState.detPageSize);
   const detPages = Math.ceil(detTotal / CapCDState.detPageSize);
   const detHTML = `
+    <!-- TOGGLE DETALHAMENTO -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;padding-top:8px;border-top:1px solid #e2e8f0;">
+      <button id="cap-det-toggle-btn" onclick="capToggleDetalhamento()"
+        style="padding:6px 16px;font-size:12px;font-weight:700;border-radius:6px;
+               border:1.5px solid #1a4480;background:#fff;color:#1a4480;
+               cursor:pointer;display:flex;align-items:center;gap:6px;">
+        <span id="cap-det-icon">${CapCDState.detAberto?'▼':'▶'}</span>
+        <span id="cap-det-label">${CapCDState.detAberto?'Ocultar Detalhamento':'Mostrar Detalhamento'}</span>
+      </button>
+      <span style="font-size:11px;color:#7a8798;">📋 Tabela Detalhada de Validações · ${fN(detTotal)} ocorrências · oculta por padrão</span>
+    </div>
+    <!-- CONTEÚDO DA TABELA DETALHADA (oculto por padrão) -->
+    <div id="cap-det-wrap" style="display:${CapCDState.detAberto?'block':'none'};">
     <div class="cap-section-title">📋 Tabela Detalhada de Validações <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(detTotal)} ocorrências)</span></div>
     <div class="cap-table-wrap">
     <table class="cap-table data-table">
@@ -11392,7 +11418,8 @@ function renderCapacidadeCD() {
       <button onclick="CapCDState.detPage=Math.max(0,CapCDState.detPage-1);renderCapacidadeCD();" ${CapCDState.detPage===0?'disabled':''}>◀</button>
       <span>${CapCDState.detPage+1} / ${detPages}</span>
       <button onclick="CapCDState.detPage=Math.min(${detPages-1},CapCDState.detPage+1);renderCapacidadeCD();" ${CapCDState.detPage===detPages-1?'disabled':''}>▶</button>
-    </div>`:''}`;
+    </div>`:''}
+    </div><!-- /cap-det-wrap -->`;
 
   // ---- Tabela principal 8022 — somente NÃO VALIDADOS ----
   // Filtra apenas itens não validados da 8022 Nova (ou 8022 se não há Nova)
