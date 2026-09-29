@@ -9633,6 +9633,10 @@ const CapCDState = {
   demandaTipoIni: null,           // Date | null — início período sheet Tipo
   demandaTipoFim: null,           // Date | null — fim período sheet Tipo
   demandaGerada: null,            // array | null — lista gerada pelo botão
+  // — Intervalo de Ruas / Diluição —
+  demandaRuaIni: '',              // número da rua inicial
+  demandaRuaFim: '',              // número da rua final
+  demandaQtdItens: '',            // qtd total de itens a diluir no intervalo
   rankPage: 0,              // paginação do ranking
   detPage: 0,               // paginação tabela detalhada
   tblPage: 0,               // paginação tabela principal
@@ -9822,7 +9826,7 @@ function capGerarDemanda(processed, comp) {
   }
 
   // Converte e ordena RUA → PREDIO → APTO
-  const lista = [...demandaMap.values()];
+  let lista = [...demandaMap.values()];
   lista.sort((a,b) => {
     const rv = (a.rua||'').localeCompare(b.rua||'', undefined, {numeric:true});
     if (rv) return rv;
@@ -9830,6 +9834,46 @@ function capGerarDemanda(processed, comp) {
     if (pv) return pv;
     return (a.apto||'').localeCompare(b.apto||'', undefined, {numeric:true});
   });
+
+  // — Filtro por intervalo de ruas —
+  const ruaIniNum = parseInt(CapCDState.demandaRuaIni, 10);
+  const ruaFimNum = parseInt(CapCDState.demandaRuaFim, 10);
+  const qtdItens  = parseInt(CapCDState.demandaQtdItens, 10);
+
+  const temIntervalo = !isNaN(ruaIniNum) && !isNaN(ruaFimNum) && ruaIniNum <= ruaFimNum;
+  if (temIntervalo) {
+    lista = lista.filter(r => {
+      const n = parseInt(r.rua, 10);
+      return !isNaN(n) && n >= ruaIniNum && n <= ruaFimNum;
+    });
+  }
+
+  // — Diluição de quantidade por rua —
+  if (temIntervalo && !isNaN(qtdItens) && qtdItens > 0) {
+    const numRuas = ruaFimNum - ruaIniNum + 1;
+    const porRua  = Math.floor(qtdItens / numRuas);
+    const sobra   = qtdItens - porRua * numRuas; // resto vai para última rua
+
+    // Agrupa por rua
+    const porRuaMap = new Map();
+    lista.forEach(r => {
+      const k = String(parseInt(r.rua, 10));
+      if (!porRuaMap.has(k)) porRuaMap.set(k, []);
+      porRuaMap.get(k).push(r);
+    });
+
+    const resultado = [];
+    let ruaIdx = 0;
+    for (let rn = ruaIniNum; rn <= ruaFimNum; rn++) {
+      const k = String(rn);
+      const itens = porRuaMap.get(k) || [];
+      const cota  = porRua + (ruaIdx === numRuas - 1 ? sobra : 0);
+      resultado.push(...itens.slice(0, cota));
+      ruaIdx++;
+    }
+    lista = resultado;
+  }
+
   return lista;
 }
 
@@ -9888,6 +9932,38 @@ function capComboToggle(el) {
     const inp = document.getElementById('cap-prod-search');
     if (inp) { capComboFilter(''); }
   }, 30);
+}
+
+/* ---- Copiar códigos da demanda ---- */
+function capCopiarCodigos() {
+  const lista = CapCDState.demandaGerada;
+  if (!lista || !lista.length) return alert('Gere a demanda primeiro.');
+  const txt = lista.map(r => r.codprod).join('\n');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(() => {
+      const btn = document.querySelector('button[onclick="capCopiarCodigos();"]');
+      if (btn) {
+        const orig = btn.innerHTML;
+        btn.innerHTML = '✅ Copiados!';
+        btn.style.background = '#e6f9f0';
+        btn.style.color = '#1a9c62';
+        btn.style.borderColor = '#1a9c62';
+        setTimeout(() => { btn.innerHTML = orig; btn.style.background=''; btn.style.color=''; btn.style.borderColor=''; }, 1800);
+      }
+    }).catch(() => capCopiarFallback(txt));
+  } else {
+    capCopiarFallback(txt);
+  }
+}
+function capCopiarFallback(txt) {
+  const ta = document.createElement('textarea');
+  ta.value = txt;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
+  alert(`${txt.split('\n').length} códigos copiados!`);
 }
 
 /* ---- Gerar Demanda Action ---- */
@@ -10753,9 +10829,41 @@ function renderCapacidadeCD() {
             <span style="font-size:10px;color:#7a8798;">Padrão: último dia útil disponível</span>
           </div>` : `<div class="filter-group"><label>Sheet Tipo</label><span style="font-size:11px;color:#e07b00;">⚠️ Aba não encontrada</span></div>`}
 
+          <!-- Intervalo de ruas / diluição -->
+          <div class="filter-group" style="min-width:200px;">
+            <label>Intervalo de Ruas (opcional)</label>
+            <div style="display:flex;gap:5px;align-items:center;">
+              <input type="number" min="1" placeholder="Rua ini"
+                value="${CapCDState.demandaRuaIni}"
+                style="width:66px;border:1px solid #c8d0db;border-radius:6px;padding:4px 6px;font-size:11px;"
+                onchange="CapCDState.demandaRuaIni=this.value;">
+              <span style="font-size:11px;color:#7a8798;">até</span>
+              <input type="number" min="1" placeholder="Rua fim"
+                value="${CapCDState.demandaRuaFim}"
+                style="width:66px;border:1px solid #c8d0db;border-radius:6px;padding:4px 6px;font-size:11px;"
+                onchange="CapCDState.demandaRuaFim=this.value;">
+              ${(CapCDState.demandaRuaIni||CapCDState.demandaRuaFim)?`<button onclick="CapCDState.demandaRuaIni='';CapCDState.demandaRuaFim='';CapCDState.demandaQtdItens='';renderCapacidadeCD();" style="font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕</button>`:''}
+            </div>
+          </div>
+
+          <div class="filter-group" style="min-width:140px;">
+            <label>Qtd Total de Itens</label>
+            <input type="number" min="1" placeholder="Ex: 500"
+              value="${CapCDState.demandaQtdItens}"
+              style="width:100%;border:1px solid #c8d0db;border-radius:6px;padding:4px 6px;font-size:11px;box-sizing:border-box;"
+              onchange="CapCDState.demandaQtdItens=this.value;">
+            ${(CapCDState.demandaRuaIni && CapCDState.demandaRuaFim && CapCDState.demandaQtdItens) ? (() => {
+              const ini = parseInt(CapCDState.demandaRuaIni,10), fim = parseInt(CapCDState.demandaRuaFim,10), qt = parseInt(CapCDState.demandaQtdItens,10);
+              if (!isNaN(ini)&&!isNaN(fim)&&ini<=fim&&!isNaN(qt)&&qt>0) {
+                const n = fim-ini+1; const pp = Math.floor(qt/n);
+                return `<span style="font-size:10px;color:#1a9c62;display:block;margin-top:3px;">≈ ${pp} itens/rua (${n} ruas)</span>`;
+              } return '';
+            })() : ''}
+          </div>
+
           <div class="filter-group">
             <label>&nbsp;</label>
-            <div style="display:flex;gap:6px;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <button onclick="capGerarDemandaAction();"
                 style="padding:7px 18px;border-radius:6px;border:none;background:#1a4480;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">⚡ Gerar Demanda</button>
               ${CapCDState.demandaGerada ? `<button onclick="capDemandaPreviewPDF();" style="padding:7px 14px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:12px;font-weight:700;cursor:pointer;">👁️ Preview PDF</button>
@@ -11247,17 +11355,71 @@ function renderCapacidadeCD() {
     if (!CapCDState.demandaGerada) return '';
     const lista = CapCDState.demandaGerada;
     const total = lista.length;
+
+    // — Resumo por origem —
+    const origemCount = {};
+    lista.forEach(r => {
+      [...r.origens].forEach(o => { origemCount[o] = (origemCount[o]||0)+1; });
+    });
+    const origemCores = {
+      'Não Validado': '#e07b00',
+      'Corretivo Ocorrência': '#d64545',
+      'Transferido Preventivo': '#7a5af8',
+    };
+
+    // — Resumo por rua —
+    const ruaCount = {};
+    lista.forEach(r => { const k = r.rua||'(sem rua)'; ruaCount[k]=(ruaCount[k]||0)+1; });
+    const ruasOrdenadas = Object.entries(ruaCount).sort((a,b) => a[0].localeCompare(b[0], undefined, {numeric:true}));
+
+    const origemBadge = origens => [...origens].map(o => {
+      const clr = origemCores[o]||'#374151';
+      return `<span style="background:${clr}20;color:${clr};font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;border:1px solid ${clr}40;margin:1px;">${o}</span>`;
+    }).join('');
+
     const dStart = CapCDState.demandaPage * CapCDState.demandaPageSize;
     const dSlice = lista.slice(dStart, dStart + CapCDState.demandaPageSize);
     const dPages = Math.ceil(total / CapCDState.demandaPageSize);
-    const origemBadge = origens => [...origens].map(o => {
-      const clr = o==='Corretivo Ocorrência'?'#d64545':o==='Transferido Preventivo'?'#7a5af8':'#e07b00';
-      return `<span style="background:${clr}20;color:${clr};font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;border:1px solid ${clr}40;margin:1px;">${o}</span>`;
-    }).join('');
+
+    // Codigos todos para copiar (JSON array para usar no onclick sem quebrar)
+    const codsList = lista.map(r => r.codprod).join('\n');
+
     return `
     <div class="cap-section-title" style="color:#1a4480;">⚡ Demanda Gerada
       <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(total)} itens únicos)</span>
+      <button onclick="capCopiarCodigos();" style="margin-left:12px;padding:4px 12px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:11px;font-weight:700;cursor:pointer;">📋 Copiar Códigos</button>
     </div>
+
+    <!-- Resumo por origem -->
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+      ${Object.entries(origemCount).map(([orig, cnt]) => {
+        const clr = origemCores[orig]||'#374151';
+        return `<div style="background:${clr}14;border:1.5px solid ${clr}40;border-radius:10px;padding:10px 18px;min-width:160px;">
+          <div style="font-size:11px;font-weight:700;color:${clr};text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">${orig}</div>
+          <div style="font-size:22px;font-weight:800;color:${clr};">${fN(cnt)}</div>
+          <div style="font-size:10px;color:#7a8798;">itens nesta origem</div>
+        </div>`;
+      }).join('')}
+      <div style="background:#f0f6ff;border:1.5px solid #b3ccf5;border-radius:10px;padding:10px 18px;min-width:160px;">
+        <div style="font-size:11px;font-weight:700;color:#1a4480;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;">Total Único</div>
+        <div style="font-size:22px;font-weight:800;color:#1a4480;">${fN(total)}</div>
+        <div style="font-size:10px;color:#7a8798;">produtos na demanda</div>
+      </div>
+    </div>
+
+    <!-- Resumo por rua -->
+    ${ruasOrdenadas.length > 0 ? `
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Itens por Rua</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${ruasOrdenadas.map(([rua, cnt]) => `
+          <div style="background:#f5f8fc;border:1px solid #dce5ef;border-radius:8px;padding:6px 12px;text-align:center;min-width:70px;">
+            <div style="font-size:10px;color:#7a8798;font-weight:600;">RUA ${escapeHtml(rua)}</div>
+            <div style="font-size:17px;font-weight:800;color:#1a2e44;">${fN(cnt)}</div>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
     <div class="cap-table-wrap">
     <table class="cap-table data-table">
       <thead><tr>
@@ -11346,6 +11508,48 @@ function renderCapacidadeCD() {
         <div class="cap-chart-title">📊 Cobertura por Rua — Validados × Total (8022 Nova)</div>
         <div style="height:260px;overflow-x:auto;"><canvas id="cap-chart-rua"></canvas></div>
       </div>
+      ${(() => {
+        if (!CapCDState.demandaGerada) return '';
+        const lista = CapCDState.demandaGerada;
+        const total = lista.length;
+        const origemCores = {'Não Validado':'#e07b00','Corretivo Ocorrência':'#d64545','Transferido Preventivo':'#7a5af8'};
+        const origemCount = {};
+        lista.forEach(r => { [...r.origens].forEach(o => { origemCount[o]=(origemCount[o]||0)+1; }); });
+        const ruaCount = {};
+        lista.forEach(r => { const k=r.rua||'(sem rua)'; ruaCount[k]=(ruaCount[k]||0)+1; });
+        const ruasOrdenadas = Object.entries(ruaCount).sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true}));
+        return `
+        <div style="background:#f0f6ff;border:1.5px solid #b3ccf5;border-radius:12px;padding:18px 20px;margin:0 0 16px 0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+            <div style="font-size:14px;font-weight:700;color:#1a4480;">⚡ Resumo da Demanda do Dia</div>
+            <button onclick="capCopiarCodigos();" style="padding:5px 14px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:11px;font-weight:700;cursor:pointer;">📋 Copiar ${fN(total)} Códigos</button>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+            ${Object.entries(origemCount).map(([orig,cnt])=>{
+              const clr=origemCores[orig]||'#374151';
+              return `<div style="background:${clr}12;border:1.5px solid ${clr}40;border-radius:10px;padding:10px 16px;min-width:150px;">
+                <div style="font-size:10px;font-weight:700;color:${clr};text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">${orig}</div>
+                <div style="font-size:22px;font-weight:800;color:${clr};">${fN(cnt)}</div>
+                <div style="font-size:10px;color:#7a8798;">itens</div>
+              </div>`;
+            }).join('')}
+            <div style="background:#fff;border:1.5px solid #b3ccf5;border-radius:10px;padding:10px 16px;min-width:120px;">
+              <div style="font-size:10px;font-weight:700;color:#1a4480;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Total Único</div>
+              <div style="font-size:22px;font-weight:800;color:#1a4480;">${fN(total)}</div>
+              <div style="font-size:10px;color:#7a8798;">produtos</div>
+            </div>
+          </div>
+          ${ruasOrdenadas.length>0?`
+          <div style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px;">Itens por Rua</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${ruasOrdenadas.map(([rua,cnt])=>`
+              <div style="background:#fff;border:1px solid #dce5ef;border-radius:8px;padding:5px 10px;text-align:center;min-width:64px;">
+                <div style="font-size:9px;color:#7a8798;font-weight:600;">RUA ${escapeHtml(rua)}</div>
+                <div style="font-size:16px;font-weight:800;color:#1a2e44;">${fN(cnt)}</div>
+              </div>`).join('')}
+          </div>`:''}
+        </div>`;
+      })()}
       ${previsaoHTML}
       ${transferidosHTML}
       ${ultimoValHTML}
