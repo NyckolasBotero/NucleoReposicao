@@ -9622,7 +9622,7 @@ const CapCDState = {
   filtroAtalho: 'tudo',     // 'mesAtual'|'mesAnt'|'anoAtual'|'anoAnt'|'tudo'
   filtroProdutos: [],       // array de codprod selecionados
   filtroRevenda: 'todos',   // 'todos'|'nao'
-  filtroUrgencia: 'todos',  // filtro urgência transferidos
+  filtroUrgencia: 'maxalta', // filtro urgência transferidos — padrão: Máxima + Alta
   filtroOrigem: 'todos',    // filtro tipo origem transferidos (inteiro|drivein|meio|terco|todos)
   filtroDiffIni: '',        // filtro diferença inicial
   filtroDiffFim: '',        // filtro diferença final
@@ -9833,6 +9833,63 @@ function capGerarDemanda(processed, comp) {
   return lista;
 }
 
+/* ---- Combobox Produto/Código ---- */
+function capComboOpen() {
+  const list = document.getElementById('cap-combo-list');
+  const inp  = document.getElementById('cap-prod-search');
+  if (!list) return;
+  list.style.display = 'block';
+  if (inp) inp.value = '';
+  capComboFilter('');
+  // Fechar ao clicar fora
+  setTimeout(() => {
+    const outsideClick = e => {
+      const wrap = document.getElementById('cap-combo-wrap');
+      if (wrap && !wrap.contains(e.target)) {
+        capComboClose();
+        document.removeEventListener('mousedown', outsideClick);
+      }
+    };
+    document.addEventListener('mousedown', outsideClick);
+  }, 10);
+}
+function capComboClose() {
+  const list = document.getElementById('cap-combo-list');
+  const inp  = document.getElementById('cap-prod-search');
+  if (list) list.style.display = 'none';
+  if (inp) inp.value = CapCDState.filtroProdutos.length > 0 ? CapCDState.filtroProdutos.length + ' selecionado(s)' : '';
+  inp && (inp.placeholder = CapCDState.filtroProdutos.length > 0 ? CapCDState.filtroProdutos.length + ' selecionado(s)' : 'Buscar código ou nome...');
+}
+function capComboFilter(txt) {
+  const list = document.getElementById('cap-combo-list');
+  if (!list) return;
+  const q = txt.toLowerCase();
+  [...list.querySelectorAll('div[data-val]')].forEach(el => {
+    const v = el.dataset.val;
+    if (!v) { el.style.display = ''; return; } // linha "Todos"
+    el.style.display = (el.textContent.toLowerCase().includes(q)) ? '' : 'none';
+  });
+}
+function capComboToggle(el) {
+  const val = el.dataset.val;
+  if (!val) {
+    // "Todos"
+    CapCDState.filtroProdutos = [];
+  } else {
+    const idx = CapCDState.filtroProdutos.indexOf(val);
+    if (idx >= 0) CapCDState.filtroProdutos.splice(idx, 1);
+    else CapCDState.filtroProdutos.push(val);
+  }
+  CapCDState.detPage = 0; CapCDState.tblPage = 0;
+  renderCapacidadeCD();
+  // Re-abre e restaura o foco/filtro
+  setTimeout(() => {
+    capComboOpen();
+    const inp = document.getElementById('cap-prod-search');
+    if (inp) { capComboFilter(''); }
+  }, 30);
+}
+
 /* ---- Gerar Demanda Action ---- */
 function capGerarDemandaAction() {
   const proc = window.APP_STATE && window.APP_STATE.processed;
@@ -9913,7 +9970,7 @@ function capDemandaPreviewPDF() {
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 }
 
-/* ---- Export PDF 100×100mm ---- */
+/* ---- Export PDF — 1 RUA por página, formato tabela ---- */
 function capDemandaExportPDF() {
   const lista = CapCDState.demandaGerada;
   if (!lista || !lista.length) return alert('Gere a demanda primeiro.');
@@ -9922,72 +9979,186 @@ function capDemandaExportPDF() {
     return;
   }
   const { jsPDF } = window.jspdf;
-  // 100×100mm per card, portrait
-  const W = 100, H = 100;
-  const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:[W, H] });
 
-  let ruaAtual = null;
-  let firstPage = true;
+  // A4 landscape
+  const PW = 297, PH = 210;
+  const ML = 10, MR = 10, MT = 10, MB = 10;
+  const CW = PW - ML - MR; // content width = 277
 
-  lista.forEach((r, idx) => {
-    if (!firstPage) doc.addPage([W, H]);
-    firstPage = false;
+  const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
 
-    // Header
+  // Column definitions [label, x offset from ML, width]
+  const cols = [
+    { label:'CODPROD',   w:28 },
+    { label:'DESCRIÇÃO', w:90 },
+    { label:'RUA',       w:20 },
+    { label:'PRÉDIO',    w:20 },
+    { label:'APTO',      w:20 },
+    { label:'ORIGEM',    w:40 },
+    { label:'CAP.ANT',   w:27 },
+    { label:'CAP.NOVA',  w:32 },
+  ];
+  // Compute x positions
+  let cx = ML;
+  cols.forEach(c => { c.x = cx; cx += c.w; });
+
+  const ROW_H = 8;       // row height mm
+  const HDR_H = 16;      // page header block height
+  const TBL_HDR_H = 7;   // table column header height
+  const FOOTER_H = 6;
+  const BODY_TOP = MT + HDR_H + TBL_HDR_H; // where rows start
+  const MAX_Y = PH - MB - FOOTER_H;
+
+  let totalPages = 0;
+  // First pass: count pages needed
+  const ruaGroups = [];
+  const ruaOrder = [];
+  lista.forEach(r => {
+    const rua = r.rua || '(sem rua)';
+    if (!ruaGroups[rua]) { ruaGroups[rua] = []; ruaOrder.push(rua); }
+    ruaGroups[rua].push(r);
+  });
+  // deduplicate ruaOrder
+  const ruasUniq = [...new Set(ruaOrder)];
+
+  // Helper: draw page header (RUA title)
+  function drawPageHeader(rua, pageLabel) {
     doc.setFillColor(26, 46, 68);
-    doc.rect(0, 0, W, 14, 'F');
+    doc.rect(ML, MT, CW, HDR_H, 'F');
     doc.setTextColor(255, 255, 255);
-    doc.setFontSize(9);
+    doc.setFontSize(11);
     doc.setFont('helvetica','bold');
-    doc.text('DEMANDA REPOSIÇÃO', W/2, 6, {align:'center'});
+    doc.text('DEMANDA REPOSIÇÃO', ML + 4, MT + 7);
+    doc.setFontSize(9);
+    doc.setFont('helvetica','normal');
+    doc.text(`RUA: ${rua}`, ML + 4, MT + 13);
+    doc.setFontSize(8);
+    doc.text(pageLabel, PW - MR, MT + 7, { align:'right' });
+    const now = new Date();
+    const ds = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+    doc.text(ds, PW - MR, MT + 13, { align:'right' });
+  }
+
+  // Helper: draw table column headers
+  function drawTableHeader() {
+    const ty = MT + HDR_H;
+    doc.setFillColor(220, 228, 236);
+    doc.rect(ML, ty, CW, TBL_HDR_H, 'F');
+    doc.setTextColor(26, 46, 68);
+    doc.setFontSize(7);
+    doc.setFont('helvetica','bold');
+    cols.forEach(c => {
+      doc.text(c.label, c.x + 2, ty + 4.8);
+    });
+    // bottom border
+    doc.setDrawColor(150, 160, 175);
+    doc.line(ML, ty + TBL_HDR_H, ML + CW, ty + TBL_HDR_H);
+  }
+
+  // Helper: draw footer with page num
+  function drawFooter(pageNum, totalPg) {
+    doc.setTextColor(150, 160, 170);
     doc.setFontSize(7);
     doc.setFont('helvetica','normal');
-    const origens = r.origens instanceof Set ? [...r.origens].join(' | ') : '';
-    doc.text(origens, W/2, 11, {align:'center'});
+    doc.text(`Página ${pageNum} / ${totalPg}`, PW / 2, PH - MB, { align:'center' });
+  }
 
-    // REVALIDAÇÃO badge
-    if (r.revalidacao) {
-      doc.setFillColor(122, 90, 248);
-      doc.roundedRect(2, 15, 28, 6, 1.5, 1.5, 'F');
-      doc.setTextColor(255,255,255);
-      doc.setFontSize(6);
-      doc.setFont('helvetica','bold');
-      doc.text('REVALIDAÇÃO', 16, 19.2, {align:'center'});
+  // Helper: draw one data row
+  function drawRow(r, y, shade) {
+    if (shade) {
+      doc.setFillColor(245, 248, 252);
+      doc.rect(ML, y, CW, ROW_H, 'F');
     }
+    // REVALIDAÇÃO badge inside row
+    const baseTextY = y + 5.2;
+    doc.setFontSize(7);
+    doc.setFont('helvetica','normal');
+    doc.setTextColor(30, 40, 55);
 
-    // Fields
-    const fields = [
-      ['CODPROD', r.codprod||''],
-      ['DESCRIÇÃO', r.descricao||''],
-      ['RUA', r.rua||''],
-      ['PRÉDIO', r.predio||''],
-      ['APTO', r.apto||''],
-      ['CAP.ANT', ''],
-      ['CAP.NOVA', ''],
+    const vals = [
+      r.codprod || '',
+      r.descricao || '',
+      r.rua || '',
+      r.predio || '',
+      r.apto || '',
+      (r.origens instanceof Set ? [...r.origens].join(' | ') : (r.origens||'')),
+      '',  // CAP.ANT blank
+      '',  // CAP.NOVA blank
     ];
-    let y = r.revalidacao ? 25 : 18;
-    const lineH = 9;
-    fields.forEach(([label, val]) => {
-      doc.setTextColor(100, 120, 140);
-      doc.setFontSize(6);
-      doc.setFont('helvetica','bold');
-      doc.text(label, 4, y);
-      doc.setTextColor(26, 46, 68);
-      doc.setFontSize(8.5);
-      doc.setFont('helvetica','normal');
-      const truncated = val.length > 38 ? val.substring(0,38)+'…' : val;
-      doc.text(truncated, 4, y + 4.5);
-      doc.setDrawColor(220,228,236);
-      doc.line(4, y + 6.5, W - 4, y + 6.5);
-      y += lineH;
+
+    cols.forEach((c, i) => {
+      let txt = String(vals[i]);
+      // truncate to fit column
+      const maxChars = Math.floor(c.w / 1.8);
+      if (txt.length > maxChars) txt = txt.substring(0, maxChars - 1) + '…';
+      doc.text(txt, c.x + 2, baseTextY);
     });
 
-    // Footer — page number
-    doc.setTextColor(150,160,170);
-    doc.setFontSize(6);
-    doc.setFont('helvetica','normal');
-    doc.text(`${idx+1} / ${lista.length}`, W/2, H - 3, {align:'center'});
+    // REVALIDAÇÃO badge if applicable
+    if (r.revalidacao) {
+      const bx = cols[cols.length-1].x + cols[cols.length-1].w - 22;
+      doc.setFillColor(122, 90, 248);
+      doc.roundedRect(bx, y + 1.5, 20, 4.5, 1, 1, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(5.5);
+      doc.setFont('helvetica','bold');
+      doc.text('REVALIDAÇÃO', bx + 10, y + 4.5, { align:'center' });
+    }
+
+    // row bottom divider
+    doc.setDrawColor(220, 228, 236);
+    doc.line(ML, y + ROW_H, ML + CW, y + ROW_H);
+  }
+
+  // --- Render ---
+  // Two-pass approach: first collect page count, then render
+  // Single-pass with deferred footer update via stored page refs
+  const pageNums = []; // page index per rua section page
+  let firstPage = true;
+  let globalPage = 1;
+  const pageFooters = []; // {page, totalWillBe} — filled after
+
+  ruasUniq.forEach(rua => {
+    const items = ruaGroups[rua];
+    let itemIdx = 0;
+    let ruaPage = 1;
+
+    while (itemIdx < items.length) {
+      if (!firstPage) { doc.addPage(); globalPage++; }
+      firstPage = false;
+
+      // How many items per page?
+      let y = BODY_TOP;
+      const rowsThisPage = [];
+      while (itemIdx < items.length && y + ROW_H <= MAX_Y) {
+        rowsThisPage.push(items[itemIdx++]);
+        y += ROW_H;
+      }
+
+      // Estimate rua page label — we don't know total rua pages yet, patch after
+      pageFooters.push({ pageIdx: globalPage, ruaPage, items: rowsThisPage.length });
+
+      drawPageHeader(rua, `RUA ${ruaPage}`);
+      drawTableHeader();
+
+      let ry = BODY_TOP;
+      rowsThisPage.forEach((r, i) => {
+        drawRow(r, ry, i % 2 === 1);
+        ry += ROW_H;
+      });
+
+      ruaPage++;
+    }
   });
+
+  const totalPg = globalPage;
+
+  // Add footers — jsPDF doesn't support editing past pages easily,
+  // so we re-iterate using setPage
+  for (let p = 1; p <= totalPg; p++) {
+    doc.setPage(p);
+    drawFooter(p, totalPg);
+  }
 
   doc.save('demanda-reposicao.pdf');
 }
@@ -10481,13 +10652,20 @@ function renderCapacidadeCD() {
       <!-- Linha 1: Filtros globais -->
       <div class="toolbar" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
 
-        <div class="filter-group" style="flex:2;min-width:200px;">
+        <div class="filter-group" style="flex:2;min-width:220px;">
           <label>Produto / Código</label>
-          <select id="cap-prod-select" multiple size="3" style="width:100%;"
-            onchange="CapCDState.filtroProdutos=[...this.selectedOptions].map(o=>o.value).filter(Boolean);CapCDState.detPage=0;CapCDState.tblPage=0;renderCapacidadeCD();">
-            <option value="" ${CapCDState.filtroProdutos.length===0?'selected':''}>— Todos —</option>
-            ${_prodOpts}
-          </select>
+          <div style="position:relative;" id="cap-combo-wrap">
+            <input type="text" id="cap-prod-search" autocomplete="off"
+              placeholder="${CapCDState.filtroProdutos.length>0?CapCDState.filtroProdutos.length+' selecionado(s)':'Buscar código ou nome...'}"
+              style="width:100%;box-sizing:border-box;padding:5px 28px 5px 8px;border:1px solid #c8d0db;border-radius:6px;font-size:12px;background:#fff;"
+              onfocus="capComboOpen()"
+              oninput="capComboFilter(this.value)">
+            <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:#7a8798;pointer-events:none;font-size:11px;">▼</span>
+            <div id="cap-combo-list" style="display:none;position:absolute;z-index:2000;top:100%;left:0;right:0;background:#fff;border:1px solid #c8d0db;border-top:none;border-radius:0 0 6px 6px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1);">
+              <div data-val="" onclick="capComboToggle(this)" style="padding:6px 10px;font-size:12px;cursor:pointer;color:#7a8798;border-bottom:1px solid #f0f0f0;">— Todos —</div>
+              ${_prodListDropdown.map(p=>`<div data-val="${p.cod}" onclick="capComboToggle(this)" style="padding:5px 10px;font-size:11px;cursor:pointer;${CapCDState.filtroProdutos.includes(p.cod)?'background:#e8f0fe;font-weight:700;':''}"><span class="cap-combo-chk" style="margin-right:6px;">${CapCDState.filtroProdutos.includes(p.cod)?'☑':'☐'}</span>${p.cod}${p.desc?' — '+p.desc.substring(0,35):''}</div>`).join('')}
+            </div>
+          </div>
           ${CapCDState.filtroProdutos.length>0
             ? `<button onclick="CapCDState.filtroProdutos=[];renderCapacidadeCD();"
                  style="margin-top:3px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;padding:0;">
@@ -10763,7 +10941,8 @@ function renderCapacidadeCD() {
 
   // Aplica filtros na lista de transferidos
   let transFiltered = [...comp.itensTransferidos];
-  if (CapCDState.filtroUrgencia !== 'todos') transFiltered = transFiltered.filter(r => r.urgencia === CapCDState.filtroUrgencia);
+  if (CapCDState.filtroUrgencia === 'maxalta') transFiltered = transFiltered.filter(r => r.urgencia === 'Máxima' || r.urgencia === 'Alta');
+  else if (CapCDState.filtroUrgencia !== 'todos') transFiltered = transFiltered.filter(r => r.urgencia === CapCDState.filtroUrgencia);
   if (CapCDState.filtroOrigem !== 'todos') {
     const oriMap = {inteiro:'1', drivein:'2', meio:'8', terco:'9'};
     const oriPfx = oriMap[CapCDState.filtroOrigem];
@@ -10807,6 +10986,7 @@ function renderCapacidadeCD() {
         <div>
           <div style="font-size:10px;font-weight:600;color:#7a8798;text-transform:uppercase;margin-bottom:5px;">Urgência</div>
           <div style="display:flex;flex-wrap:wrap;gap:5px;">
+            ${mkUrgBtn('maxalta','Máxima + Alta',maxCount+altaCount,'#7c1d1d')}
             ${mkUrgBtn('todos','Todos',comp.itensTransferidos.length,'#374151')}
             ${mkUrgBtn('Máxima','Máxima',maxCount,'#7c1d1d')}
             ${mkUrgBtn('Alta','Alta',altaCount,'#d64545')}
@@ -10839,7 +11019,7 @@ function renderCapacidadeCD() {
       </div>
       ${(CapCDState.filtroUrgencia!=='todos'||CapCDState.filtroOrigem!=='todos'||CapCDState.filtroDiffIni!==''||CapCDState.filtroDiffFim!=='')?
         `<div style="margin-top:8px;font-size:11px;color:#1a4480;">Mostrando <strong>${transFiltered.length}</strong> de ${comp.itensTransferidos.length} transferidos
-        <button onclick="CapCDState.filtroUrgencia='todos';CapCDState.filtroOrigem='todos';CapCDState.filtroDiffIni='';CapCDState.filtroDiffFim='';renderCapacidadeCD();" style="margin-left:8px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕ Limpar filtros</button></div>`:''
+        <button onclick="CapCDState.filtroUrgencia='maxalta';CapCDState.filtroOrigem='todos';CapCDState.filtroDiffIni='';CapCDState.filtroDiffFim='';renderCapacidadeCD();" style="margin-left:8px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕ Redefinir filtros</button></div>`:''
       }
     </div>
 
@@ -11298,10 +11478,19 @@ function capRenderCharts(comp) {
     // Armazena totais para tooltip
     const totaisMap = new Map(ruasSorted.map(([rua,v])=>['Rua '+rua, v]));
 
-    // Ajusta largura do canvas para caber todas as barras (mínimo 36px por rua)
-    const minW = Math.max(ctx4.parentElement.offsetWidth || 800, labels4.length * 36);
-    ctx4.style.width  = minW + 'px';
-    ctx4.width        = minW;
+    // Paleta igual ao gráfico Preventivo×Corretivo: escuro=validado, claro=pendente
+    const COR_VALID = '#1a2e44'; // escuro — mesmo COR_CORR
+    const COR_PEND  = '#a8d8c8'; // claro — mesmo COR_PREV
+
+    // Ajusta largura do canvas proporcionalmente ao número de barras
+    // mínimo 40px por barra, máximo sem scroll se couber
+    const wrap = ctx4.parentElement;
+    const wrapW = wrap.offsetWidth || 700;
+    const barW  = Math.max(40, Math.min(80, Math.floor(wrapW / Math.max(labels4.length, 1))));
+    const totalW = Math.max(wrapW, labels4.length * barW);
+    ctx4.style.width  = totalW + 'px';
+    ctx4.width        = totalW;
+    ctx4.style.height = '260px';
 
     CapCDState.charts['rua'] = new Chart(ctx4, {
       type: 'bar',
@@ -11309,39 +11498,38 @@ function capRenderCharts(comp) {
         labels: labels4,
         datasets: [
           {
-            // Série inferior: % validado — cor sólida azul
             label: 'Validado (%)',
             data: pctValid,
-            backgroundColor: '#1a6db5',
-            borderColor: '#1a4480',
-            borderWidth: 1,
+            backgroundColor: COR_VALID,
+            borderColor: COR_VALID,
+            borderWidth: 0,
             stack: 'rua',
             datalabels: {
-              display: ctx => pctValid[ctx.dataIndex] >= 8, // só exibe se tiver espaço
+              display: ctx => pctValid[ctx.dataIndex] >= 10,
               color: '#ffffff',
               font: { weight: 'bold', size: 10 },
               anchor: 'center',
               align: 'center',
-              formatter: (v, ctx) => v + '%'
+              formatter: v => v + '%'
             }
           },
           {
-            // Série superior: % restante — cor fundo bem clara
             label: 'Pendente (%)',
             data: pctRest,
-            backgroundColor: '#dceeff',
-            borderColor: '#b0cce8',
-            borderWidth: 1,
+            backgroundColor: COR_PEND,
+            borderColor: COR_PEND,
+            borderWidth: 0,
             stack: 'rua',
             datalabels: {
-              display: ctx => pctRest[ctx.dataIndex] >= 14,
-              color: '#4a6fa5',
-              font: { weight: '600', size: 9 },
+              display: ctx => pctRest[ctx.dataIndex] >= 16,
+              color: '#1a4480',
+              font: { weight: 'bold', size: 9 },
               anchor: 'center',
               align: 'center',
               formatter: (v, ctx) => {
                 const entry = totaisMap.get(labels4[ctx.dataIndex]) || {total:0,valid:0};
-                return entry.total - entry.valid > 0 ? (entry.total - entry.valid) + ' pend.' : '';
+                const pend = entry.total - entry.valid;
+                return pend > 0 ? pend + ' pend.' : '';
               }
             }
           }
@@ -11354,9 +11542,9 @@ function capRenderCharts(comp) {
           legend: {
             display: true, position: 'top',
             labels: { font:{ size:11 }, color:'#3a4a5c',
-              generateLabels: chart => [
-                { text:'Validado (%)', fillStyle:'#1a6db5', strokeStyle:'#1a4480', lineWidth:1 },
-                { text:'Pendente (%)', fillStyle:'#dceeff', strokeStyle:'#b0cce8', lineWidth:1 }
+              generateLabels: () => [
+                { text:'Validado (%)', fillStyle: COR_VALID, strokeStyle: COR_VALID, lineWidth:0 },
+                { text:'Pendente (%)', fillStyle: COR_PEND,  strokeStyle: COR_PEND,  lineWidth:0 }
               ]
             }
           },
@@ -11379,7 +11567,7 @@ function capRenderCharts(comp) {
         scales: {
           x: {
             stacked: true,
-            ticks: { color:'#7a8798', font:{ size:9 }, maxRotation:45 },
+            ticks: { color:'#7a8798', font:{ size:9 }, maxRotation:45, minRotation:30 },
             grid: { display:false }
           },
           y: {
