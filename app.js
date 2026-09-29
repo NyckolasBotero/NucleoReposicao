@@ -74,7 +74,7 @@ if(document.readyState === "loading"){
 /* CONFIG                                                                  */
 /* ---------------------------------------------------------------------- */
 const REQUIRED_SHEETS = ["AUDITORIA REP","FEEDBACK REP","QUADRO REP","8271","8460"];
-const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada"]; // carregadas se existirem, não causam erro se faltarem
+const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo"]; // carregadas se existirem, não causam erro se faltarem
 
 const REQUIRED_COLUMNS = {
   "AUDITORIA REP": ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"],
@@ -769,6 +769,37 @@ const DataProcessor = {
       return { cod, dt, tipo };
     }).filter(Boolean) : null;
     out.capacidadeRealizadaDispo = !!rawCapReal;
+
+    // ---- Sheet "Tipo" (coluna A = CODPROD, coluna B = DATA) ----
+    const rawTipo = raw["Tipo"];
+    const _parseTipoDate = (v) => {
+      if (!v) return null;
+      // Excel serial number
+      if (typeof v === 'number') {
+        const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+        return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+      }
+      const s = String(v).trim();
+      const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m1) return new Date(+m1[3], +m1[2]-1, +m1[1]);
+      if (m2) return new Date(+m2[1], +m2[2]-1, +m2[3]);
+      return null;
+    };
+    out.sheetTipo = rawTipo ? rawTipo.map(r => {
+      // A aba pode ter headers nomeados ou não — tenta múltiplas variações
+      const codKeys = Object.keys(r).filter(k => k === '__EMPTY' || k.match(/^CODPROD$/i) || k.match(/^A$/i) || k.match(/^COD/i));
+      const dtKeys  = Object.keys(r).filter(k => k.match(/^DATA$/i) || k.match(/^B$/i) || k.match(/^DATE$/i));
+      // Fallback: SheetJS coloca colunas sem header como __EMPTY, __EMPTY_1 etc.
+      const allKeys = Object.keys(r);
+      const cod = codKeys.length > 0 ? r[codKeys[0]] : (allKeys.length > 0 ? r[allKeys[0]] : null);
+      const dtRaw = dtKeys.length > 0 ? r[dtKeys[0]] : (allKeys.length > 1 ? r[allKeys[1]] : null);
+      const cp = cod != null ? String(cod).trim() : null;
+      if (!cp || cp === 'CODPROD') return null; // pula header
+      const dt = _parseTipoDate(dtRaw);
+      return { codprod: cp, dt };
+    }).filter(Boolean) : null;
+    out.sheetTipoDispo = !!rawTipo && rawTipo.length > 0;
 
     return out;
   }
@@ -9595,16 +9626,25 @@ const CapCDState = {
   filtroOrigem: 'todos',    // filtro tipo origem transferidos (inteiro|drivein|meio|terco|todos)
   filtroDiffIni: '',        // filtro diferença inicial
   filtroDiffFim: '',        // filtro diferença final
+  // — Gerar Demanda —
+  demandaNaoValidado: true,       // toggle Não Validado
+  demandaCorretivo: true,         // toggle Corretivo Ocorrência (sheet Tipo)
+  demandaTransferido: true,       // toggle Transferido Preventivo
+  demandaTipoIni: null,           // Date | null — início período sheet Tipo
+  demandaTipoFim: null,           // Date | null — fim período sheet Tipo
+  demandaGerada: null,            // array | null — lista gerada pelo botão
   rankPage: 0,              // paginação do ranking
   detPage: 0,               // paginação tabela detalhada
   tblPage: 0,               // paginação tabela principal
   entradosPage: 0,          // paginação itens entrados
   saidosPage: 0,            // paginação itens saídos
+  demandaPage: 0,           // paginação demanda
   rankPageSize: 15,
   detPageSize: 20,
   tblPageSize: 25,
   entradosPageSize: 10,
   saidosPageSize: 10,
+  demandaPageSize: 30,
   charts: {}                // referências dos Chart.js
 };
 
@@ -9656,6 +9696,300 @@ function capSetAtalho(key) {
   }
   CapCDState.detPage = 0;
   renderCapacidadeCD();
+}
+
+/* Último dia útil disponível na sheet Tipo antes ou igual a uma data */
+function capUltimoDiaUtilTipo(sheetTipo, refDate) {
+  if (!sheetTipo || !sheetTipo.length) return null;
+  const isUtil = d => d && d.getDay && d.getDay() >= 1 && d.getDay() <= 5;
+  const datasDisponiveis = [...new Set(
+    sheetTipo.filter(r => r.dt && isUtil(r.dt))
+             .map(r => capDK(r.dt))
+             .filter(Boolean)
+  )].sort();
+  if (!datasDisponiveis.length) return null;
+  const refDK = capDK(refDate);
+  const candidatas = datasDisponiveis.filter(dk => dk <= refDK);
+  return candidatas.length ? candidatas[candidatas.length-1] : datasDisponiveis[datasDisponiveis.length-1];
+}
+
+/* Dias úteis entre duas datas (seg-sex, inclusive) */
+function capDiasUteisEntre(d1, d2) {
+  if (!d1 || !d2) return 0;
+  let count = 0;
+  const cur = new Date(d1); cur.setHours(0,0,0,0);
+  const end = new Date(d2); end.setHours(0,0,0,0);
+  while (cur <= end) {
+    const dow = cur.getDay();
+    if (dow >= 1 && dow <= 5) count++;
+    cur.setDate(cur.getDate()+1);
+  }
+  return count;
+}
+
+/* Dias úteis DESDE uma data até hoje (exclusive a própria data) */
+function capDiasDesde(ultimaDt) {
+  if (!ultimaDt) return null;
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const d = new Date(ultimaDt); d.setHours(0,0,0,0);
+  if (d >= hoje) return 0;
+  return capDiasUteisEntre(new Date(d.getTime()+86400000), hoje);
+}
+
+/* Gera a lista de demanda unificada */
+function capGerarDemanda(processed, comp) {
+  const novaMap = new Map((processed.p8022Nova||[]).map(r=>[r.codprod,r]));
+  const revendaExcluir = CapCDState.filtroRevenda === 'nao';
+  const revendaSetExcl = revendaExcluir
+    ? new Set((processed.p8022Nova||[]).filter(r=>r.revenda==='SIM').map(r=>r.codprod))
+    : new Set();
+
+  const demandaMap = new Map();
+
+  const addDemanda = (codprod, descricao, origem, extra={}) => {
+    if (revendaExcluir && revendaSetExcl.has(codprod)) return;
+    const nova = novaMap.get(codprod);
+    const rua   = (nova ? nova.rua    || '' : '') || extra.rua    || '';
+    const predio= (nova ? nova.predio || '' : '') || extra.predio || '';
+    const apto  = (nova ? nova.apto   || '' : '') || extra.apto   || '';
+    const desc  = (nova ? nova.descricao || '' : '') || descricao || '';
+    if (!codprod) return;
+    if (!demandaMap.has(codprod)) {
+      demandaMap.set(codprod, { codprod, descricao: desc, rua, predio, apto, origens: new Set(), revalidacao: false, contTipo: 0 });
+    }
+    const entry = demandaMap.get(codprod);
+    entry.origens.add(origem);
+    if (extra.revalidacao) entry.revalidacao = true;
+    if (extra.contTipo) entry.contTipo = Math.max(entry.contTipo, extra.contTipo);
+  };
+
+  // 1 — Não Validados
+  if (CapCDState.demandaNaoValidado) {
+    const validadosSet = comp.uniqueValidadosPorCod;
+    const rows8022N = comp.rows8022N || [];
+    const elegiveisSet = new Set((comp.rows8022||[]).map(r=>r.codprod));
+    // Produtos em 8022 Nova não validados
+    rows8022N.forEach(r => {
+      if (!validadosSet.has(r.codprod)) {
+        addDemanda(r.codprod, r.descricao, 'Não Validado');
+      }
+    });
+    // Produtos elegíveis (8022 NIVEL=1) não validados e não em 8022 Nova
+    const nova8022Set = new Set(rows8022N.map(r=>r.codprod));
+    (comp.rows8022||[]).forEach(r => {
+      if (!validadosSet.has(r.codprod) && !nova8022Set.has(r.codprod)) {
+        addDemanda(r.codprod, r.descricao, 'Não Validado', {rua:r.rua||'',predio:r.predio||'',apto:r.apto||''});
+      }
+    });
+  }
+
+  // 2 — Corretivo Ocorrência (sheet Tipo)
+  if (CapCDState.demandaCorretivo && processed.sheetTipo) {
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    let tipoIni = CapCDState.demandaTipoIni;
+    let tipoFim = CapCDState.demandaTipoFim;
+    if (!tipoIni && !tipoFim) {
+      const ultimoDK = capUltimoDiaUtilTipo(processed.sheetTipo, hoje);
+      if (ultimoDK) {
+        const [y,m,d] = ultimoDK.split('-');
+        tipoIni = new Date(+y,+m-1,+d);
+        tipoFim = new Date(+y,+m-1,+d,23,59,59);
+      }
+    }
+    const tipoFiltrado = (processed.sheetTipo||[]).filter(r => {
+      if (!r.dt) return false;
+      if (tipoIni && r.dt < tipoIni) return false;
+      if (tipoFim && r.dt > tipoFim) return false;
+      return true;
+    });
+    const tipoMap = new Map();
+    tipoFiltrado.forEach(r => {
+      if (!tipoMap.has(r.codprod)) tipoMap.set(r.codprod, { datas: new Set() });
+      tipoMap.get(r.codprod).datas.add(capDK(r.dt));
+    });
+    tipoMap.forEach((v, codprod) => {
+      const nova = novaMap.get(codprod);
+      const desc = nova ? nova.descricao || '' : '';
+      addDemanda(codprod, desc, 'Corretivo Ocorrência', { revalidacao: v.datas.size > 1, contTipo: v.datas.size });
+    });
+  }
+
+  // 3 — Transferido Preventivo (urgência ≠ Normal)
+  if (CapCDState.demandaTransferido) {
+    (comp.itensTransferidos||[]).filter(r => r.urgencia !== 'Normal').forEach(r => {
+      addDemanda(r.codprod, r.descricao, 'Transferido Preventivo');
+    });
+  }
+
+  // Converte e ordena RUA → PREDIO → APTO
+  const lista = [...demandaMap.values()];
+  lista.sort((a,b) => {
+    const rv = (a.rua||'').localeCompare(b.rua||'', undefined, {numeric:true});
+    if (rv) return rv;
+    const pv = (a.predio||'').localeCompare(b.predio||'', undefined, {numeric:true});
+    if (pv) return pv;
+    return (a.apto||'').localeCompare(b.apto||'', undefined, {numeric:true});
+  });
+  return lista;
+}
+
+/* ---- Gerar Demanda Action ---- */
+function capGerarDemandaAction() {
+  const proc = window.APP_STATE && window.APP_STATE.processed;
+  if (!proc) return;
+  const comp = capCompute(proc);
+  CapCDState.demandaGerada = capGerarDemanda(proc, comp);
+  CapCDState.demandaPage = 0;
+  renderCapacidadeCD();
+}
+
+/* ---- Ver Regras Modal ---- */
+function capVerRegras() {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:28px 32px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
+        <h3 style="margin:0;font-size:16px;color:#1a2e44;">📋 Regras — Gerar Demanda</h3>
+        <button onclick="this.closest('div[style*=fixed]').remove();" style="border:none;background:none;font-size:20px;cursor:pointer;color:#7a8798;">✕</button>
+      </div>
+      <div style="font-size:13px;color:#3a4a5c;line-height:1.7;">
+        <p><strong>Não Validado</strong>: produtos presentes na planilha <em>8022 Nova</em> (ou elegíveis em 8022 nível 1) que ainda não possuem registro de validação no período filtrado.</p>
+        <p><strong>Corretivo Ocorrência</strong>: produtos com ocorrência registrada na sheet <em>Tipo</em> no período selecionado. Quando um produto aparece em mais de um dia de ocorrência, recebe o badge <span style="background:#7a5af8;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;">REVALIDAÇÃO</span>.</p>
+        <p><strong>Transferido Preventivo</strong>: itens transferidos com urgência diferente de <em>Normal</em>. O endereço utilizado é sempre o da planilha <em>8022 Nova</em>.</p>
+        <hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">
+        <p><strong>Deduplicação</strong>: se um produto aparecer em mais de uma origem, ele é listado uma única vez com todas as origens indicadas.</p>
+        <p><strong>Ordenação</strong>: a demanda é ordenada por RUA → PRÉDIO → APTO (ordem alfanumérica).</p>
+        <p><strong>PDF 100×100mm</strong>: contém CODPROD, DESCRIÇÃO, RUA, PRÉDIO, APTO (endereço da 8022 Nova), e campos em branco CAP.ANT e CAP.NOVA para preenchimento manual.</p>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+/* ---- Preview PDF Modal ---- */
+function capDemandaPreviewPDF() {
+  const lista = CapCDState.demandaGerada;
+  if (!lista || !lista.length) return alert('Gere a demanda primeiro.');
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);';
+  const ruaAtual = { v: null };
+  const linhas = lista.map(r => {
+    const sep = (r.rua||'') !== ruaAtual.v ? `<tr style="background:#1a4480;"><td colspan="7" style="color:#fff;font-weight:700;font-size:11px;padding:4px 6px;">📍 RUA ${r.rua||'—'}</td></tr>` : '';
+    ruaAtual.v = r.rua||'';
+    return sep + `<tr style="border-bottom:1px solid #e2e8f0;">
+      <td style="padding:3px 5px;font-size:10px;">${r.codprod||''}</td>
+      <td style="padding:3px 5px;font-size:10px;max-width:160px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${r.descricao||''}</td>
+      <td style="padding:3px 5px;font-size:10px;">${r.rua||''}</td>
+      <td style="padding:3px 5px;font-size:10px;">${r.predio||''}</td>
+      <td style="padding:3px 5px;font-size:10px;">${r.apto||''}</td>
+      <td style="padding:3px 5px;font-size:10px;"></td>
+      <td style="padding:3px 5px;font-size:10px;"></td>
+    </tr>`;
+  }).join('');
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;max-width:700px;width:95%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.3);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h3 style="margin:0;font-size:15px;color:#1a2e44;">👁️ Preview Demanda — ${lista.length} produtos</h3>
+        <div style="display:flex;gap:8px;">
+          <button onclick="capDemandaExportPDF();" style="padding:6px 14px;border-radius:6px;border:none;background:#e07b00;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">📄 Gerar PDF</button>
+          <button onclick="this.closest('div[style*=fixed]').remove();" style="border:none;background:none;font-size:20px;cursor:pointer;color:#7a8798;">✕</button>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-family:monospace;">
+        <thead><tr style="background:#f0f4f8;">
+          <th style="padding:4px 5px;font-size:10px;text-align:left;">CODPROD</th>
+          <th style="padding:4px 5px;font-size:10px;text-align:left;">DESCRIÇÃO</th>
+          <th style="padding:4px 5px;font-size:10px;text-align:left;">RUA</th>
+          <th style="padding:4px 5px;font-size:10px;text-align:left;">PRÉDIO</th>
+          <th style="padding:4px 5px;font-size:10px;text-align:left;">APTO</th>
+          <th style="padding:4px 5px;font-size:10px;text-align:left;">CAP.ANT</th>
+          <th style="padding:4px 5px;font-size:10px;text-align:left;">CAP.NOVA</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+/* ---- Export PDF 100×100mm ---- */
+function capDemandaExportPDF() {
+  const lista = CapCDState.demandaGerada;
+  if (!lista || !lista.length) return alert('Gere a demanda primeiro.');
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+    alert('Biblioteca jsPDF não disponível.');
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  // 100×100mm per card, portrait
+  const W = 100, H = 100;
+  const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:[W, H] });
+
+  let ruaAtual = null;
+  let firstPage = true;
+
+  lista.forEach((r, idx) => {
+    if (!firstPage) doc.addPage([W, H]);
+    firstPage = false;
+
+    // Header
+    doc.setFillColor(26, 46, 68);
+    doc.rect(0, 0, W, 14, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(9);
+    doc.setFont('helvetica','bold');
+    doc.text('DEMANDA REPOSIÇÃO', W/2, 6, {align:'center'});
+    doc.setFontSize(7);
+    doc.setFont('helvetica','normal');
+    const origens = r.origens instanceof Set ? [...r.origens].join(' | ') : '';
+    doc.text(origens, W/2, 11, {align:'center'});
+
+    // REVALIDAÇÃO badge
+    if (r.revalidacao) {
+      doc.setFillColor(122, 90, 248);
+      doc.roundedRect(2, 15, 28, 6, 1.5, 1.5, 'F');
+      doc.setTextColor(255,255,255);
+      doc.setFontSize(6);
+      doc.setFont('helvetica','bold');
+      doc.text('REVALIDAÇÃO', 16, 19.2, {align:'center'});
+    }
+
+    // Fields
+    const fields = [
+      ['CODPROD', r.codprod||''],
+      ['DESCRIÇÃO', r.descricao||''],
+      ['RUA', r.rua||''],
+      ['PRÉDIO', r.predio||''],
+      ['APTO', r.apto||''],
+      ['CAP.ANT', ''],
+      ['CAP.NOVA', ''],
+    ];
+    let y = r.revalidacao ? 25 : 18;
+    const lineH = 9;
+    fields.forEach(([label, val]) => {
+      doc.setTextColor(100, 120, 140);
+      doc.setFontSize(6);
+      doc.setFont('helvetica','bold');
+      doc.text(label, 4, y);
+      doc.setTextColor(26, 46, 68);
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica','normal');
+      const truncated = val.length > 38 ? val.substring(0,38)+'…' : val;
+      doc.text(truncated, 4, y + 4.5);
+      doc.setDrawColor(220,228,236);
+      doc.line(4, y + 6.5, W - 4, y + 6.5);
+      y += lineH;
+    });
+
+    // Footer — page number
+    doc.setTextColor(150,160,170);
+    doc.setFontSize(6);
+    doc.setFont('helvetica','normal');
+    doc.text(`${idx+1} / ${lista.length}`, W/2, H - 3, {align:'center'});
+  });
+
+  doc.save('demanda-reposicao.pdf');
 }
 
 /* Destroi charts anteriores */
@@ -9982,6 +10316,50 @@ function capCompute(processed) {
     return { cod, descricao: base.descricao || nova2.descricao || '', total:e.total, prev:e.prev, corr:e.corr, revalidacoes: e.total-1, ultima: ult };
   }).sort((a,b) => b.total - a.total || a.cod.localeCompare(b.cod));
 
+  // — Resumo Sheet Tipo —
+  const resumoTipo = (() => {
+    const sheetTipo = processed.sheetTipo;
+    if (!sheetTipo || !sheetTipo.length) return [];
+    // Conjunto de codprods da Tipo (únicos)
+    const tipoProdSet = new Set(sheetTipo.filter(r=>r.codprod).map(r=>r.codprod));
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    // Mapa de transferidos por codprod
+    const transMap = new Map(itensTransferidos.map(r=>[r.codprod, r]));
+    // Mapa CR por codprod
+    const crPorProd = new Map();
+    (rawCR).forEach(r => {
+      if (!crPorProd.has(r.cod)) crPorProd.set(r.cod, []);
+      crPorProd.get(r.cod).push(r);
+    });
+
+    return [...tipoProdSet].map(codprod => {
+      // Dados da 8022 Nova (endereço atual)
+      const nova = novaMap.get(codprod);
+      const descricao = nova ? nova.descricao || '' : '';
+      // Transferência?
+      const trans = transMap.get(codprod);
+      const transferido = !!trans;
+      const endAnterior = transferido ? [trans.ruaOrig, trans.predioOrig, trans.aptoOrig].filter(Boolean).join('-') || trans.endOrig : '';
+      const endNovo = nova ? [nova.rua, nova.predio, nova.apto].filter(Boolean).join('-') || nova.codendereco : '';
+      // Ocorrências da Tipo para este produto
+      const ocorrencias = sheetTipo.filter(r=>r.codprod===codprod && r.dt);
+      const datasUteis = new Set(ocorrencias.filter(r=>r.dt.getDay()>=1&&r.dt.getDay()<=5).map(r=>capDK(r.dt)).filter(Boolean));
+      const diasComOcorrencia = datasUteis.size;
+      // Última ocorrência
+      const datasArr = [...datasUteis].sort();
+      const ultimaOcorDK = datasArr.length ? datasArr[datasArr.length-1] : null;
+      const ultimaOcorDate = ultimaOcorDK ? (() => { const [y,m,d]=ultimaOcorDK.split('-'); return new Date(+y,+m-1,+d); })() : null;
+      const diasDesdeOcor = ultimaOcorDate ? capDiasDesde(ultimaOcorDate) : null;
+      // Histórico CR
+      const crList = crPorProd.get(codprod) || [];
+      const qtdPrev = crList.filter(r=>r.tipo==='PREVENTIVO').length;
+      const qtdCorr = crList.filter(r=>r.tipo==='CORRETIVO').length;
+      const ultimaValDates = crList.filter(r=>r.dt).map(r=>r.dt);
+      const ultimaVal = ultimaValDates.length ? new Date(Math.max(...ultimaValDates.map(d=>d.getTime()))) : null;
+      return { codprod, descricao, transferido, endAnterior, endNovo, diasComOcorrencia, diasDesdeOcor, ultimaVal, qtdPrev, qtdCorr };
+    }).sort((a,b)=>a.codprod.localeCompare(b.codprod));
+  })();
+
   return {
     dispo8022: processed.p8022CDDispo,
     dispoCR: processed.capacidadeRealizadaDispo,
@@ -10007,6 +10385,7 @@ function capCompute(processed) {
     itensTransferidos,
     ultimoDiaValidado,
     ultimoDiaRows,
+    resumoTipo,
   };
 }
 
@@ -10098,50 +10477,117 @@ function renderCapacidadeCD() {
              cursor:pointer;">${label}</button>`;
 
   const filtroHTML = `
-    <div class="toolbar" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
+    <div style="background:#f7f9fc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:14px;">
+      <!-- Linha 1: Filtros globais -->
+      <div class="toolbar" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px;">
 
-      <div class="filter-group" style="flex:2;min-width:200px;">
-        <label>Produto / Código</label>
-        <select id="cap-prod-select" multiple size="3" style="width:100%;"
-          onchange="CapCDState.filtroProdutos=[...this.selectedOptions].map(o=>o.value).filter(Boolean);CapCDState.detPage=0;CapCDState.tblPage=0;renderCapacidadeCD();">
-          <option value="" ${CapCDState.filtroProdutos.length===0?'selected':''}>— Todos —</option>
-          ${_prodOpts}
-        </select>
-        ${CapCDState.filtroProdutos.length>0
-          ? `<button onclick="CapCDState.filtroProdutos=[];renderCapacidadeCD();"
-               style="margin-top:3px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;padding:0;">
-               ✕ Limpar (${CapCDState.filtroProdutos.length} selecionados)</button>`
-          : ''}
-      </div>
-
-      <div class="filter-group">
-        <label>Data Inicial</label>
-        <input type="date" id="cap-dt-ini" value="${fmtInputDate(CapCDState.filtroIni)}"
-          onchange="CapCDState.filtroIni=this.value?new Date(this.value+'T00:00:00'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
-      </div>
-
-      <div class="filter-group">
-        <label>Data Final</label>
-        <input type="date" id="cap-dt-fim" value="${fmtInputDate(CapCDState.filtroFim)}"
-          onchange="CapCDState.filtroFim=this.value?new Date(this.value+'T23:59:59'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
-      </div>
-
-      <div class="filter-group">
-        <label>Atalhos de Período</label>
-        <div style="display:flex;gap:4px;flex-wrap:wrap;">${capAtalhoHTML}</div>
-      </div>
-
-      <div class="filter-group">
-        <label>Revenda</label>
-        <div style="display:flex;gap:4px;">
-          ${capToggleBtn('Todos', CapCDState.filtroRevenda==='todos', "CapCDState.filtroRevenda='todos';renderCapacidadeCD();")}
-          ${capToggleBtn('Sem Revenda', CapCDState.filtroRevenda==='nao', "CapCDState.filtroRevenda='nao';renderCapacidadeCD();")}
+        <div class="filter-group" style="flex:2;min-width:200px;">
+          <label>Produto / Código</label>
+          <select id="cap-prod-select" multiple size="3" style="width:100%;"
+            onchange="CapCDState.filtroProdutos=[...this.selectedOptions].map(o=>o.value).filter(Boolean);CapCDState.detPage=0;CapCDState.tblPage=0;renderCapacidadeCD();">
+            <option value="" ${CapCDState.filtroProdutos.length===0?'selected':''}>— Todos —</option>
+            ${_prodOpts}
+          </select>
+          ${CapCDState.filtroProdutos.length>0
+            ? `<button onclick="CapCDState.filtroProdutos=[];renderCapacidadeCD();"
+                 style="margin-top:3px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;padding:0;">
+                 ✕ Limpar (${CapCDState.filtroProdutos.length} selecionados)</button>`
+            : ''}
         </div>
-        ${CapCDState.filtroRevenda==='nao'
-          ? `<span style="font-size:10px;color:#d64545;display:block;margin-top:3px;">⚠️ Revenda excluída de todo dashboard</span>`
-          : ''}
+
+        <div class="filter-group">
+          <label>Data Inicial</label>
+          <input type="date" id="cap-dt-ini" value="${fmtInputDate(CapCDState.filtroIni)}"
+            onchange="CapCDState.filtroIni=this.value?new Date(this.value+'T00:00:00'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
+        </div>
+
+        <div class="filter-group">
+          <label>Data Final</label>
+          <input type="date" id="cap-dt-fim" value="${fmtInputDate(CapCDState.filtroFim)}"
+            onchange="CapCDState.filtroFim=this.value?new Date(this.value+'T23:59:59'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
+        </div>
+
+        <div class="filter-group">
+          <label>Atalhos de Período</label>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">${capAtalhoHTML}</div>
+        </div>
+
+        <div class="filter-group">
+          <label>Revenda</label>
+          <div style="display:flex;gap:4px;">
+            ${capToggleBtn('Todos', CapCDState.filtroRevenda==='todos', "CapCDState.filtroRevenda='todos';renderCapacidadeCD();")}
+            ${capToggleBtn('Sem Revenda', CapCDState.filtroRevenda==='nao', "CapCDState.filtroRevenda='nao';renderCapacidadeCD();")}
+          </div>
+          ${CapCDState.filtroRevenda==='nao'
+            ? `<span style="font-size:10px;color:#d64545;display:block;margin-top:3px;">⚠️ Revenda excluída</span>`
+            : ''}
+        </div>
+
+        <div class="filter-group">
+          <label>&nbsp;</label>
+          <button onclick="capVerRegras();" style="padding:6px 14px;border-radius:6px;border:1.5px solid #7a5af8;background:#f5f3ff;color:#7a5af8;font-size:12px;font-weight:700;cursor:pointer;">📋 Ver Regras</button>
+        </div>
+
       </div>
 
+      <!-- Linha 2: Gerar Demanda -->
+      <div style="border-top:1px solid #e2e8f0;padding-top:12px;">
+        <div style="font-size:12px;font-weight:700;color:#1a4480;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">⚡ Gerar Demanda</div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;">
+
+          <div class="filter-group">
+            <label>Não Validado</label>
+            <div style="display:flex;gap:4px;">
+              ${capToggleBtn('SIM', CapCDState.demandaNaoValidado, "CapCDState.demandaNaoValidado=true;renderCapacidadeCD();")}
+              ${capToggleBtn('NÃO', !CapCDState.demandaNaoValidado, "CapCDState.demandaNaoValidado=false;renderCapacidadeCD();")}
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label>Corretivo Ocorrência</label>
+            <div style="display:flex;gap:4px;">
+              ${capToggleBtn('SIM', CapCDState.demandaCorretivo, "CapCDState.demandaCorretivo=true;renderCapacidadeCD();")}
+              ${capToggleBtn('NÃO', !CapCDState.demandaCorretivo, "CapCDState.demandaCorretivo=false;renderCapacidadeCD();")}
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label>Transferido Preventivo</label>
+            <div style="display:flex;gap:4px;">
+              ${capToggleBtn('SIM', CapCDState.demandaTransferido, "CapCDState.demandaTransferido=true;renderCapacidadeCD();")}
+              ${capToggleBtn('NÃO', !CapCDState.demandaTransferido, "CapCDState.demandaTransferido=false;renderCapacidadeCD();")}
+            </div>
+          </div>
+
+          ${processed.sheetTipoDispo ? `
+          <div class="filter-group">
+            <label>Período Sheet Tipo</label>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <input type="date" value="${fmtInputDate(CapCDState.demandaTipoIni)}"
+                style="border:1px solid #c8d0db;border-radius:6px;padding:4px 7px;font-size:11px;"
+                onchange="CapCDState.demandaTipoIni=this.value?new Date(this.value+'T00:00:00'):null;renderCapacidadeCD();">
+              <span style="font-size:11px;color:#7a8798;">até</span>
+              <input type="date" value="${fmtInputDate(CapCDState.demandaTipoFim)}"
+                style="border:1px solid #c8d0db;border-radius:6px;padding:4px 7px;font-size:11px;"
+                onchange="CapCDState.demandaTipoFim=this.value?new Date(this.value+'T23:59:59'):null;renderCapacidadeCD();">
+              ${(CapCDState.demandaTipoIni||CapCDState.demandaTipoFim)?`<button onclick="CapCDState.demandaTipoIni=null;CapCDState.demandaTipoFim=null;renderCapacidadeCD();" style="font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕</button>`:''}
+            </div>
+            <span style="font-size:10px;color:#7a8798;">Padrão: último dia útil disponível</span>
+          </div>` : `<div class="filter-group"><label>Sheet Tipo</label><span style="font-size:11px;color:#e07b00;">⚠️ Aba não encontrada</span></div>`}
+
+          <div class="filter-group">
+            <label>&nbsp;</label>
+            <div style="display:flex;gap:6px;">
+              <button onclick="capGerarDemandaAction();"
+                style="padding:7px 18px;border-radius:6px;border:none;background:#1a4480;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">⚡ Gerar Demanda</button>
+              ${CapCDState.demandaGerada ? `<button onclick="capDemandaPreviewPDF();" style="padding:7px 14px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:12px;font-weight:700;cursor:pointer;">👁️ Preview PDF</button>
+              <button onclick="capDemandaExportPDF();" style="padding:7px 14px;border-radius:6px;border:none;background:#e07b00;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">📄 Gerar PDF</button>` : ''}
+              ${CapCDState.demandaGerada ? `<button onclick="CapCDState.demandaGerada=null;CapCDState.demandaPage=0;renderCapacidadeCD();" style="padding:7px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#7a8798;font-size:11px;cursor:pointer;">✕ Limpar</button>` : ''}
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>`;
 
   // ---- Avisos de abas ausentes ----
@@ -10564,9 +11010,11 @@ function renderCapacidadeCD() {
       <button onclick="CapCDState.detPage=Math.min(${detPages-1},CapCDState.detPage+1);renderCapacidadeCD();" ${CapCDState.detPage===detPages-1?'disabled':''}>▶</button>
     </div>`:''}`;
 
-  // ---- Tabela principal 8022 ----
-  // Ordenação: RUA ASC → PREDIO ASC → NIVEL ASC → APTO ASC
-  const sortedRows = [...comp.rows8022].sort((a,b)=>{
+  // ---- Tabela principal 8022 — somente NÃO VALIDADOS ----
+  // Filtra apenas itens não validados da 8022 Nova (ou 8022 se não há Nova)
+  const _srcTbl = comp.rows8022N && comp.rows8022N.length ? comp.rows8022N : comp.rows8022;
+  const _naoValidados = _srcTbl.filter(r => !comp.uniqueValidadosPorCod.has(r.codprod));
+  const sortedRows = [..._naoValidados].sort((a,b)=>{
     const ruaA = a.rua||'', ruaB = b.rua||'';
     if(ruaA!==ruaB) return ruaA.localeCompare(ruaB,undefined,{numeric:true});
     const prA = a.predio||'', prB = b.predio||'';
@@ -10588,8 +11036,8 @@ function renderCapacidadeCD() {
   const tblPages = Math.ceil(tblTotal / CapCDState.tblPageSize);
 
   const tblHTML = `
-    <div class="cap-section-title">📦 Tabela Principal — Estoque Elegível 8022
-      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(tblTotal)} itens NIVEL=1)</span>
+    <div class="cap-section-title">📦 Tabela Principal — Produtos Não Validados
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(tblTotal)} pendentes)</span>
     </div>
     <div class="cap-controls-row">
       <label class="cap-toggle-label">Mostrar detalhes:</label>
@@ -10597,15 +11045,14 @@ function renderCapacidadeCD() {
         <button onclick="CapCDState.mostrarDetalhes=true;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${CapCDState.mostrarDetalhes?'active':''}">Sim</button>
         <button onclick="CapCDState.mostrarDetalhes=false;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${!CapCDState.mostrarDetalhes?'active':''}">Não</button>
       </div>
-      <button class="cap-btn-pdf" onclick="capExportPDF()">📄 Extrair PDF</button>
+      <button class="cap-btn-pdf" onclick="capExportPDF()">📄 Extrair PDF (8022)</button>
     </div>
+    ${tblTotal===0 ? `<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Todos os itens estão validados!</div>` : `
     <div class="cap-table-wrap" id="cap-main-table-wrap">
     <table class="cap-table" id="cap-main-table">
       <thead><tr>${activeCols.map(c=>`<th>${HEADERS[c]}</th>`).join('')}</tr></thead>
       <tbody>
-      ${tblSlice.length===0?`<tr><td colspan="${activeCols.length}" style="text-align:center;color:#7a8798;padding:20px;">Sem dados</td></tr>`:
-        tblSlice.map(r=>`<tr>${activeCols.map(c=>`<td>${escapeHtml(String(r[c]??''))}</td>`).join('')}</tr>`).join('')
-      }
+      ${tblSlice.map(r=>`<tr>${activeCols.map(c=>`<td>${escapeHtml(String(r[c]??''))}</td>`).join('')}</tr>`).join('')}
       </tbody>
     </table>
     </div>
@@ -10613,7 +11060,83 @@ function renderCapacidadeCD() {
       <button onclick="CapCDState.tblPage=Math.max(0,CapCDState.tblPage-1);renderCapacidadeCD();" ${CapCDState.tblPage===0?'disabled':''}>◀</button>
       <span>${CapCDState.tblPage+1} / ${tblPages}</span>
       <button onclick="CapCDState.tblPage=Math.min(${tblPages-1},CapCDState.tblPage+1);renderCapacidadeCD();" ${CapCDState.tblPage===tblPages-1?'disabled':''}>▶</button>
+    </div>`:''}`}`;
+
+  // ---- Demanda Gerada ----
+  const demandaHTML = (() => {
+    if (!CapCDState.demandaGerada) return '';
+    const lista = CapCDState.demandaGerada;
+    const total = lista.length;
+    const dStart = CapCDState.demandaPage * CapCDState.demandaPageSize;
+    const dSlice = lista.slice(dStart, dStart + CapCDState.demandaPageSize);
+    const dPages = Math.ceil(total / CapCDState.demandaPageSize);
+    const origemBadge = origens => [...origens].map(o => {
+      const clr = o==='Corretivo Ocorrência'?'#d64545':o==='Transferido Preventivo'?'#7a5af8':'#e07b00';
+      return `<span style="background:${clr}20;color:${clr};font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;border:1px solid ${clr}40;margin:1px;">${o}</span>`;
+    }).join('');
+    return `
+    <div class="cap-section-title" style="color:#1a4480;">⚡ Demanda Gerada
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(total)} itens únicos)</span>
+    </div>
+    <div class="cap-table-wrap">
+    <table class="cap-table data-table">
+      <thead><tr>
+        <th>#</th><th>CODPROD</th><th>Descrição</th><th>Origem da Demanda</th>
+        <th>RUA</th><th>PRÉDIO</th><th>APTO</th><th>Revalid.</th>
+      </tr></thead>
+      <tbody>
+      ${dSlice.map((r,i)=>`<tr style="${r.revalidacao?'background:#fff8ee;':''}">
+        <td style="color:#7a8798;font-weight:700;">${dStart+i+1}</td>
+        <td><strong>${escapeHtml(r.codprod)}</strong></td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
+        <td>${origemBadge(r.origens)}</td>
+        <td>${escapeHtml(r.rua||'—')}</td>
+        <td>${escapeHtml(r.predio||'—')}</td>
+        <td>${escapeHtml(r.apto||'—')}</td>
+        <td style="text-align:center">${r.revalidacao?`<span style="background:#e07b00;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;">REVALID.${r.contTipo>1?' ('+r.contTipo+'x)':''}</span>`:'—'}</td>
+      </tr>`).join('')}
+      </tbody>
+    </table></div>
+    ${dPages>1?`<div class="cap-pag">
+      <button onclick="CapCDState.demandaPage=Math.max(0,CapCDState.demandaPage-1);renderCapacidadeCD();" ${CapCDState.demandaPage===0?'disabled':''}>◀</button>
+      <span>${CapCDState.demandaPage+1} / ${dPages}</span>
+      <button onclick="CapCDState.demandaPage=Math.min(${dPages-1},CapCDState.demandaPage+1);renderCapacidadeCD();" ${CapCDState.demandaPage===dPages-1?'disabled':''}>▶</button>
     </div>`:''}`;
+  })();
+
+  // ---- Resumo Sheet Tipo ----
+  const resumoTipoHTML = (() => {
+    if (!processed.sheetTipoDispo) return '';
+    const lista = comp.resumoTipo || [];
+    return `
+    <div class="cap-section-title">📊 Resumo de Ocorrências — Sheet Tipo
+      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(lista.length)} produtos)</span>
+    </div>
+    ${lista.length===0 ? `<div class="cap-aviso-inline">⚠️ Nenhum produto encontrado na sheet Tipo.</div>` : `
+    <div class="cap-table-wrap">
+    <table class="cap-table data-table">
+      <thead><tr>
+        <th>CODPROD</th><th>Descrição</th><th>Transferido?</th>
+        <th>End. Anterior</th><th>End. Novo</th>
+        <th>Dias Úteis c/ Ocorrência</th><th>Dias Desde Última Ocor.</th>
+        <th>Última Validação Cap.</th><th>Qtd Preventivo</th><th>Qtd Corretivo</th>
+      </tr></thead>
+      <tbody>
+      ${lista.map(r=>`<tr>
+        <td><strong>${escapeHtml(r.codprod)}</strong></td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.descricao)}</td>
+        <td style="text-align:center">${r.transferido?`<span style="background:#fdf0f0;color:#d64545;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;">Sim</span>`:`<span style="background:#e6f9f0;color:#1a9c62;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;">Não</span>`}</td>
+        <td style="font-size:11px;color:#7a8798;">${escapeHtml(r.endAnterior||'—')}</td>
+        <td style="font-size:11px;">${escapeHtml(r.endNovo||'—')}</td>
+        <td style="text-align:center;font-weight:700;color:${r.diasComOcorrencia>=4?'#d64545':r.diasComOcorrencia>=2?'#e07b00':'#374151'};">${r.diasComOcorrencia}</td>
+        <td style="text-align:center;font-weight:700;color:${r.diasDesdeOcor===null?'#7a8798':r.diasDesdeOcor===0?'#1a9c62':r.diasDesdeOcor>=5?'#d64545':'#e07b00'};">${r.diasDesdeOcor===null?'—':r.diasDesdeOcor+' d.u.'}</td>
+        <td>${r.ultimaVal?fDt(r.ultimaVal):'—'}</td>
+        <td style="text-align:center;color:#1a9c62;font-weight:700;">${r.qtdPrev}</td>
+        <td style="text-align:center;color:#d64545;font-weight:700;">${r.qtdCorr}</td>
+      </tr>`).join('')}
+      </tbody>
+    </table></div>`}`;
+  })();
 
   // ---- Monta HTML final ----
   pane.innerHTML = `
@@ -10644,14 +11167,16 @@ function renderCapacidadeCD() {
         <div style="height:260px;overflow-x:auto;"><canvas id="cap-chart-rua"></canvas></div>
       </div>
       ${previsaoHTML}
-      ${ultimoValHTML}
       ${transferidosHTML}
+      ${ultimoValHTML}
       ${entradosHTML}
       ${saidosHTML}
       ${semHTML}
       ${rankHTML}
       ${detHTML}
       ${tblHTML}
+      ${demandaHTML}
+      ${resumoTipoHTML}
     </div>`;
 
   // ---- Renderiza gráficos e ativa sort ----
