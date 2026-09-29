@@ -708,6 +708,7 @@ const DataProcessor = {
         rua: r["RUA"] != null ? String(r["RUA"]).trim() : null,
         predio: r["PREDIO"] != null ? String(r["PREDIO"]).trim() : null,
         apto: r["APTO"] != null ? String(r["APTO"]).trim() : null,
+        revenda: r["REVENDA"] != null ? String(r["REVENDA"]).trim().toUpperCase() : '',
       };
     }).filter(Boolean) : null;
     out.p8022NovaDispo = !!raw8022Nova;
@@ -9587,6 +9588,13 @@ const CapCDState = {
   mostrarDetalhes: false,   // toggle Sim/Não
   filtroIni: null,          // Date | null — filtro de data início
   filtroFim: null,          // Date | null — filtro de data fim
+  filtroAtalho: 'tudo',     // 'mesAtual'|'mesAnt'|'anoAtual'|'anoAnt'|'tudo'
+  filtroProdutos: [],       // array de codprod selecionados
+  filtroRevenda: 'todos',   // 'todos'|'nao'
+  filtroUrgencia: 'todos',  // filtro urgência transferidos
+  filtroOrigem: 'todos',    // filtro tipo origem transferidos (inteiro|drivein|meio|terco|todos)
+  filtroDiffIni: '',        // filtro diferença inicial
+  filtroDiffFim: '',        // filtro diferença final
   rankPage: 0,              // paginação do ranking
   detPage: 0,               // paginação tabela detalhada
   tblPage: 0,               // paginação tabela principal
@@ -9625,6 +9633,31 @@ const capWeekLabel = d => {
   return `${String(seg.getDate()).padStart(2,'0')}/${String(seg.getMonth()+1).padStart(2,'0')} – ${String(fim.getDate()).padStart(2,'0')}/${String(fim.getMonth()+1).padStart(2,'0')}`;
 };
 
+/* Aplica atalho de período */
+function capSetAtalho(key) {
+  const hoje = new Date();
+  const y = hoje.getFullYear(), m = hoje.getMonth();
+  CapCDState.filtroAtalho = key;
+  if (key === 'mesAtual') {
+    CapCDState.filtroIni = new Date(y, m, 1, 0, 0, 0);
+    CapCDState.filtroFim = new Date(y, m+1, 0, 23, 59, 59);
+  } else if (key === 'mesAnt') {
+    CapCDState.filtroIni = new Date(y, m-1, 1, 0, 0, 0);
+    CapCDState.filtroFim = new Date(y, m, 0, 23, 59, 59);
+  } else if (key === 'anoAtual') {
+    CapCDState.filtroIni = new Date(y, 0, 1, 0, 0, 0);
+    CapCDState.filtroFim = new Date(y, 11, 31, 23, 59, 59);
+  } else if (key === 'anoAnt') {
+    CapCDState.filtroIni = new Date(y-1, 0, 1, 0, 0, 0);
+    CapCDState.filtroFim = new Date(y-1, 11, 31, 23, 59, 59);
+  } else { // tudo
+    CapCDState.filtroIni = null;
+    CapCDState.filtroFim = null;
+  }
+  CapCDState.detPage = 0;
+  renderCapacidadeCD();
+}
+
 /* Destroi charts anteriores */
 function capDestroyCharts() {
   Object.values(CapCDState.charts).forEach(c => { try { c.destroy(); } catch(e){} });
@@ -9633,16 +9666,29 @@ function capDestroyCharts() {
 
 /* Compute principal — chama 1× por renderização */
 function capCompute(processed) {
-  const rows8022   = processed.p8022CDRows || [];      // NIVEL=1 já filtrado
-  const rows8022N  = processed.p8022Nova   || [];      // snapshot atualizado
+  // — Filtro REVENDA —
+  const revendaExcluir = CapCDState.filtroRevenda === 'nao';
+  const revendaSetExcl = revendaExcluir
+    ? new Set((processed.p8022Nova || []).filter(r => r.revenda === 'SIM').map(r => r.codprod))
+    : new Set();
+
+  const rows8022   = revendaExcluir
+    ? (processed.p8022CDRows || []).filter(r => !revendaSetExcl.has(r.codprod))
+    : (processed.p8022CDRows || []);      // NIVEL=1 já filtrado
+  const rows8022N  = revendaExcluir
+    ? (processed.p8022Nova || []).filter(r => r.revenda !== 'SIM')
+    : (processed.p8022Nova || []);        // snapshot atualizado
   const rawCR      = processed.capacidadeRealizada || []; // todas ocorrências
 
   // — Filtra por período se definido —
   const {filtroIni, filtroFim} = CapCDState;
+  const filtroProdSet = CapCDState.filtroProdutos.length > 0 ? new Set(CapCDState.filtroProdutos) : null;
   const cr = rawCR.filter(r => {
     if(!r.dt) return false;
     if(filtroIni && r.dt < filtroIni) return false;
     if(filtroFim && r.dt > filtroFim) return false;
+    if(revendaExcluir && revendaSetExcl.has(r.cod)) return false;
+    if(filtroProdSet && !filtroProdSet.has(r.cod)) return false;
     return true;
   });
 
@@ -9831,23 +9877,23 @@ function capCompute(processed) {
     if (rankOrig > 0 && rankNova > 0 && pkMudou) {
       // Endereço ficou menor (rank aumentou) — perdeu espaço
       if (rankNova > rankOrig) {
-        // INTEIRO → DRIVE-IN ou DRIVE-IN → INTEIRO (vizinhos diretos na hierarquia): Média
-        // Qualquer outro salto para lugar menor: Alta
         const salto = rankNova - rankOrig;
         urgencia = salto === 1 ? 'Média' : 'Alta';
       }
       // Endereço ficou maior (rank diminuiu) — ganhou espaço
       else if (rankNova < rankOrig) {
-        // Qualquer mudança para endereço maior é Média (precisará revalidar capacidade)
         urgencia = 'Média';
       }
-      // Mesmo tipo de PK mas CODENDERECO diferente: Normal (já filtrado para mesmo rank)
     } else if (!pkMudou) {
-      urgencia = 'Normal'; // mesmo tipo, apenas localização diferente
+      // Mesmo tipo de endereço (ex: TERCO→TERCO, MEIO→MEIO)
+      if (diff !== null && diff !== 0) {
+        urgencia = 'Baixa'; // mesma categoria mas capacidade mudou
+      } else {
+        urgencia = 'Normal'; // mesma categoria, capacidade inalterada
+      }
     }
 
     // — Critério Máxima: foi para endereço MAIOR mas capacidade DIMINUIU —
-    // Paradoxo operacional: mais espaço → menos capacidade
     if (rankOrig > 0 && rankNova > 0 && rankNova < rankOrig && diff !== null && diff < 0) {
       urgencia = 'Máxima';
     }
@@ -9952,6 +9998,8 @@ function capCompute(processed) {
     ranking,
     tblDetalhada,
     rows8022, // para tabela principal
+    rows8022N, // para gráfico por rua
+    uniqueValidadosPorCod: uniqueValidados, // Set de codprod validados
     ajustesDetalhes,
     // Novos
     itensEntrados,
@@ -10008,15 +10056,84 @@ function renderCapacidadeCD() {
     return `<span style="background:${bg};color:${c};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;border:1px solid ${c}30;">${s}</span>`;
   };
 
-  // ---- Filtro de período ----
+  // ---- Cabeçalho com filtros (painel de controle) ----
   const fmtInputDate = d => !d ? '' : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  // Lista de produtos únicos da 8022 Nova para dropdown
+  const _prodListDropdown = (() => {
+    const lista = [];
+    const seen = new Set();
+    const src = processed.p8022Nova || processed.p8022CDRows || [];
+    src.forEach(r => {
+      if(r.codprod && !seen.has(r.codprod)) {
+        seen.add(r.codprod);
+        lista.push({cod: r.codprod, desc: r.descricao || ''});
+      }
+    });
+    lista.sort((a,b) => a.cod.localeCompare(b.cod));
+    return lista;
+  })();
+
+  // Gera opções do multiselect
+  const _prodOpts = _prodListDropdown.map(p =>
+    `<option value="${p.cod}" ${CapCDState.filtroProdutos.includes(p.cod)?'selected':''}>${p.cod}${p.desc ? ' — '+p.desc.substring(0,40) : ''}</option>`
+  ).join('');
+
+  // Atalhos de período
+  const mkAtalho = (key, label) => {
+    const ativo = CapCDState.filtroAtalho === key;
+    return `<button onclick="capSetAtalho('${key}')" style="padding:4px 11px;border-radius:16px;border:1px solid ${ativo?'#1a4480':'#c8d0db'};background:${ativo?'#1a4480':'#fff'};color:${ativo?'#fff':'#374151'};font-size:12px;font-weight:${ativo?'700':'500'};cursor:pointer;transition:all .15s;">${label}</button>`;
+  };
+
   const filtroHTML = `
-    <div class="cap-filtro-row">
-      <label>Período:</label>
-      <input type="date" id="cap-dt-ini" value="${fmtInputDate(CapCDState.filtroIni)}" onchange="CapCDState.filtroIni=this.value?new Date(this.value+'T00:00:00'):null;CapCDState.detPage=0;renderCapacidadeCD();">
-      <span style="margin:0 6px;">até</span>
-      <input type="date" id="cap-dt-fim" value="${fmtInputDate(CapCDState.filtroFim)}" onchange="CapCDState.filtroFim=this.value?new Date(this.value+'T23:59:59'):null;CapCDState.detPage=0;renderCapacidadeCD();">
-      ${(CapCDState.filtroIni||CapCDState.filtroFim)?`<button onclick="CapCDState.filtroIni=null;CapCDState.filtroFim=null;renderCapacidadeCD();" class="cap-btn-clear">✕ Limpar</button>`:''}
+    <div class="cap-header-panel" style="background:#f0f4fa;border:1px solid #c8d0db;border-radius:12px;padding:16px 20px;margin-bottom:18px;">
+      <div style="font-size:13px;font-weight:700;color:#1a2e44;margin-bottom:12px;letter-spacing:.3px;">🎛️ FILTROS &amp; CONTROLES — CAPACIDADE CD</div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;">
+
+        <!-- Busca por Produto -->
+        <div style="flex:1;min-width:220px;">
+          <label style="display:block;font-size:11px;font-weight:600;color:#7a8798;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">🔍 Produto / Código</label>
+          <select id="cap-prod-select" multiple size="3"
+            style="width:100%;border:1px solid #c8d0db;border-radius:7px;padding:4px 6px;font-size:12px;background:#fff;color:#1a2e44;"
+            onchange="CapCDState.filtroProdutos=[...this.selectedOptions].map(o=>o.value);CapCDState.detPage=0;CapCDState.tblPage=0;renderCapacidadeCD();">
+            <option value="" ${CapCDState.filtroProdutos.length===0?'selected':''} style="color:#aaa;font-style:italic;">— Todos os produtos —</option>
+            ${_prodOpts}
+          </select>
+          ${CapCDState.filtroProdutos.length>0?`<button onclick="CapCDState.filtroProdutos=[];renderCapacidadeCD();" style="margin-top:4px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕ Limpar seleção (${CapCDState.filtroProdutos.length})</button>`:''}
+        </div>
+
+        <!-- Período -->
+        <div style="min-width:200px;">
+          <label style="display:block;font-size:11px;font-weight:600;color:#7a8798;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">📅 Período</label>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <input type="date" id="cap-dt-ini" value="${fmtInputDate(CapCDState.filtroIni)}"
+              style="border:1px solid #c8d0db;border-radius:7px;padding:5px 8px;font-size:12px;"
+              onchange="CapCDState.filtroIni=this.value?new Date(this.value+'T00:00:00'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
+            <span style="font-size:11px;color:#7a8798;">até</span>
+            <input type="date" id="cap-dt-fim" value="${fmtInputDate(CapCDState.filtroFim)}"
+              style="border:1px solid #c8d0db;border-radius:7px;padding:5px 8px;font-size:12px;"
+              onchange="CapCDState.filtroFim=this.value?new Date(this.value+'T23:59:59'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;">
+            ${mkAtalho('mesAtual','Mês Atual')}
+            ${mkAtalho('mesAnt','Mês Anterior')}
+            ${mkAtalho('anoAtual','Ano Atual')}
+            ${mkAtalho('anoAnt','Ano Anterior')}
+            ${mkAtalho('tudo','Tudo')}
+          </div>
+        </div>
+
+        <!-- Toggle REVENDA -->
+        <div style="min-width:130px;">
+          <label style="display:block;font-size:11px;font-weight:600;color:#7a8798;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">🏷️ Revenda</label>
+          <div style="display:flex;gap:6px;">
+            <button onclick="CapCDState.filtroRevenda='todos';renderCapacidadeCD();" style="padding:5px 14px;border-radius:16px;border:1px solid ${CapCDState.filtroRevenda==='todos'?'#1a4480':'#c8d0db'};background:${CapCDState.filtroRevenda==='todos'?'#1a4480':'#fff'};color:${CapCDState.filtroRevenda==='todos'?'#fff':'#374151'};font-size:12px;font-weight:600;cursor:pointer;">TODOS</button>
+            <button onclick="CapCDState.filtroRevenda='nao';renderCapacidadeCD();" style="padding:5px 14px;border-radius:16px;border:1px solid ${CapCDState.filtroRevenda==='nao'?'#d64545':'#c8d0db'};background:${CapCDState.filtroRevenda==='nao'?'#d64545':'#fff'};color:${CapCDState.filtroRevenda==='nao'?'#fff':'#374151'};font-size:12px;font-weight:600;cursor:pointer;">SEM REVENDA</button>
+          </div>
+          ${CapCDState.filtroRevenda==='nao'?`<div style="font-size:10px;color:#d64545;margin-top:4px;">⚠️ Produtos REVENDA excluídos de todo dashboard</div>`:''}
+        </div>
+
+      </div>
     </div>`;
 
   // ---- Avisos de abas ausentes ----
@@ -10171,29 +10288,116 @@ function renderCapacidadeCD() {
     </div>`:''}`}`;
 
   // ---- Itens Transferidos ----
-  const urgOrdem  = {'Máxima':0,'Alta':1,'Média':2,'Normal':3};
-  const urgBgMap  = {'Máxima':'#7c1d1d','Alta':'#d64545','Média':'#e07b00','Normal':'#2563aa'};
-  const urgRowBg  = {'Máxima':'#fce8e8','Alta':'#fdf0f0','Média':'#fff8ee','Normal':''};
+  const urgOrdem  = {'Máxima':0,'Alta':1,'Média':2,'Baixa':3,'Normal':4};
+  const urgBgMap  = {'Máxima':'#7c1d1d','Alta':'#d64545','Média':'#e07b00','Baixa':'#7a5af8','Normal':'#2563aa'};
+  const urgRowBg  = {'Máxima':'#fce8e8','Alta':'#fdf0f0','Média':'#fff8ee','Baixa':'#f3f0ff','Normal':''};
   const maxCount  = comp.itensTransferidos.filter(r=>r.urgencia==='Máxima').length;
   const altaCount = comp.itensTransferidos.filter(r=>r.urgencia==='Alta').length;
   const medCount  = comp.itensTransferidos.filter(r=>r.urgencia==='Média').length;
+  const baixaCount= comp.itensTransferidos.filter(r=>r.urgencia==='Baixa').length;
   const normCount = comp.itensTransferidos.filter(r=>r.urgencia==='Normal').length;
+
+  // Filtros de transferidos
+  const mkUrgBtn = (key, label, count, color) => {
+    const ativo = CapCDState.filtroUrgencia === key;
+    return `<button onclick="CapCDState.filtroUrgencia='${key}';renderCapacidadeCD();" style="padding:5px 12px;border-radius:16px;border:2px solid ${color};background:${ativo?color:'#fff'};color:${ativo?'#fff':color};font-size:11px;font-weight:700;cursor:pointer;">${label} <span style="background:${ativo?'rgba(255,255,255,.25)':'rgba(0,0,0,.08)'};padding:1px 6px;border-radius:10px;">${count}</span></button>`;
+  };
+  const mkOriBtn = (key, label) => {
+    const ativo = CapCDState.filtroOrigem === key;
+    return `<button onclick="CapCDState.filtroOrigem='${key}';renderCapacidadeCD();" style="padding:4px 10px;border-radius:12px;border:1px solid ${ativo?'#1a4480':'#c8d0db'};background:${ativo?'#1a4480':'#fff'};color:${ativo?'#fff':'#374151'};font-size:11px;cursor:pointer;">${label}</button>`;
+  };
+
+  // Aplica filtros na lista de transferidos
+  let transFiltered = [...comp.itensTransferidos];
+  if (CapCDState.filtroUrgencia !== 'todos') transFiltered = transFiltered.filter(r => r.urgencia === CapCDState.filtroUrgencia);
+  if (CapCDState.filtroOrigem !== 'todos') {
+    const oriMap = {inteiro:'1', drivein:'2', meio:'8', terco:'9'};
+    const oriPfx = oriMap[CapCDState.filtroOrigem];
+    if (oriPfx) transFiltered = transFiltered.filter(r => String(r.pkOrig||'').startsWith(oriPfx));
+  }
+  if (CapCDState.filtroDiffIni !== '' || CapCDState.filtroDiffFim !== '') {
+    const dIni = CapCDState.filtroDiffIni !== '' ? Number(CapCDState.filtroDiffIni) : null;
+    const dFim = CapCDState.filtroDiffFim !== '' ? Number(CapCDState.filtroDiffFim) : null;
+    transFiltered = transFiltered.filter(r => {
+      if (r.diff === null) return false;
+      if (dIni !== null && r.diff < dIni) return false;
+      if (dFim !== null && r.diff > dFim) return false;
+      return true;
+    });
+  }
+
   const transferidosHTML = !processed.p8022NovaDispo ? '' : `
-    <div class="cap-section-title">🔄 Itens Transferidos (Endereço Alterado)
-      <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(comp.itensTransferidos.length)} total —
-        ${maxCount?`<span style="color:#7c1d1d;font-weight:700;">${fN(maxCount)} Máxima</span> · `:''}
-        ${altaCount?`<span style="color:#d64545;font-weight:700;">${fN(altaCount)} Alta</span> · `:''}
-        ${medCount?`<span style="color:#e07b00;font-weight:700;">${fN(medCount)} Média</span> · `:''}
-        <span style="color:#2563aa;">${fN(normCount)} Normal</span>)</span>
+    <div class="cap-section-title">🔄 Itens Transferidos (Endereço Alterado)</div>
+
+    <!-- Cards de urgência -->
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+      ${[
+        {u:'Máxima',c:'#7c1d1d',n:maxCount},
+        {u:'Alta',c:'#d64545',n:altaCount},
+        {u:'Média',c:'#e07b00',n:medCount},
+        {u:'Baixa',c:'#7a5af8',n:baixaCount},
+        {u:'Normal',c:'#2563aa',n:normCount},
+      ].map(({u,c,n})=>`<div style="background:#fff;border:2px solid ${c}30;border-radius:10px;padding:10px 18px;min-width:100px;text-align:center;cursor:pointer;" onclick="CapCDState.filtroUrgencia='${u}';renderCapacidadeCD();">
+        <div style="font-size:19px;font-weight:800;color:${c};">${n}</div>
+        <div style="font-size:10px;font-weight:700;color:${c};text-transform:uppercase;letter-spacing:.5px;">${u}</div>
+      </div>`).join('')}
+      <div style="background:#f4f6f8;border:1px solid #c8d0db;border-radius:10px;padding:10px 18px;min-width:100px;text-align:center;cursor:pointer;" onclick="CapCDState.filtroUrgencia='todos';renderCapacidadeCD();">
+        <div style="font-size:19px;font-weight:800;color:#374151;">${comp.itensTransferidos.length}</div>
+        <div style="font-size:10px;font-weight:700;color:#7a8798;text-transform:uppercase;letter-spacing:.5px;">TOTAL</div>
+      </div>
     </div>
-    <div style="font-size:11px;color:#7a8798;margin:-6px 0 10px;line-height:1.8;">
+
+    <!-- Filtros -->
+    <div style="background:#f7f9fc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:12px;">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+        <div>
+          <div style="font-size:10px;font-weight:600;color:#7a8798;text-transform:uppercase;margin-bottom:5px;">Urgência</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;">
+            ${mkUrgBtn('todos','Todos',comp.itensTransferidos.length,'#374151')}
+            ${mkUrgBtn('Máxima','Máxima',maxCount,'#7c1d1d')}
+            ${mkUrgBtn('Alta','Alta',altaCount,'#d64545')}
+            ${mkUrgBtn('Média','Média',medCount,'#e07b00')}
+            ${mkUrgBtn('Baixa','Baixa',baixaCount,'#7a5af8')}
+            ${mkUrgBtn('Normal','Normal',normCount,'#2563aa')}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:600;color:#7a8798;text-transform:uppercase;margin-bottom:5px;">Origem do Endereço</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;">
+            ${mkOriBtn('todos','Todos')}
+            ${mkOriBtn('inteiro','INTEIRO → Qualquer')}
+            ${mkOriBtn('drivein','DRIVE-IN → Qualquer')}
+            ${mkOriBtn('meio','MEIO → Qualquer')}
+            ${mkOriBtn('terco','TERCO → Qualquer')}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:600;color:#7a8798;text-transform:uppercase;margin-bottom:5px;">Intervalo Diferença</div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="number" placeholder="De" value="${CapCDState.filtroDiffIni}" style="width:65px;border:1px solid #c8d0db;border-radius:6px;padding:4px 7px;font-size:12px;"
+              onchange="CapCDState.filtroDiffIni=this.value;renderCapacidadeCD();">
+            <span style="font-size:11px;color:#7a8798;">até</span>
+            <input type="number" placeholder="Até" value="${CapCDState.filtroDiffFim}" style="width:65px;border:1px solid #c8d0db;border-radius:6px;padding:4px 7px;font-size:12px;"
+              onchange="CapCDState.filtroDiffFim=this.value;renderCapacidadeCD();">
+            ${(CapCDState.filtroDiffIni!==''||CapCDState.filtroDiffFim!=='')?`<button onclick="CapCDState.filtroDiffIni='';CapCDState.filtroDiffFim='';renderCapacidadeCD();" style="font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕</button>`:''}
+          </div>
+        </div>
+      </div>
+      ${(CapCDState.filtroUrgencia!=='todos'||CapCDState.filtroOrigem!=='todos'||CapCDState.filtroDiffIni!==''||CapCDState.filtroDiffFim!=='')?
+        `<div style="margin-top:8px;font-size:11px;color:#1a4480;">Mostrando <strong>${transFiltered.length}</strong> de ${comp.itensTransferidos.length} transferidos
+        <button onclick="CapCDState.filtroUrgencia='todos';CapCDState.filtroOrigem='todos';CapCDState.filtroDiffIni='';CapCDState.filtroDiffFim='';renderCapacidadeCD();" style="margin-left:8px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕ Limpar filtros</button></div>`:''
+      }
+    </div>
+
+    <div style="font-size:11px;color:#7a8798;margin-bottom:10px;line-height:1.8;">
       <strong>Legenda:</strong>
-      <span style="background:#7c1d1d;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Máxima</span> Endereço maior, capacidade caiu (paradoxo) &nbsp;|&nbsp;
-      <span style="background:#d64545;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Alta</span> Mudou 2+ níveis ou veio de TERCO/MEIO &nbsp;|&nbsp;
-      <span style="background:#e07b00;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Média</span> Mudou 1 nível (INTEIRO↔DRIVE-IN) &nbsp;|&nbsp;
-      <span style="background:#2563aa;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Normal</span> Mesmo tipo PK, só localização mudou
+      <span style="background:#7c1d1d;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Máxima</span> End. maior, cap. caiu &nbsp;|&nbsp;
+      <span style="background:#d64545;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Alta</span> Mudou 2+ níveis &nbsp;|&nbsp;
+      <span style="background:#e07b00;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Média</span> Mudou 1 nível &nbsp;|&nbsp;
+      <span style="background:#7a5af8;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Baixa</span> Mesmo tipo, cap. alterada &nbsp;|&nbsp;
+      <span style="background:#2563aa;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Normal</span> Mesmo tipo, cap. inalterada
     </div>
-    ${comp.itensTransferidos.length===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item transferido.</div>`:
+    ${transFiltered.length===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item transferido com esses filtros.</div>`:
     `<div class="cap-table-wrap">
     <table class="cap-table data-table">
       <thead><tr>
@@ -10204,7 +10408,7 @@ function renderCapacidadeCD() {
         <th>End. Anterior</th><th>End. Novo</th>
       </tr></thead>
       <tbody>
-      ${[...comp.itensTransferidos].sort((a,b)=>{
+      ${transFiltered.sort((a,b)=>{
         const oa=urgOrdem[a.urgencia]??9, ob=urgOrdem[b.urgencia]??9;
         if(oa!==ob) return oa-ob;
         if(a.diff===null&&b.diff===null) return 0;
@@ -10427,11 +10631,15 @@ function renderCapacidadeCD() {
           <div style="height:220px;"><canvas id="cap-chart-semanal"></canvas></div>
         </div>
       </div>
+      <div class="cap-chart-box" style="margin:16px 0;">
+        <div class="cap-chart-title">📊 Cobertura por Rua — Validados × Total (8022 Nova)</div>
+        <div style="height:260px;overflow-x:auto;"><canvas id="cap-chart-rua"></canvas></div>
+      </div>
       ${previsaoHTML}
       ${ultimoValHTML}
+      ${transferidosHTML}
       ${entradosHTML}
       ${saidosHTML}
-      ${transferidosHTML}
       ${semHTML}
       ${rankHTML}
       ${detHTML}
@@ -10450,6 +10658,10 @@ function capActivateSortable() {
 function capRenderCharts(comp) {
   if (typeof Chart === 'undefined') return;
 
+  // Cores padrão: Preventivo = claro (#a8d8c8), Corretivo = escuro (#1a2e44)
+  const COR_PREV = '#a8d8c8';
+  const COR_CORR = '#1a2e44';
+
   // Gráfico 1: Barras empilhadas por dia
   const ctx1 = document.getElementById('cap-chart-dia');
   if (ctx1) {
@@ -10459,13 +10671,26 @@ function capRenderCharts(comp) {
       data: {
         labels: dias.map(([,d])=>d.label),
         datasets: [
-          { label:'Preventivo', data: dias.map(([,d])=>d.prev), backgroundColor:'#1a9c62cc', stack:'s' },
-          { label:'Corretivo',  data: dias.map(([,d])=>d.corr), backgroundColor:'#d64545cc', stack:'s' },
+          {
+            label:'Preventivo', data: dias.map(([,d])=>d.prev),
+            backgroundColor: COR_PREV, stack:'s',
+            datalabels: { color:'#1a4480', font:{weight:'bold',size:9}, anchor:'center', align:'center',
+              formatter: v => v > 0 ? v : '' }
+          },
+          {
+            label:'Corretivo', data: dias.map(([,d])=>d.corr),
+            backgroundColor: COR_CORR, stack:'s',
+            datalabels: { color:'#ffffff', font:{weight:'bold',size:9}, anchor:'center', align:'center',
+              formatter: v => v > 0 ? v : '' }
+          },
         ]
       },
       options: { responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{display:true,position:'top',labels:{font:{size:10}}},
-          tooltip:{callbacks:{title:ctx=>ctx[0].label}} },
+        plugins:{
+          legend:{display:true,position:'top',labels:{font:{size:10},color:'#3a4a5c'}},
+          tooltip:{callbacks:{title:ctx=>ctx[0].label}},
+          datalabels: { display: true }
+        },
         scales:{ x:{ticks:{color:'#7a8798',font:{size:9}},grid:{color:'#eef1f4'},stacked:true},
           y:{ticks:{color:'#7a8798',font:{size:9}},beginAtZero:true,stacked:true,grid:{color:'#eef1f4'}} } }
     });
@@ -10478,11 +10703,27 @@ function capRenderCharts(comp) {
       type: 'doughnut',
       data: {
         labels: ['Preventivo','Corretivo'],
-        datasets: [{ data:[comp.totalPreventivo, comp.totalCorretivo], backgroundColor:['#1a9c62','#d64545'], borderWidth:2 }]
+        datasets: [{
+          data:[comp.totalPreventivo, comp.totalCorretivo],
+          backgroundColor:[COR_PREV, COR_CORR],
+          borderColor:['#6bbfa8','#0a1824'],
+          borderWidth:2
+        }]
       },
       options: { responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{display:true,position:'bottom',labels:{font:{size:10}}},
-          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.parsed} (${comp.totalValidacoes>0?(ctx.parsed/comp.totalValidacoes*100).toFixed(1)+'%':'—'})`}} } }
+        plugins:{
+          legend:{display:true,position:'bottom',labels:{font:{size:10},color:'#3a4a5c'}},
+          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.parsed} (${comp.totalValidacoes>0?(ctx.parsed/comp.totalValidacoes*100).toFixed(1)+'%':'—'})`}},
+          datalabels: {
+            color: ctx => ctx.dataIndex===0 ? '#1a4480' : '#ffffff',
+            font:{weight:'bold',size:11},
+            formatter: (v, ctx2) => {
+              const total = ctx2.dataset.data.reduce((a,b)=>a+b,0);
+              return total > 0 ? v+'\n'+(v/total*100).toFixed(0)+'%' : '';
+            }
+          }
+        }
+      }
     });
   }
 
@@ -10502,6 +10743,64 @@ function capRenderCharts(comp) {
         plugins:{ legend:{display:false} },
         scales:{ x:{ticks:{color:'#7a8798',font:{size:9}},grid:{color:'#eef1f4'}},
           y:{ticks:{color:'#7a8798',font:{size:9},callback:v=>v+'%'},beginAtZero:true,max:100,grid:{color:'#eef1f4'}} } }
+    });
+  }
+
+  // Gráfico 4: Cobertura por Rua (barras full-width)
+  const ctx4 = document.getElementById('cap-chart-rua');
+  if (ctx4 && comp.rows8022N && comp.uniqueValidadosPorCod) {
+    // Monta mapa: rua → { total, validados }
+    const ruaMap = new Map();
+    (comp.rows8022N || []).forEach(r => {
+      const rua = String(r.rua||'?').trim();
+      if(!ruaMap.has(rua)) ruaMap.set(rua,{total:0,valid:0});
+      ruaMap.get(rua).total++;
+      if(comp.uniqueValidadosPorCod && comp.uniqueValidadosPorCod.has(r.codprod)) ruaMap.get(rua).valid++;
+    });
+    const ruasSorted = [...ruaMap.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true}));
+    const labels4  = ruasSorted.map(([rua])=>rua);
+    const totais4  = ruasSorted.map(([,v])=>v.total);
+    const validos4 = ruasSorted.map(([,v])=>v.valid);
+    // Ajusta largura do canvas para caber todas as barras
+    const minW = Math.max(ctx4.parentElement.offsetWidth||800, labels4.length*32);
+    ctx4.style.width = minW+'px';
+    ctx4.width = minW;
+    CapCDState.charts['rua'] = new Chart(ctx4, {
+      type: 'bar',
+      data: {
+        labels: labels4,
+        datasets: [
+          {
+            label:'Total', data: totais4,
+            backgroundColor:'#cce4f7',
+            borderColor:'#8bbdd9', borderWidth:1,
+            order:2
+          },
+          {
+            label:'Validados', data: validos4,
+            backgroundColor:'#1a6db5cc',
+            borderColor:'#1a4480', borderWidth:1,
+            order:1
+          }
+        ]
+      },
+      options: {
+        responsive:false, maintainAspectRatio:false,
+        plugins:{
+          legend:{display:true,position:'top',labels:{font:{size:10},color:'#3a4a5c'}},
+          tooltip:{callbacks:{label: ctx=>{
+            const rua = ctx.label;
+            const entry = ruaMap.get(rua)||{total:0,valid:0};
+            const pct = entry.total>0?(entry.valid/entry.total*100).toFixed(0)+'%':'0%';
+            if(ctx.datasetIndex===1) return `Validados: ${ctx.parsed.y} (${pct})`;
+            return `Total: ${ctx.parsed.y}`;
+          }}}
+        },
+        scales:{
+          x:{ticks:{color:'#7a8798',font:{size:9}},grid:{display:false}},
+          y:{ticks:{color:'#7a8798',font:{size:9}},beginAtZero:true,grid:{color:'#eef1f4'}}
+        }
+      }
     });
   }
 }
