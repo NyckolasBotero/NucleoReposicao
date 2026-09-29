@@ -11379,8 +11379,11 @@ function renderCapacidadeCD() {
       </button>
       <span style="font-size:11px;color:#7a8798;">📋 Tabela Detalhada de Validações · ${fN(detTotal)} ocorrências · oculta por padrão</span>
     </div>
-    <!-- CONTEÚDO DA TABELA DETALHADA (oculto por padrão) -->
+    <!-- CONTEÚDO (oculto por padrão) -->
     <div id="cap-det-wrap" style="display:${CapCDState.detAberto?'block':'none'};">
+    ${rankHTML}
+    ${entradosHTML}
+    ${saidosHTML}
     <div class="cap-section-title">📋 Tabela Detalhada de Validações <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(detTotal)} ocorrências)</span></div>
     <div class="cap-table-wrap">
     <table class="cap-table data-table">
@@ -11676,10 +11679,7 @@ function renderCapacidadeCD() {
       ${previsaoHTML}
       ${transferidosHTML}
       ${ultimoValHTML}
-      ${entradosHTML}
-      ${saidosHTML}
       ${semHTML}
-      ${rankHTML}
       ${detHTML}
       ${tblHTML}
       ${demandaHTML}
