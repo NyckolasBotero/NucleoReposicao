@@ -10074,66 +10074,74 @@ function renderCapacidadeCD() {
     return lista;
   })();
 
-  // Gera opções do multiselect
   const _prodOpts = _prodListDropdown.map(p =>
-    `<option value="${p.cod}" ${CapCDState.filtroProdutos.includes(p.cod)?'selected':''}>${p.cod}${p.desc ? ' — '+p.desc.substring(0,40) : ''}</option>`
+    `<option value="${p.cod}" ${CapCDState.filtroProdutos.includes(p.cod)?'selected':''}>${p.cod}${p.desc?' — '+p.desc.substring(0,35):''}</option>`
   ).join('');
 
-  // Atalhos de período
-  const mkAtalho = (key, label) => {
+  // Atalhos — mesmo estilo de renderAtalhos()
+  const capAtalhoHTML = ['mesAtual','mesAnt','anoAtual','anoAnt','tudo'].map(key => {
+    const labels = {mesAtual:'Mês Atual',mesAnt:'Mês Anterior',anoAtual:'Ano Atual',anoAnt:'Ano Anterior',tudo:'Tudo'};
     const ativo = CapCDState.filtroAtalho === key;
-    return `<button onclick="capSetAtalho('${key}')" style="padding:4px 11px;border-radius:16px;border:1px solid ${ativo?'#1a4480':'#c8d0db'};background:${ativo?'#1a4480':'#fff'};color:${ativo?'#fff':'#374151'};font-size:12px;font-weight:${ativo?'700':'500'};cursor:pointer;transition:all .15s;">${label}</button>`;
-  };
+    return `<button onclick="capSetAtalho('${key}')"
+      style="padding:5px 12px;font-size:11px;font-weight:${ativo?'800':'600'};border-radius:6px;
+             border:1.5px solid ${ativo?'#0b2647':'#b8c4d4'};
+             background:${ativo?'#0b2647':'#fff'};color:${ativo?'#fff':'#1a4480'};
+             cursor:pointer;transition:all .15s;">${labels[key]}</button>`;
+  }).join('');
+
+  // Toggle genérico — mesmo padrão de Relações Rep
+  const capToggleBtn = (label, ativo, onclick) =>
+    `<button onclick="${onclick}"
+      style="padding:5px 14px;font-size:11px;font-weight:${ativo?'800':'600'};border-radius:6px;
+             border:1.5px solid ${ativo?'#0b2647':'#b8c4d4'};
+             background:${ativo?'#0b2647':'#fff'};color:${ativo?'#fff':'#1a4480'};
+             cursor:pointer;">${label}</button>`;
 
   const filtroHTML = `
-    <div class="cap-header-panel" style="background:#f0f4fa;border:1px solid #c8d0db;border-radius:12px;padding:16px 20px;margin-bottom:18px;">
-      <div style="font-size:13px;font-weight:700;color:#1a2e44;margin-bottom:12px;letter-spacing:.3px;">🎛️ FILTROS &amp; CONTROLES — CAPACIDADE CD</div>
-      <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;">
+    <div class="toolbar" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
 
-        <!-- Busca por Produto -->
-        <div style="flex:1;min-width:220px;">
-          <label style="display:block;font-size:11px;font-weight:600;color:#7a8798;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">🔍 Produto / Código</label>
-          <select id="cap-prod-select" multiple size="3"
-            style="width:100%;border:1px solid #c8d0db;border-radius:7px;padding:4px 6px;font-size:12px;background:#fff;color:#1a2e44;"
-            onchange="CapCDState.filtroProdutos=[...this.selectedOptions].map(o=>o.value);CapCDState.detPage=0;CapCDState.tblPage=0;renderCapacidadeCD();">
-            <option value="" ${CapCDState.filtroProdutos.length===0?'selected':''} style="color:#aaa;font-style:italic;">— Todos os produtos —</option>
-            ${_prodOpts}
-          </select>
-          ${CapCDState.filtroProdutos.length>0?`<button onclick="CapCDState.filtroProdutos=[];renderCapacidadeCD();" style="margin-top:4px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕ Limpar seleção (${CapCDState.filtroProdutos.length})</button>`:''}
-        </div>
-
-        <!-- Período -->
-        <div style="min-width:200px;">
-          <label style="display:block;font-size:11px;font-weight:600;color:#7a8798;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">📅 Período</label>
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            <input type="date" id="cap-dt-ini" value="${fmtInputDate(CapCDState.filtroIni)}"
-              style="border:1px solid #c8d0db;border-radius:7px;padding:5px 8px;font-size:12px;"
-              onchange="CapCDState.filtroIni=this.value?new Date(this.value+'T00:00:00'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
-            <span style="font-size:11px;color:#7a8798;">até</span>
-            <input type="date" id="cap-dt-fim" value="${fmtInputDate(CapCDState.filtroFim)}"
-              style="border:1px solid #c8d0db;border-radius:7px;padding:5px 8px;font-size:12px;"
-              onchange="CapCDState.filtroFim=this.value?new Date(this.value+'T23:59:59'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;">
-            ${mkAtalho('mesAtual','Mês Atual')}
-            ${mkAtalho('mesAnt','Mês Anterior')}
-            ${mkAtalho('anoAtual','Ano Atual')}
-            ${mkAtalho('anoAnt','Ano Anterior')}
-            ${mkAtalho('tudo','Tudo')}
-          </div>
-        </div>
-
-        <!-- Toggle REVENDA -->
-        <div style="min-width:130px;">
-          <label style="display:block;font-size:11px;font-weight:600;color:#7a8798;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">🏷️ Revenda</label>
-          <div style="display:flex;gap:6px;">
-            <button onclick="CapCDState.filtroRevenda='todos';renderCapacidadeCD();" style="padding:5px 14px;border-radius:16px;border:1px solid ${CapCDState.filtroRevenda==='todos'?'#1a4480':'#c8d0db'};background:${CapCDState.filtroRevenda==='todos'?'#1a4480':'#fff'};color:${CapCDState.filtroRevenda==='todos'?'#fff':'#374151'};font-size:12px;font-weight:600;cursor:pointer;">TODOS</button>
-            <button onclick="CapCDState.filtroRevenda='nao';renderCapacidadeCD();" style="padding:5px 14px;border-radius:16px;border:1px solid ${CapCDState.filtroRevenda==='nao'?'#d64545':'#c8d0db'};background:${CapCDState.filtroRevenda==='nao'?'#d64545':'#fff'};color:${CapCDState.filtroRevenda==='nao'?'#fff':'#374151'};font-size:12px;font-weight:600;cursor:pointer;">SEM REVENDA</button>
-          </div>
-          ${CapCDState.filtroRevenda==='nao'?`<div style="font-size:10px;color:#d64545;margin-top:4px;">⚠️ Produtos REVENDA excluídos de todo dashboard</div>`:''}
-        </div>
-
+      <div class="filter-group" style="flex:2;min-width:200px;">
+        <label>Produto / Código</label>
+        <select id="cap-prod-select" multiple size="3" style="width:100%;"
+          onchange="CapCDState.filtroProdutos=[...this.selectedOptions].map(o=>o.value).filter(Boolean);CapCDState.detPage=0;CapCDState.tblPage=0;renderCapacidadeCD();">
+          <option value="" ${CapCDState.filtroProdutos.length===0?'selected':''}>— Todos —</option>
+          ${_prodOpts}
+        </select>
+        ${CapCDState.filtroProdutos.length>0
+          ? `<button onclick="CapCDState.filtroProdutos=[];renderCapacidadeCD();"
+               style="margin-top:3px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;padding:0;">
+               ✕ Limpar (${CapCDState.filtroProdutos.length} selecionados)</button>`
+          : ''}
       </div>
+
+      <div class="filter-group">
+        <label>Data Inicial</label>
+        <input type="date" id="cap-dt-ini" value="${fmtInputDate(CapCDState.filtroIni)}"
+          onchange="CapCDState.filtroIni=this.value?new Date(this.value+'T00:00:00'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
+      </div>
+
+      <div class="filter-group">
+        <label>Data Final</label>
+        <input type="date" id="cap-dt-fim" value="${fmtInputDate(CapCDState.filtroFim)}"
+          onchange="CapCDState.filtroFim=this.value?new Date(this.value+'T23:59:59'):null;CapCDState.filtroAtalho='custom';CapCDState.detPage=0;renderCapacidadeCD();">
+      </div>
+
+      <div class="filter-group">
+        <label>Atalhos de Período</label>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">${capAtalhoHTML}</div>
+      </div>
+
+      <div class="filter-group">
+        <label>Revenda</label>
+        <div style="display:flex;gap:4px;">
+          ${capToggleBtn('Todos', CapCDState.filtroRevenda==='todos', "CapCDState.filtroRevenda='todos';renderCapacidadeCD();")}
+          ${capToggleBtn('Sem Revenda', CapCDState.filtroRevenda==='nao', "CapCDState.filtroRevenda='nao';renderCapacidadeCD();")}
+        </div>
+        ${CapCDState.filtroRevenda==='nao'
+          ? `<span style="font-size:10px;color:#d64545;display:block;margin-top:3px;">⚠️ Revenda excluída de todo dashboard</span>`
+          : ''}
+      </div>
+
     </div>`;
 
   // ---- Avisos de abas ausentes ----
@@ -10610,10 +10618,10 @@ function renderCapacidadeCD() {
   // ---- Monta HTML final ----
   pane.innerHTML = `
     <div class="panel-section cap-root">
-      <div class="cap-header">
-        <h2 class="cap-title">📦 Capacidade CD</h2>
-        ${filtroHTML}
+      <div class="panel-header" style="margin-bottom:0;">
+        <h2 class="panel-title" style="margin:0;">📦 Capacidade CD</h2>
       </div>
+      ${filtroHTML}
       ${avisosHTML}
       ${l1}${l2}${l3}
       ${ajHTML}
