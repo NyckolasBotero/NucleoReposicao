@@ -9989,7 +9989,7 @@ function capVerRegras() {
       </div>
       <div style="font-size:13px;color:#3a4a5c;line-height:1.7;">
         <p><strong>Não Validado</strong>: produtos presentes na planilha <em>8022 Nova</em> (ou elegíveis em 8022 nível 1) que ainda não possuem registro de validação no período filtrado.</p>
-        <p><strong>Corretivo Ocorrência</strong>: produtos com ocorrência registrada na sheet <em>Tipo</em> no período selecionado. Quando um produto aparece em mais de um dia de ocorrência, recebe o badge <span style="background:#7a5af8;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;">REVALIDAÇÃO</span>.</p>
+        <p><strong>Corretivo Ocorrência</strong>: produtos com ocorrência registrada na sheet <em>Tipo</em> no período selecionado. Quando um produto aparece em mais de um dia de ocorrência, recebe o badge <span style="background:#1a9c62;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;">REVALIDAÇÃO</span>.</p>
         <p><strong>Transferido Preventivo</strong>: itens transferidos com urgência diferente de <em>Normal</em>. O endereço utilizado é sempre o da planilha <em>8022 Nova</em>.</p>
         <hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;">
         <p><strong>Deduplicação</strong>: se um produto aparecer em mais de uma origem, ele é listado uma única vez com todas as origens indicadas.</p>
@@ -10127,7 +10127,7 @@ function capDemandaExportPDF() {
   }
 
   function drawRuaBar(rua, y) {
-    doc.setFillColor(116, 163, 255); // COR_PREV #74A3FF
+    doc.setFillColor(168, 200, 255); // COR_PREV #A8C8FF
     doc.rect(ML, y, CW - ML - MR, RUA_HDR - 1, 'F');
     doc.setTextColor(26, 46, 68);
     doc.setFontSize(6.5);
@@ -10169,7 +10169,7 @@ function capDemandaExportPDF() {
 
     // Badge REVALIDAÇÃO
     if (r.revalidacao) {
-      doc.setFillColor(122, 90, 248);
+      doc.setFillColor(26, 156, 98);
       doc.roundedRect(CW - MR - 16, y + 1, 14, 3.5, 0.8, 0.8, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(4.5);
@@ -10179,7 +10179,7 @@ function capDemandaExportPDF() {
 
     // Origem em cinza no canto se não for NV simples
     if (origemAbr && origemAbr !== 'NV') {
-      doc.setTextColor(130, 100, 200);
+      doc.setTextColor(26, 156, 98);
       doc.setFontSize(4.5);
       doc.setFont('helvetica', 'bold');
       doc.text(origemAbr, CW - MR - 1, ty, { align:'right' });
@@ -10832,7 +10832,7 @@ function renderCapacidadeCD() {
 
         <div class="filter-group">
           <label>&nbsp;</label>
-          <button onclick="capVerRegras();" style="padding:6px 14px;border-radius:6px;border:1.5px solid #7a5af8;background:#f5f3ff;color:#7a5af8;font-size:12px;font-weight:700;cursor:pointer;">📋 Ver Regras</button>
+          <button onclick="capVerRegras();" style="padding:6px 14px;border-radius:6px;border:1.5px solid #1a9c62;background:#edfaf4;color:#1a9c62;font-size:12px;font-weight:700;cursor:pointer;">📋 Ver Regras</button>
         </div>
 
       </div>
@@ -10840,7 +10840,7 @@ function renderCapacidadeCD() {
       <!-- Linha 2: Gerar Demanda -->
       <div style="border-top:1px solid #e2e8f0;padding-top:12px;">
         <div style="font-size:12px;font-weight:700;color:#1a4480;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">⚡ Gerar Demanda</div>
-        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;">
 
           <div class="filter-group">
             <label>Não Validado</label>
@@ -10956,7 +10956,7 @@ function renderCapacidadeCD() {
       ${mkCard('🔢','Total de Validações', fN(comp.totalValidacoes), 'Todas as ocorrências')}
       ${mkCard('🛡️','Preventivas', fN(comp.totalPreventivo), comp.totalValidacoes>0?fP(comp.totalPreventivo/comp.totalValidacoes*100)+' do total':'')}
       ${mkCard('🔧','Corretivas', fN(comp.totalCorretivo), comp.totalValidacoes>0?fP(comp.totalCorretivo/comp.totalValidacoes*100)+' do total':'')}
-      ${mkCard('🔁','Revalidações', fN(comp.revalidacoes), 'Validações além da 1ª por produto','#7a5af8')}
+      ${mkCard('🔁','Revalidações', fN(comp.revalidacoes), 'Validações além da 1ª por produto','#1a9c62')}
     </div>`;
 
   // ---- Cards linha 3: Recorrência ----
@@ -11091,8 +11091,8 @@ function renderCapacidadeCD() {
 
   // ---- Itens Transferidos ----
   const urgOrdem  = {'Máxima':0,'Alta':1,'Média':2,'Baixa':3,'Normal':4};
-  const urgBgMap  = {'Máxima':'#7c1d1d','Alta':'#d64545','Média':'#e07b00','Baixa':'#7a5af8','Normal':'#2563aa'};
-  const urgRowBg  = {'Máxima':'#fce8e8','Alta':'#fdf0f0','Média':'#fff8ee','Baixa':'#f3f0ff','Normal':''};
+  const urgBgMap  = {'Máxima':'#7c1d1d','Alta':'#d64545','Média':'#e07b00','Baixa':'#1a9c62','Normal':'#2563aa'};
+  const urgRowBg  = {'Máxima':'#fce8e8','Alta':'#fdf0f0','Média':'#fff8ee','Baixa':'#edfaf4','Normal':''};
   const maxCount  = comp.itensTransferidos.filter(r=>r.urgencia==='Máxima').length;
   const altaCount = comp.itensTransferidos.filter(r=>r.urgencia==='Alta').length;
   const medCount  = comp.itensTransferidos.filter(r=>r.urgencia==='Média').length;
@@ -11138,7 +11138,7 @@ function renderCapacidadeCD() {
         {u:'Máxima',c:'#7c1d1d',n:maxCount},
         {u:'Alta',c:'#d64545',n:altaCount},
         {u:'Média',c:'#e07b00',n:medCount},
-        {u:'Baixa',c:'#7a5af8',n:baixaCount},
+        {u:'Baixa',c:'#1a9c62',n:baixaCount},
         {u:'Normal',c:'#2563aa',n:normCount},
       ].map(({u,c,n})=>`<div style="background:#fff;border:2px solid ${c}30;border-radius:10px;padding:10px 18px;min-width:100px;text-align:center;cursor:pointer;" onclick="CapCDState.filtroUrgencia='${u}';renderCapacidadeCD();">
         <div style="font-size:19px;font-weight:800;color:${c};">${n}</div>
@@ -11161,7 +11161,7 @@ function renderCapacidadeCD() {
             ${mkUrgBtn('Máxima','Máxima',maxCount,'#7c1d1d')}
             ${mkUrgBtn('Alta','Alta',altaCount,'#d64545')}
             ${mkUrgBtn('Média','Média',medCount,'#e07b00')}
-            ${mkUrgBtn('Baixa','Baixa',baixaCount,'#7a5af8')}
+            ${mkUrgBtn('Baixa','Baixa',baixaCount,'#1a9c62')}
             ${mkUrgBtn('Normal','Normal',normCount,'#2563aa')}
           </div>
         </div>
@@ -11198,7 +11198,7 @@ function renderCapacidadeCD() {
       <span style="background:#7c1d1d;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Máxima</span> End. maior, cap. caiu &nbsp;|&nbsp;
       <span style="background:#d64545;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Alta</span> Mudou 2+ níveis &nbsp;|&nbsp;
       <span style="background:#e07b00;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Média</span> Mudou 1 nível &nbsp;|&nbsp;
-      <span style="background:#7a5af8;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Baixa</span> Mesmo tipo, cap. alterada &nbsp;|&nbsp;
+      <span style="background:#1a9c62;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Baixa</span> Mesmo tipo, cap. alterada &nbsp;|&nbsp;
       <span style="background:#2563aa;color:#fff;padding:1px 7px;border-radius:8px;margin:0 3px;">Normal</span> Mesmo tipo, cap. inalterada
     </div>
     ${transFiltered.length===0?`<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Nenhum item transferido com esses filtros.</div>`:
@@ -11426,7 +11426,7 @@ function renderCapacidadeCD() {
     const origemCores = {
       'Não Validado': '#e07b00',
       'Corretivo Ocorrência': '#d64545',
-      'Transferido Preventivo': '#7a5af8',
+      'Transferido Preventivo': '#1a9c62',
     };
 
     // — Resumo por rua —
@@ -11574,7 +11574,7 @@ function renderCapacidadeCD() {
         if (!CapCDState.demandaGerada) return '';
         const lista = CapCDState.demandaGerada;
         const total = lista.length;
-        const origemCores = {'Não Validado':'#e07b00','Corretivo Ocorrência':'#d64545','Transferido Preventivo':'#7a5af8'};
+        const origemCores = {'Não Validado':'#e07b00','Corretivo Ocorrência':'#d64545','Transferido Preventivo':'#1a9c62'};
         const origemCount = {};
         lista.forEach(r => { [...r.origens].forEach(o => { origemCount[o]=(origemCount[o]||0)+1; }); });
         const ruaCount = {};
@@ -11637,9 +11637,9 @@ function capActivateSortable() {
 function capRenderCharts(comp) {
   if (typeof Chart === 'undefined') return;
 
-  // Cores padrão: Preventivo = claro (#74A3FF), Corretivo = escuro (#0000DE)
-  const COR_PREV = '#74A3FF';
-  const COR_CORR = '#0000DE';
+  // Cores padrão: Preventivo = azul pastel claro, Corretivo = azul médio profundo
+  const COR_PREV = '#A8C8FF';
+  const COR_CORR = '#2563CC';
 
   // Gráfico 1: Barras empilhadas por dia
   const ctx1 = document.getElementById('cap-chart-dia');
@@ -11685,7 +11685,7 @@ function capRenderCharts(comp) {
         datasets: [{
           data:[comp.totalPreventivo, comp.totalCorretivo],
           backgroundColor:[COR_PREV, COR_CORR],
-          borderColor:['#4a7fe8','#0000aa'],
+          borderColor:['#7AADFF','#1A4AB0'],
           borderWidth:2
         }]
       },
@@ -11746,8 +11746,8 @@ function capRenderCharts(comp) {
     const totaisMap = new Map(ruasSorted.map(([rua,v])=>[rua, v]));
 
     // Paleta igual ao gráfico Preventivo×Corretivo: escuro=validado, claro=pendente
-    const COR_VALID = '#0000DE'; // escuro — mesmo COR_CORR
-    const COR_PEND  = '#74A3FF'; // claro — mesmo COR_PREV
+    const COR_VALID = '#2563CC'; // escuro — mesmo COR_CORR
+    const COR_PEND  = '#A8C8FF'; // claro — mesmo COR_PREV
 
     // Canvas responsivo: ocupa toda a largura do container, altura generosa
     // Sem expansão horizontal — todas as ruas cabem na área visível
