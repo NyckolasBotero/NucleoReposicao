@@ -309,7 +309,9 @@ const ExcelLoader = {
 
     let wb;
     try{
-      wb = XLSX.read(buf, { type:"array", cellDates:true });
+      // cellDates:false (padrão) = datas ficam como número serial do Excel;
+      // toDate() já converte via XLSX.SSF.parse_date_code — muito mais rápido no parse.
+      wb = XLSX.read(buf, { type:"array", cellDates:false });
     }catch(e){
       throw new Error(
         "O arquivo não pôde ser interpretado como uma planilha Excel válida (.xlsx). " +
@@ -2999,13 +3001,22 @@ const UI = {
 
   async handleFile(file){
     $("#empty-error").innerHTML = "";
+    // Helper: cede a thread ao browser por um tick (evita "Página sem resposta")
+    const yield_ = () => new Promise(r => setTimeout(r, 0));
+
     toast("Lendo arquivo "+file.name+"...");
     let stage = "leitura do arquivo (Excel Loader)";
     try{
       const raw = await ExcelLoader.load(file);
 
+      // Cede a thread antes do processamento pesado
+      await yield_();
+      toast("Processando dados...");
+
       stage = "processamento dos dados (Data Processor)";
       const processed = DataProcessor.process(raw);
+
+      await yield_();
 
       stage = "identificação do quadro atual (Current Team)";
       const currentTeam = CurrentTeam.compute(processed);
@@ -3051,6 +3062,8 @@ const UI = {
 
       toast("Arquivo carregado com sucesso.","success");
 
+      // Cede a thread antes de renderizar a UI (evita congelar o browser no último passo)
+      await yield_();
       stage = "renderização do painel (UI)";
       this.switchView("indicadores", true);
     }catch(err){
@@ -3115,7 +3128,9 @@ const UI = {
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD
     };
-    if(fns[pane]) fns[pane]();
+    // Renderiza via requestAnimationFrame para garantir que o browser pinte a UI
+    // antes de executar o render (evita "Página sem resposta" no Chrome)
+    if(fns[pane]) requestAnimationFrame(() => fns[pane]());
   },
 
   openModal(html){
@@ -9232,6 +9247,18 @@ function relToggleDetalhamento(){
   RelState._detAberto = !aberto;
 }
 
+function capToggleDetalhamento(){
+  const wrap  = document.getElementById('cap-det-wrap');
+  const icon  = document.getElementById('cap-det-icon');
+  const label = document.getElementById('cap-det-label');
+  if(!wrap) return;
+  const aberto = wrap.style.display !== 'none';
+  wrap.style.display = aberto ? 'none' : 'block';
+  icon.textContent   = aberto ? '▶' : '▼';
+  label.textContent  = aberto ? 'Mostrar Detalhamento' : 'Ocultar Detalhamento';
+  CapCDState.detAberto = !aberto;
+}
+
 function relSort(col){
   if(RelState.sortCol===col) RelState.sortDir*=-1;
   else { RelState.sortCol=col; RelState.sortDir=-1; }
@@ -9639,6 +9666,7 @@ const CapCDState = {
   demandaQtdItens: '',            // qtd total de itens a diluir no intervalo
   demandaRuaPorPagina: true,      // true = 1 rua por página no PDF
   ultValSoUltimoDia: true,        // true = mostra só último dia com dados; false = todas as validações
+  detAberto: false,               // toggle "Mostrar Detalhamento" da Tabela Detalhada de Validações
   rankPage: 0,              // paginação do ranking
   detPage: 0,               // paginação tabela detalhada
   tblPage: 0,               // paginação tabela principal
@@ -11355,6 +11383,19 @@ function renderCapacidadeCD() {
   const detSlice = detSorted.slice(detStart, detStart + CapCDState.detPageSize);
   const detPages = Math.ceil(detTotal / CapCDState.detPageSize);
   const detHTML = `
+    <!-- TOGGLE DETALHAMENTO -->
+    <div style="display:flex;align-items:center;gap:10px;margin:4px 0 4px 0;padding-top:8px;border-top:1px solid #e2e8f0;">
+      <button id="cap-det-toggle-btn" onclick="capToggleDetalhamento()"
+        style="padding:6px 16px;font-size:12px;font-weight:700;border-radius:6px;
+               border:1.5px solid #1a4480;background:#fff;color:#1a4480;
+               cursor:pointer;display:flex;align-items:center;gap:6px;">
+        <span id="cap-det-icon">${CapCDState.detAberto?'▼':'▶'}</span>
+        <span id="cap-det-label">${CapCDState.detAberto?'Ocultar detalhamento':'Mostrar Detalhamento'}</span>
+      </button>
+      <span style="font-size:11px;color:#7a8798;">📋 Tabela Detalhada de Validações · ${fN(detTotal)} ocorrências · oculta por padrão</span>
+    </div>
+    <!-- CONTEÚDO DA TABELA DETALHADA (oculto por padrão) -->
+    <div id="cap-det-wrap" style="display:${CapCDState.detAberto?'block':'none'};">
     <div class="cap-section-title">📋 Tabela Detalhada de Validações <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(detTotal)} ocorrências)</span></div>
     <div class="cap-table-wrap">
     <table class="cap-table data-table">
@@ -11392,7 +11433,8 @@ function renderCapacidadeCD() {
       <button onclick="CapCDState.detPage=Math.max(0,CapCDState.detPage-1);renderCapacidadeCD();" ${CapCDState.detPage===0?'disabled':''}>◀</button>
       <span>${CapCDState.detPage+1} / ${detPages}</span>
       <button onclick="CapCDState.detPage=Math.min(${detPages-1},CapCDState.detPage+1);renderCapacidadeCD();" ${CapCDState.detPage===detPages-1?'disabled':''}>▶</button>
-    </div>`:''}`;
+    </div>`:''}
+    </div><!-- /cap-det-wrap -->`;
 
   // ---- Tabela principal 8022 — somente NÃO VALIDADOS ----
   // Filtra apenas itens não validados da 8022 Nova (ou 8022 se não há Nova)
