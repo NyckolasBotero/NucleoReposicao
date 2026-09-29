@@ -11568,7 +11568,7 @@ function renderCapacidadeCD() {
       </div>
       <div class="cap-chart-box" style="margin:16px 0;">
         <div class="cap-chart-title">📊 Cobertura por Rua — Validados × Total (8022 Nova)</div>
-        <div style="height:260px;overflow-x:auto;"><canvas id="cap-chart-rua"></canvas></div>
+        <div style="height:300px;overflow:hidden;position:relative;"><canvas id="cap-chart-rua"></canvas></div>
       </div>
       ${(() => {
         if (!CapCDState.demandaGerada) return '';
@@ -11737,26 +11737,25 @@ function capRenderCharts(comp) {
       if(comp.uniqueValidadosPorCod.has(r.codprod)) ruaMap.get(rua).valid++;
     });
     const ruasSorted = [...ruaMap.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true}));
-    const labels4   = ruasSorted.map(([rua])=>'Rua '+rua);
+    // Label: apenas o número da rua (sem "Rua ")
+    const labels4   = ruasSorted.map(([rua]) => rua);
     // Converte para percentual: validado% e restante%
     const pctValid  = ruasSorted.map(([,v])=> v.total>0 ? Math.round(v.valid/v.total*100) : 0);
     const pctRest   = pctValid.map(p => 100 - p);
-    // Armazena totais para tooltip
-    const totaisMap = new Map(ruasSorted.map(([rua,v])=>['Rua '+rua, v]));
+    // Armazena totais para tooltip — chave = número puro da rua
+    const totaisMap = new Map(ruasSorted.map(([rua,v])=>[rua, v]));
 
     // Paleta igual ao gráfico Preventivo×Corretivo: escuro=validado, claro=pendente
     const COR_VALID = '#1a2e44'; // escuro — mesmo COR_CORR
     const COR_PEND  = '#a8d8c8'; // claro — mesmo COR_PREV
 
-    // Ajusta largura do canvas proporcionalmente ao número de barras
-    // mínimo 40px por barra, máximo sem scroll se couber
+    // Canvas responsivo: ocupa toda a largura do container, altura generosa
+    // Sem expansão horizontal — todas as ruas cabem na área visível
     const wrap = ctx4.parentElement;
     const wrapW = wrap.offsetWidth || 700;
-    const barW  = Math.max(40, Math.min(80, Math.floor(wrapW / Math.max(labels4.length, 1))));
-    const totalW = Math.max(wrapW, labels4.length * barW);
-    ctx4.style.width  = totalW + 'px';
-    ctx4.width        = totalW;
-    ctx4.style.height = '260px';
+    ctx4.style.width  = wrapW + 'px';
+    ctx4.width        = wrapW;
+    ctx4.style.height = '300px';
 
     CapCDState.charts['rua'] = new Chart(ctx4, {
       type: 'bar',
@@ -11771,11 +11770,12 @@ function capRenderCharts(comp) {
             borderWidth: 0,
             stack: 'rua',
             datalabels: {
-              display: ctx => pctValid[ctx.dataIndex] >= 10,
+              display: ctx => pctValid[ctx.dataIndex] >= 12,
               color: '#ffffff',
-              font: { weight: 'bold', size: 10 },
+              font: { weight: 'bold', size: 9 },
               anchor: 'center',
               align: 'center',
+              rotation: -90,           // vertical
               formatter: v => v + '%'
             }
           },
@@ -11792,17 +11792,18 @@ function capRenderCharts(comp) {
               font: { weight: 'bold', size: 9 },
               anchor: 'center',
               align: 'center',
+              rotation: -90,           // vertical
               formatter: (v, ctx) => {
                 const entry = totaisMap.get(labels4[ctx.dataIndex]) || {total:0,valid:0};
                 const pend = entry.total - entry.valid;
-                return pend > 0 ? pend + ' pend.' : '';
+                return pend > 0 ? pend + 'p' : '';
               }
             }
           }
         ]
       },
       options: {
-        responsive: false,
+        responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: {
@@ -11817,7 +11818,7 @@ function capRenderCharts(comp) {
           datalabels: {},
           tooltip: {
             callbacks: {
-              title: items => items[0].label,
+              title: items => 'Rua ' + items[0].label,
               label: ctx => {
                 const entry = totaisMap.get(ctx.label) || {total:0,valid:0};
                 const pct   = entry.total > 0 ? Math.round(entry.valid/entry.total*100) : 0;
@@ -11833,8 +11834,16 @@ function capRenderCharts(comp) {
         scales: {
           x: {
             stacked: true,
-            ticks: { color:'#7a8798', font:{ size:9 }, maxRotation:45, minRotation:30 },
-            grid: { display:false }
+            ticks: {
+              color: '#7a8798',
+              font: { size: 9, weight: '600' },
+              maxRotation: 0,
+              minRotation: 0,
+              autoSkip: false,       // nunca pular rótulos
+            },
+            grid: { display: false },
+            barPercentage: 0.85,
+            categoryPercentage: 0.9
           },
           y: {
             stacked: true,
