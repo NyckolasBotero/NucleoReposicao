@@ -9637,6 +9637,7 @@ const CapCDState = {
   demandaRuaIni: '',              // número da rua inicial
   demandaRuaFim: '',              // número da rua final
   demandaQtdItens: '',            // qtd total de itens a diluir no intervalo
+  demandaRuaPorPagina: true,      // true = 1 rua por página no PDF
   rankPage: 0,              // paginação do ranking
   detPage: 0,               // paginação tabela detalhada
   tblPage: 0,               // paginação tabela principal
@@ -10046,7 +10047,7 @@ function capDemandaPreviewPDF() {
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 }
 
-/* ---- Export PDF — 1 RUA por página, formato tabela ---- */
+/* ---- Export PDF — cartões 100×100mm ---- */
 function capDemandaExportPDF() {
   const lista = CapCDState.demandaGerada;
   if (!lista || !lista.length) return alert('Gere a demanda primeiro.');
@@ -10056,181 +10057,233 @@ function capDemandaExportPDF() {
   }
   const { jsPDF } = window.jspdf;
 
-  // A4 landscape
-  const PW = 297, PH = 210;
-  const ML = 10, MR = 10, MT = 10, MB = 10;
-  const CW = PW - ML - MR; // content width = 277
+  const ruaPorPag = CapCDState.demandaRuaPorPagina;
 
-  const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+  // Dimensões do cartão: 100×100mm
+  const CW = 100, CH = 100;
 
-  // Column definitions [label, x offset from ML, width]
+  // Agrupar itens por RUA (mantém ordem RUA→PREDIO→APTO já vinda da lista)
+  const ruaGroups = new Map();
+  lista.forEach(r => {
+    const k = r.rua || '(sem rua)';
+    if (!ruaGroups.has(k)) ruaGroups.set(k, []);
+    ruaGroups.get(k).push(r);
+  });
+  const ruasUniq = [...ruaGroups.keys()];
+
+  // Cabeçalho de uma página de cartão
+  // Cada "página" do PDF = um cartão 100×100
+  // Colunas do cartão (dentro do espaço disponível)
+  // Layout: cabeçalho azul (12mm) + separador de RUA se modo contínuo (6mm) + linhas de campo
+
+  const now = new Date();
+  const dataStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+
+  // Colunas da tabela dentro do cartão
+  // Total largura útil = 96 (2mm margem cada lado)
+  const ML = 2, MR = 2, MT = 14; // topo reservado para cabeçalho
   const cols = [
-    { label:'CODPROD',   w:28 },
-    { label:'DESCRIÇÃO', w:90 },
-    { label:'RUA',       w:20 },
-    { label:'PRÉDIO',    w:20 },
-    { label:'APTO',      w:20 },
-    { label:'ORIGEM',    w:40 },
-    { label:'CAP.ANT',   w:27 },
-    { label:'CAP.NOVA',  w:32 },
+    { label:'CODPROD', w:22 },
+    { label:'DESCRIÇÃO', w:38 },
+    { label:'PRÉ.', w:10 },
+    { label:'APT.', w:10 },
+    { label:'C.ANT', w:8 },
+    { label:'C.NOV', w:8 },
   ];
-  // Compute x positions
   let cx = ML;
   cols.forEach(c => { c.x = cx; cx += c.w; });
 
-  const ROW_H = 8;       // row height mm
-  const HDR_H = 16;      // page header block height
-  const TBL_HDR_H = 7;   // table column header height
-  const FOOTER_H = 6;
-  const BODY_TOP = MT + HDR_H + TBL_HDR_H; // where rows start
-  const MAX_Y = PH - MB - FOOTER_H;
+  const ROW_H   = 7;    // altura de cada linha de item
+  const TBL_HDR = 5;    // altura cabeçalho de colunas
+  const RUA_HDR = 6;    // altura separador de rua (modo contínuo)
+  const FOOTER_H = 5;
+  const MAX_Y   = CH - FOOTER_H;
 
-  let totalPages = 0;
-  // First pass: count pages needed
-  const ruaGroups = [];
-  const ruaOrder = [];
-  lista.forEach(r => {
-    const rua = r.rua || '(sem rua)';
-    if (!ruaGroups[rua]) { ruaGroups[rua] = []; ruaOrder.push(rua); }
-    ruaGroups[rua].push(r);
-  });
-  // deduplicate ruaOrder
-  const ruasUniq = [...new Set(ruaOrder)];
-
-  // Helper: draw page header (RUA title)
-  function drawPageHeader(rua, pageLabel) {
+  // ---- Helpers ----
+  function drawCardHeader(rua) {
+    // Fundo azul escuro no topo
     doc.setFillColor(26, 46, 68);
-    doc.rect(ML, MT, CW, HDR_H, 'F');
+    doc.rect(0, 0, CW, 13, 'F');
     doc.setTextColor(255, 255, 255);
-    doc.setFontSize(11);
-    doc.setFont('helvetica','bold');
-    doc.text('DEMANDA REPOSIÇÃO', ML + 4, MT + 7);
-    doc.setFontSize(9);
-    doc.setFont('helvetica','normal');
-    doc.text(`RUA: ${rua}`, ML + 4, MT + 13);
-    doc.setFontSize(8);
-    doc.text(pageLabel, PW - MR, MT + 7, { align:'right' });
-    const now = new Date();
-    const ds = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
-    doc.text(ds, PW - MR, MT + 13, { align:'right' });
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DEMANDA REPOSIÇÃO', CW / 2, 5.5, { align:'center' });
+    doc.setFontSize(8.5);
+    if (rua) doc.text(`RUA ${rua}`, ML, 11);
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(dataStr, CW - MR, 11, { align:'right' });
   }
 
-  // Helper: draw table column headers
-  function drawTableHeader() {
-    const ty = MT + HDR_H;
-    doc.setFillColor(220, 228, 236);
-    doc.rect(ML, ty, CW, TBL_HDR_H, 'F');
+  function drawColHeaders(y) {
+    doc.setFillColor(210, 220, 232);
+    doc.rect(ML, y, CW - ML - MR, TBL_HDR, 'F');
     doc.setTextColor(26, 46, 68);
-    doc.setFontSize(7);
-    doc.setFont('helvetica','bold');
-    cols.forEach(c => {
-      doc.text(c.label, c.x + 2, ty + 4.8);
-    });
-    // bottom border
-    doc.setDrawColor(150, 160, 175);
-    doc.line(ML, ty + TBL_HDR_H, ML + CW, ty + TBL_HDR_H);
+    doc.setFontSize(5.5);
+    doc.setFont('helvetica', 'bold');
+    cols.forEach(c => doc.text(c.label, c.x + 1, y + 3.5));
+    doc.setDrawColor(160, 170, 185);
+    doc.line(ML, y + TBL_HDR, CW - MR, y + TBL_HDR);
   }
 
-  // Helper: draw footer with page num
-  function drawFooter(pageNum, totalPg) {
-    doc.setTextColor(150, 160, 170);
-    doc.setFontSize(7);
-    doc.setFont('helvetica','normal');
-    doc.text(`Página ${pageNum} / ${totalPg}`, PW / 2, PH - MB, { align:'center' });
+  function drawRuaBar(rua, y) {
+    doc.setFillColor(168, 216, 200); // COR_PREV
+    doc.rect(ML, y, CW - ML - MR, RUA_HDR - 1, 'F');
+    doc.setTextColor(26, 46, 68);
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`RUA ${rua}`, ML + 2, y + 4);
+    doc.setDrawColor(100, 160, 140);
+    doc.line(ML, y + RUA_HDR - 1, CW - MR, y + RUA_HDR - 1);
   }
 
-  // Helper: draw one data row
   function drawRow(r, y, shade) {
     if (shade) {
-      doc.setFillColor(245, 248, 252);
-      doc.rect(ML, y, CW, ROW_H, 'F');
+      doc.setFillColor(245, 249, 253);
+      doc.rect(ML, y, CW - ML - MR, ROW_H, 'F');
     }
-    // REVALIDAÇÃO badge inside row
-    const baseTextY = y + 5.2;
-    doc.setFontSize(7);
-    doc.setFont('helvetica','normal');
-    doc.setTextColor(30, 40, 55);
+    const ty = y + 4.8;
+    doc.setFontSize(6);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(20, 32, 48);
+
+    const origemStr = r.origens instanceof Set ? [...r.origens].join('/') : (r.origens||'');
+    // Abreviação de origem para caber
+    const origemAbr = origemStr.replace('Não Validado','NV').replace('Corretivo Ocorrência','CO').replace('Transferido Preventivo','TP');
 
     const vals = [
       r.codprod || '',
       r.descricao || '',
-      r.rua || '',
       r.predio || '',
       r.apto || '',
-      (r.origens instanceof Set ? [...r.origens].join(' | ') : (r.origens||'')),
-      '',  // CAP.ANT blank
-      '',  // CAP.NOVA blank
+      '',   // CAP.ANT
+      '',   // CAP.NOVA
     ];
 
     cols.forEach((c, i) => {
       let txt = String(vals[i]);
-      // truncate to fit column
-      const maxChars = Math.floor(c.w / 1.8);
-      if (txt.length > maxChars) txt = txt.substring(0, maxChars - 1) + '…';
-      doc.text(txt, c.x + 2, baseTextY);
+      const maxCh = Math.max(2, Math.floor(c.w / 1.7));
+      if (txt.length > maxCh) txt = txt.substring(0, maxCh - 1) + '…';
+      doc.text(txt, c.x + 1, ty);
     });
 
-    // REVALIDAÇÃO badge if applicable
+    // Badge REVALIDAÇÃO
     if (r.revalidacao) {
-      const bx = cols[cols.length-1].x + cols[cols.length-1].w - 22;
       doc.setFillColor(122, 90, 248);
-      doc.roundedRect(bx, y + 1.5, 20, 4.5, 1, 1, 'F');
+      doc.roundedRect(CW - MR - 16, y + 1, 14, 3.5, 0.8, 0.8, 'F');
       doc.setTextColor(255, 255, 255);
-      doc.setFontSize(5.5);
-      doc.setFont('helvetica','bold');
-      doc.text('REVALIDAÇÃO', bx + 10, y + 4.5, { align:'center' });
+      doc.setFontSize(4.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text('REVAL.', CW - MR - 9, y + 3.5, { align:'center' });
     }
 
-    // row bottom divider
+    // Origem em cinza no canto se não for NV simples
+    if (origemAbr && origemAbr !== 'NV') {
+      doc.setTextColor(130, 100, 200);
+      doc.setFontSize(4.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text(origemAbr, CW - MR - 1, ty, { align:'right' });
+    }
+
+    // Linha divisória
     doc.setDrawColor(220, 228, 236);
-    doc.line(ML, y + ROW_H, ML + CW, y + ROW_H);
+    doc.line(ML, y + ROW_H, CW - MR, y + ROW_H);
   }
 
-  // --- Render ---
-  // Two-pass approach: first collect page count, then render
-  // Single-pass with deferred footer update via stored page refs
-  const pageNums = []; // page index per rua section page
+  function drawFooter(pageNum, total) {
+    doc.setTextColor(160, 170, 180);
+    doc.setFontSize(5.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${pageNum} / ${total}`, CW / 2, CH - 1.5, { align:'center' });
+  }
+
+  // ---- Criação do documento ----
+  const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:[CW, CH] });
+
   let firstPage = true;
   let globalPage = 1;
-  const pageFooters = []; // {page, totalWillBe} — filled after
 
-  ruasUniq.forEach(rua => {
-    const items = ruaGroups[rua];
-    let itemIdx = 0;
-    let ruaPage = 1;
+  function newPage() {
+    if (!firstPage) { doc.addPage([CW, CH]); globalPage++; }
+    firstPage = false;
+  }
 
-    while (itemIdx < items.length) {
-      if (!firstPage) { doc.addPage(); globalPage++; }
-      firstPage = false;
+  if (ruaPorPag) {
+    // ---- MODO: 1 RUA POR PÁGINA ----
+    // Cada RUA começa numa página nova. Se os itens não cabem, continua em nova página
+    // com cabeçalho repetido.
+    ruasUniq.forEach(rua => {
+      const items = ruaGroups.get(rua);
+      let itemIdx = 0;
+      let primeiraDestaRua = true;
 
-      // How many items per page?
-      let y = BODY_TOP;
-      const rowsThisPage = [];
-      while (itemIdx < items.length && y + ROW_H <= MAX_Y) {
-        rowsThisPage.push(items[itemIdx++]);
-        y += ROW_H;
+      while (itemIdx < items.length) {
+        newPage();
+
+        const ruaLabel = primeiraDestaRua ? rua : `${rua} (cont.)`;
+        drawCardHeader(ruaLabel);
+        drawColHeaders(MT);
+        primeiraDestaRua = false;
+
+        let y = MT + TBL_HDR;
+        let rowNum = 0;
+        while (itemIdx < items.length && y + ROW_H <= MAX_Y) {
+          drawRow(items[itemIdx++], y, rowNum % 2 === 1);
+          y += ROW_H;
+          rowNum++;
+        }
       }
+    });
 
-      // Estimate rua page label — we don't know total rua pages yet, patch after
-      pageFooters.push({ pageIdx: globalPage, ruaPage, items: rowsThisPage.length });
+  } else {
+    // ---- MODO: TUDO EM SEQUÊNCIA ----
+    // Página única corrida; a cada nova RUA insere um separador colorido.
+    // Se não cabe na página atual, nova página com cabeçalho genérico.
+    let y = MT + TBL_HDR;
+    let currentPage = false;
 
-      drawPageHeader(rua, `RUA ${ruaPage}`);
-      drawTableHeader();
-
-      let ry = BODY_TOP;
-      rowsThisPage.forEach((r, i) => {
-        drawRow(r, ry, i % 2 === 1);
-        ry += ROW_H;
-      });
-
-      ruaPage++;
+    function ensurePage(needed) {
+      if (!currentPage || y + needed > MAX_Y) {
+        newPage();
+        drawCardHeader(null); // sem rua no topo — genérico
+        drawColHeaders(MT);
+        y = MT + TBL_HDR;
+        currentPage = true;
+      }
     }
-  });
+
+    ruasUniq.forEach(rua => {
+      const items = ruaGroups.get(rua);
+
+      // Separador de rua — tenta encaixar na página atual, senão começa nova
+      if (!currentPage || y + RUA_HDR + ROW_H > MAX_Y) {
+        ensurePage(RUA_HDR + ROW_H);
+      }
+      // Garantir que o separador caiba
+      if (y + RUA_HDR > MAX_Y) { ensurePage(RUA_HDR); }
+      drawRuaBar(rua, y);
+      y += RUA_HDR;
+
+      let rowNum = 0;
+      items.forEach(r => {
+        if (y + ROW_H > MAX_Y) {
+          newPage();
+          drawCardHeader(null);
+          drawColHeaders(MT);
+          y = MT + TBL_HDR;
+          // Repetir separador de rua na continuação
+          drawRuaBar(`${rua} (cont.)`, y);
+          y += RUA_HDR;
+          rowNum = 0;
+        }
+        drawRow(r, y, rowNum % 2 === 1);
+        y += ROW_H;
+        rowNum++;
+      });
+    });
+  }
 
   const totalPg = globalPage;
-
-  // Add footers — jsPDF doesn't support editing past pages easily,
-  // so we re-iterate using setPage
   for (let p = 1; p <= totalPg; p++) {
     doc.setPage(p);
     drawFooter(p, totalPg);
@@ -10811,6 +10864,15 @@ function renderCapacidadeCD() {
               ${capToggleBtn('SIM', CapCDState.demandaTransferido, "CapCDState.demandaTransferido=true;renderCapacidadeCD();")}
               ${capToggleBtn('NÃO', !CapCDState.demandaTransferido, "CapCDState.demandaTransferido=false;renderCapacidadeCD();")}
             </div>
+          </div>
+
+          <div class="filter-group">
+            <label>Imprimir Rua por Página</label>
+            <div style="display:flex;gap:4px;">
+              ${capToggleBtn('SIM', CapCDState.demandaRuaPorPagina, "CapCDState.demandaRuaPorPagina=true;renderCapacidadeCD();")}
+              ${capToggleBtn('NÃO', !CapCDState.demandaRuaPorPagina, "CapCDState.demandaRuaPorPagina=false;renderCapacidadeCD();")}
+            </div>
+            <span style="font-size:10px;color:#7a8798;">${CapCDState.demandaRuaPorPagina ? '1 rua por página' : 'Tudo em sequência'}</span>
           </div>
 
           ${processed.sheetTipoDispo ? `
