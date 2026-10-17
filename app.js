@@ -2971,7 +2971,8 @@ const UI = {
       { id:"comissao", label:"Comissão" },
       { id:"cronograma", label:"Cronograma" },
       { id:"turnover", label:"Turnover" },
-      { id:"ferias", label:"Férias" }
+      { id:"ferias", label:"Férias" },
+      { id:"organograma", label:"Organograma" }
     ]
   },
   currentView: "indicadores",
@@ -3113,7 +3114,7 @@ const UI = {
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
-      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD
+      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD
     };
     if(fns[pane]) fns[pane]();
   },
@@ -12028,4 +12029,152 @@ function capExportPDF() {
     console.error('capExportPDF erro:', err);
     toast('Erro ao gerar PDF: '+err.message, 'error');
   }
+}
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Organograma (Gestão)                                            */
+/* Cadeia fixa + equipe do QUADRO REP atual; demais setores vêm do         */
+/* ORGANOGRAMA.xlsx (aba Base), carregado pelo usuário e guardado só no    */
+/* navegador (localStorage) — os dados de pessoal não ficam no repositório.*/
+/* ---------------------------------------------------------------------- */
+const ORG_LIDERANCA = [
+  { nome:"Alexandre Alencar", cargo:"Gerente",             cls:"top" },
+  { nome:"Amaury Kairo",      cargo:"Sub Gerente",         cls:"mid" },
+  { nome:"Fabio Nyckolas",    cargo:"Líder de Operações",  cls:"me"  }
+];
+const ORG_STORE = "orgBaseRows_v1";
+const ORG_ULTIMOS = ["TRANSFERIR MATRIZ","AFASTADOS","FALTANTES"];
+const OrgState = { rows:null, fonte:"", outros:false };
+
+function orgTitle(s){
+  const small = new Set(["DE","DA","DO","DAS","DOS","E","EM"]);
+  return trimStr(s).replace(/\s+/g," ").toLowerCase().split(" ").map((w,i)=>
+    (i>0 && small.has(w.toUpperCase())) ? w : w.charAt(0).toUpperCase()+w.slice(1)).join(" ");
+}
+function orgParse(wb){
+  const nm = wb.SheetNames.find(n=>normStr(n)==="BASE") || wb.SheetNames[0];
+  const data = XLSX.utils.sheet_to_json(wb.Sheets[nm], { header:1, defval:"" }).slice(1);
+  // colunas por posição: A Matrícula, B Nome, C Função, D Setor, E Encarregado, F Sub-setor
+  const out = [];
+  data.forEach(r=>{
+    const nome = trimStr(r[1]); if(!nome) return;
+    const setor = trimStr(r[3]) || "Sem setor", enc = trimStr(r[4]), sub = trimStr(r[5]);
+    const sk = normStr(setor), ek = normStr(enc), bk = normStr(sub);
+    out.push({
+      mat: trimStr(r[0]), nome: orgTitle(nome), func: orgTitle(r[2]),
+      setor: orgTitle(setor), sk,
+      enc: (!ek || ek===sk) ? "" : orgTitle(enc), ek: (!ek || ek===sk) ? "" : ek,
+      sub: (!bk || bk===sk) ? "" : orgTitle(sub), bk: (!bk || bk===sk) ? "" : bk
+    });
+  });
+  if(!out.length) throw new Error("Nenhum colaborador encontrado na planilha.");
+  return out;
+}
+function orgRestore(){
+  if(OrgState.rows) return;
+  try{
+    const j = JSON.parse(localStorage.getItem(ORG_STORE)||"null");
+    if(j && Array.isArray(j.rows) && j.rows.length){ OrgState.rows = j.rows; OrgState.fonte = j.fonte||""; }
+  }catch(e){}
+}
+function orgLoadFile(input){
+  const f = input.files && input.files[0]; if(!f) return;
+  const fr = new FileReader();
+  fr.onload = ()=>{
+    try{
+      const wb = XLSX.read(fr.result, { type:"array" });
+      OrgState.rows = orgParse(wb); OrgState.fonte = f.name;
+      try{ localStorage.setItem(ORG_STORE, JSON.stringify({ rows:OrgState.rows, fonte:f.name })); }catch(e){}
+      toast("Organograma geral carregado: "+OrgState.rows.length+" colaboradores.", "success");
+      renderOrganograma();
+    }catch(err){ toast(err.message || "Não consegui ler esse arquivo.", "error"); }
+  };
+  fr.onerror = ()=> toast("Não consegui abrir o arquivo.", "error");
+  fr.readAsArrayBuffer(f);
+  input.value = "";
+}
+function orgSetOutros(v){ OrgState.outros = !!v; renderOrganograma(); }
+function orgLimpar(){
+  OrgState.rows = null; OrgState.fonte = ""; OrgState.outros = false;
+  try{ localStorage.removeItem(ORG_STORE); }catch(e){}
+  renderOrganograma();
+}
+
+function orgTeamHtml(){
+  const ct = window.APP_STATE.currentTeam, registry = window.APP_STATE.nameRegistry;
+  const meuKey = normStr(AVALIADOR_FIXO.codigo);
+  const membros = (ct.members||[]).filter(m=>m.codKey!==meuKey).map(m=>({
+    nome: orgTitle(registry.get(m.codKey) || m.nome), cargo: ct.cargoDisponivel ? m.cargo : null
+  })).sort((a,b)=>a.nome.localeCompare(b.nome,"pt"));
+  const grupos = [
+    ["LIDER","Líderes"],["AUXILIAR","Auxiliares"],["REPOSITOR","Repositores"],["OUTRO","Outros cargos"],[null,"Equipe"]
+  ].map(([k,label])=>({ label, lista: membros.filter(m=>m.cargo===k) })).filter(g=>g.lista.length);
+  return `<div class="org-team"><h3>Equipe Reposição · ${membros.length} pessoas</h3>` +
+    grupos.map(g=>`<div class="org-group"><div>${g.label} (${g.lista.length})</div><div class="org-people">` +
+      g.lista.map(m=>`<div class="org-person">${escapeHtml(m.nome)}</div>`).join("") + `</div></div>`).join("") + `</div>`;
+}
+
+function orgOthersHtml(){
+  const rows = OrgState.rows;
+  if(!rows) return `<div class="org-empty">Para ver os demais setores, carregue o arquivo <strong>ORGANOGRAMA.xlsx</strong> (aba Base) no botão acima. Ele fica salvo só neste navegador.</div>`;
+  const meuKey = normStr(AVALIADOR_FIXO.codigo);
+  const eu = rows.find(r=>normStr(r.mat)===meuKey);
+  const S = new Map();
+  rows.forEach(r=>{
+    if(r.sk==="GERENCIA GERAL") return;
+    if(!S.has(r.sk)) S.set(r.sk, { name:r.setor, key:r.sk, n:0, E:new Map() });
+    const s = S.get(r.sk); s.n++;
+    if(!s.E.has(r.ek)) s.E.set(r.ek, { name:r.enc, key:r.ek, n:0, B:new Map() });
+    const e = s.E.get(r.ek); e.n++;
+    if(!e.B.has(r.bk)) e.B.set(r.bk, { name:r.sub, key:r.bk, P:[] });
+    e.B.get(r.bk).P.push(r);
+  });
+  const sets = Array.from(S.values()).sort((a,b)=>{
+    const ma = eu && a.key===eu.sk ? 0 : 1, mb = eu && b.key===eu.sk ? 0 : 1;
+    if(ma!==mb) return ma-mb;
+    const la = ORG_ULTIMOS.indexOf(a.key), lb = ORG_ULTIMOS.indexOf(b.key);
+    if((la<0)!==(lb<0)) return la<0 ? -1 : 1;
+    return la>=0 ? la-lb : b.n-a.n;
+  });
+  const cards = sets.map(s=>{
+    const mineSet = eu && s.key===eu.sk;
+    const encs = Array.from(s.E.values()).sort((a,b)=>b.n-a.n).map(e=>{
+      const mineEnc = mineSet && e.key===eu.ek;
+      const subs = Array.from(e.B.values()).sort((a,b)=>b.P.length-a.P.length).map(b=>
+        `<details${mineEnc?' class="mine" open':''}><summary><span>${escapeHtml(b.name||"Colaboradores")}</span><span>${b.P.length}</span></summary><ul>` +
+        b.P.slice().sort((x,y)=>x.nome.localeCompare(y.nome,"pt")).map(p=>
+          `<li>${escapeHtml(p.nome)} <em>· ${escapeHtml(p.func||"-")}</em></li>`).join("") + `</ul></details>`).join("");
+      return (e.name ? `<div class="org-enc">Encarregado: <strong>${escapeHtml(e.name)}</strong>${mineEnc?" · seu time":""}</div>` : "") + subs;
+    }).join("");
+    return `<section class="org-sec${mineSet?' mine':''}"><header><span>${escapeHtml(s.name)}</span><span class="cnt">${s.n}</span></header>${encs}</section>`;
+  }).join("");
+  return `<div class="org-sectors">${cards}</div>`;
+}
+
+function renderOrganograma(){
+  const pane = $("#pane-organograma"); if(!pane) return;
+  orgRestore();
+  const ct = window.APP_STATE.currentTeam;
+  const chain = ORG_LIDERANCA.map((n,i)=>
+    (i?'<div class="org-line"></div>':'') +
+    `<div class="org-node ${n.cls}"><b>${escapeHtml(n.nome)}</b><span>${escapeHtml(n.cargo)}</span></div>`).join("");
+  const loaded = OrgState.rows ? `<span style="font-size:12px;color:var(--gray-500);">${escapeHtml(OrgState.fonte)} · ${OrgState.rows.length} pessoas</span>` : "";
+  pane.innerHTML = `<div class="org-wrap">
+    <div class="org-head">
+      <div><h2>Organograma · Reposição</h2><small>Quadro atual: ${ct.date?fmtDateBR(ct.date):"-"} · equipe atualizada a partir do QUADRO REP</small></div>
+      <div class="org-ctrl">
+        <label>Mostrar outros setores?</label>
+        <div class="toggle-group">
+          <button class="${!OrgState.outros?'active':''}" onclick="orgSetOutros(false)">Não</button>
+          <button class="${OrgState.outros?'active':''}" onclick="orgSetOutros(true)">Sim</button>
+        </div>
+        <label class="btn btn-outline btn-sm" style="margin:0;cursor:pointer;">📂 ${OrgState.rows?'Trocar':'Carregar'} ORGANOGRAMA.xlsx
+          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="orgLoadFile(this)"></label>
+        ${OrgState.rows?'<button class="btn btn-outline btn-sm" onclick="orgLimpar()">Remover</button>':''}
+        ${loaded}
+      </div>
+    </div>
+    <div class="org-chain">${chain}<div class="org-line"></div>${orgTeamHtml()}</div>
+    ${OrgState.outros ? `<div class="org-others"><h3>Demais setores da Logística</h3><p>Seu setor aparece primeiro e destacado.</p>${orgOthersHtml()}</div>` : ""}
+  </div>`;
 }

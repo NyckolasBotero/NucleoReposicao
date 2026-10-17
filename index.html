@@ -516,6 +516,47 @@ body.locked #app-body{ display:none !important; }
 .cap-table th[onclick] { cursor:pointer; user-select:none; }
 .cap-table th[onclick]:hover { background:#d8e8f8; }
 .cap-table th.cap-sort-active { background:#c8ddf5; color:#1a4480; }
+
+/* ===== ORGANOGRAMA ===== */
+.org-wrap{padding:4px 0 24px;}
+.org-head{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.org-head h2{margin:0;font-size:18px;color:var(--blue-dark);}
+.org-head small{color:var(--gray-500);display:block;margin-top:2px;}
+.org-ctrl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
+.org-ctrl label{font-size:11px;font-weight:700;color:var(--gray-700);text-transform:uppercase;letter-spacing:.04em;}
+.org-chain{display:flex;flex-direction:column;align-items:center;}
+.org-node{background:var(--white);border:2px solid var(--blue-soft);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 22px;text-align:center;min-width:230px;}
+.org-node b{display:block;color:var(--blue-dark);font-size:15px;}
+.org-node span{font-size:12px;color:var(--gray-500);}
+.org-node.top{background:var(--blue-deep);border-color:var(--blue-deep);}
+.org-node.top b,.org-node.top span{color:#fff;}
+.org-node.mid{border-color:var(--blue-med);}
+.org-node.me{background:var(--blue-med);border-color:var(--blue-med);}
+.org-node.me b,.org-node.me span{color:#fff;}
+.org-line{width:2px;height:20px;background:var(--blue-med);}
+.org-team{width:100%;max-width:1100px;border:2px solid var(--blue-soft);border-radius:var(--radius);background:var(--blue-light);padding:14px;}
+.org-team h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--blue-dark);}
+.org-group{margin-bottom:10px;}
+.org-group>div:first-child{font-size:11px;font-weight:700;color:var(--gray-700);text-transform:uppercase;margin-bottom:6px;}
+.org-people{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;}
+.org-person{background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:6px 10px;font-size:12.5px;color:var(--ink);}
+.org-others{margin-top:26px;}
+.org-others h3{margin:0 0 4px;color:var(--blue-dark);font-size:15px;}
+.org-others p{margin:0 0 12px;color:var(--gray-500);font-size:12px;}
+.org-sectors{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:start;}
+.org-sec{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
+.org-sec.mine{border:2px solid var(--blue-med);}
+.org-sec>header{display:flex;justify-content:space-between;gap:8px;padding:9px 12px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);font-weight:700;font-size:13px;color:var(--blue-dark);text-transform:uppercase;}
+.org-sec .cnt{font-weight:600;color:var(--gray-700);}
+.org-enc{padding:8px 12px 2px;font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;}
+.org-enc strong{color:var(--ink);}
+.org-sec details{border-top:1px dashed var(--gray-200);padding:0 12px;}
+.org-sec details.mine>summary{color:var(--blue-med);}
+.org-sec summary{cursor:pointer;padding:7px 0;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;gap:8px;}
+.org-sec ul{list-style:none;margin:0;padding:0 0 8px;}
+.org-sec li{font-size:12px;padding:2px 0;color:var(--gray-700);}
+.org-sec li em{font-style:normal;color:var(--gray-500);}
+.org-empty{padding:14px;border:1.5px dashed var(--gray-300);border-radius:var(--radius);color:var(--gray-700);font-size:13px;background:var(--white);}
 </style>
 </head>
 <body class="locked">
@@ -603,6 +644,7 @@ body.locked #app-body{ display:none !important; }
       <div class="pane" id="pane-cronograma"></div>
       <div class="pane" id="pane-turnover"></div>
       <div class="pane" id="pane-ferias"></div>
+      <div class="pane" id="pane-organograma"></div>
     </section>
 
   </div>
