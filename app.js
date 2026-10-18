@@ -12195,14 +12195,14 @@ const ABAST_COL_COD_PROD = 9;  // coluna J
 const ABAST_COL_QTD_DISP = 17; // coluna R (A=0 … R=17)
 
 const ABAST_FAIXAS = [
-  { id:"acima", label:"Acima de 100%", cor:"#2f6fce", test:p=>p>100 },
-  { id:"f90",   label:"90% a 100%",    cor:"#1a9c62", test:p=>p>=90 && p<=100 },
-  { id:"f50",   label:"50% a 90%",     cor:"#8bb33a", test:p=>p>=50 && p<90 },
-  { id:"f30",   label:"30% a 50%",     cor:"#e0b21f", test:p=>p>=30 && p<50 },
-  { id:"f10",   label:"10% a 30%",     cor:"#e08a1f", test:p=>p>=10 && p<30 },
-  { id:"f0",    label:"Menos de 10%",  cor:"#d64545", test:p=>p<10 }
+  { id:"acima", label:"Acima de 100%", tom:"",     cor:"#2f6fce", corGraf:"#123a6b", test:p=>p>100 },
+  { id:"f90",   label:"90% a 100%",    tom:"pos",  cor:"#1a9c62", corGraf:"#1a9c62", test:p=>p>=90 && p<=100 },
+  { id:"f50",   label:"50% a 90%",     tom:"",     cor:"#2f6fce", corGraf:"#2f6fce", test:p=>p>=50 && p<90 },
+  { id:"f30",   label:"30% a 50%",     tom:"warn", cor:"#e08a1f", corGraf:"#e08a1f", test:p=>p>=30 && p<50 },
+  { id:"f10",   label:"10% a 30%",     tom:"neg",  cor:"#d64545", corGraf:"#d64545", test:p=>p>=10 && p<30 },
+  { id:"f0",    label:"Menos de 10%",  tom:"neg",  cor:"#d64545", corGraf:"#a63232", test:p=>p<10 }
 ];
-const ABAST_FAIXA_ND = { id:"nd", label:"Sem cálculo", cor:"#7a8798" };
+const ABAST_FAIXA_ND = { id:"nd", label:"Sem cálculo", tom:"", cor:"#7a8798", corGraf:"#7a8798" };
 
 const ABAST_RUAS = [
   { id:"r2",    label:"Ruas 2 a 10",  min:2,  max:10 },
@@ -12213,7 +12213,7 @@ const ABAST_RUAS = [
   { id:"outras",label:"Outras ruas",  min:null, max:null }
 ];
 
-const AbastState = { faixa:"", rua:"", ruaExata:"", busca:"", comp:null };
+const AbastState = { faixa:"", rua:"", ruaExata:"", busca:"", mostrarTodos:false, comp:null };
 
 // "CX12UN" → 12 | "FD24UN275ML" → 24 | "CX 12UN" → 12 | "CX12UN-500ML" → 12 | "CX6UN" → 6 | "UN" → 1
 // Pega o PRIMEIRO número depois das letras do tipo de embalagem; o resto (UN, ML, KG, L…) é ignorado.
@@ -12317,7 +12317,7 @@ function abastCompute(processed, raw){
     ABAST_FAIXAS.forEach(f=>{ faixas[f.id] = 0; });
     calc.forEach(r=>{ faixas[r.faixa.id]++; });
     return {
-      itens: lista.length, calculados: calc.length,
+      itens: lista.length, calculados: calc.length, cx, cp,
       media: calc.length ? calc.reduce((s,r)=>s+r.pct,0)/calc.length : null,
       ponderado: cp > 0 ? cx / cp * 100 : null,
       abaixo50: calc.filter(r=>r.pct < 50).length,
@@ -12341,6 +12341,7 @@ function abastCompute(processed, raw){
     total: rows.length, calculados: calculados.length,
     ponderadoGeral: somaCap > 0 ? somaCx / somaCap * 100 : null,
     zerados: rows.filter(r=>r.zerado).length,
+    somaCx, somaCap,
     porFaixa, porRuaRange, porRua, semCadastro,
     embSemLeitura: Array.from(embSemLeitura.entries()).sort((a,b)=>b[1]-a[1])
   };
@@ -12370,53 +12371,50 @@ function renderAbastecimentoPicking(){
   const processed = window.APP_STATE && window.APP_STATE.processed;
   const raw = window.APP_STATE && window.APP_STATE.raw;
   if(!processed){
-    pane.innerHTML = `<div class="panel-section" style="text-align:center;padding:60px 20px;color:#7a8798;">Nenhum arquivo carregado. Faça o upload do arquivo NUCLEO REPOSIÇÃO.</div>`;
+    pane.innerHTML = `<div class="panel" style="text-align:center;padding:60px 20px;color:#7a8798;">Nenhum arquivo carregado. Faça o upload do arquivo NUCLEO REPOSIÇÃO.</div>`;
     return;
   }
 
   const c = abastCompute(processed, raw);
   AbastState.comp = c;
   if(c.erro){
-    pane.innerHTML = `<div class="cap-root"><h2 class="cap-title">Abastecimento do Picking</h2><div class="cap-aviso" style="margin-top:12px;">⚠️ ${c.erro}</div></div>`;
+    pane.innerHTML = `<div class="panel"><div class="panel-header"><h3>Abastecimento do Picking</h3></div><div class="cap-aviso">⚠️ ${c.erro}</div></div>`;
     return;
   }
 
-  const mkCard = (id, label, valor, sub, cor, tipo) => {
-    const ativo = (tipo==="faixa" && AbastState.faixa===id) ? " abast-ativo" : "";
-    const click = tipo==="faixa" ? `onclick="abastSetFaixa('${id}')"` : "";
-    return `<div class="cap-card abast-card${tipo==="faixa"?" abast-click":""}${ativo}" data-faixa="${tipo==="faixa"?id:""}" ${click} style="border-top:4px solid ${cor};">
-      <div class="cap-card-label">${label}</div>
-      <div class="cap-card-value" style="color:${cor}">${valor}</div>
-      <div class="cap-card-sub">${sub}</div></div>`;
+  // Mesmo padrão de cards das outras abas (.cards-grid / .card), só com azul, verde, laranja e vermelho.
+  const mkCard = (id, label, valor, sub, tom, tipo, extra) => {
+    const ativo = ((tipo==="faixa" && AbastState.faixa===id) || (tipo==="rua" && AbastState.rua===id)) ? " abast-ativo" : "";
+    const attr  = tipo==="faixa" ? ` data-faixa="${id}" onclick="abastSetFaixa('${id}')"`
+                : tipo==="rua"   ? ` data-rua="${id}" onclick="abastSetRua('${id}')"` : "";
+    return `<div class="card${tom ? " "+tom : ""}${tipo!=="info" ? " abast-click" : ""}${ativo}"${attr}>
+      <div class="card-label">${label}</div>
+      <div class="card-value${tom ? " "+tom : ""}">${valor}</div>
+      <div class="card-sub">${sub}</div>${extra || ""}</div>`;
   };
 
   const pctDe = n => c.total ? abastFP(n / c.total * 100) + " dos itens" : "";
-  const cardsFaixa = [...ABAST_FAIXAS, ABAST_FAIXA_ND].map(f =>
-    mkCard(f.id, f.label, abastFN(c.porFaixa[f.id],0), pctDe(c.porFaixa[f.id]), f.cor, "faixa")).join("");
+  const cardsFaixa = [...ABAST_FAIXAS, ...(c.porFaixa.nd ? [ABAST_FAIXA_ND] : [])].map(f =>
+    mkCard(f.id, f.label, abastFN(c.porFaixa[f.id],0), pctDe(c.porFaixa[f.id]), f.tom, "faixa")).join("");
 
   const cardsResumo =
-    mkCard("t", "Itens no picking", abastFN(c.total,0), `${abastFN(c.calculados,0)} com cálculo`, "#1a4480", "info") +
-    mkCard("g", "Abastecimento geral", abastFP(c.ponderadoGeral), "caixas ÷ capacidade (ponderado)", abastCorPct(c.ponderadoGeral), "info") +
-    mkCard("z", "Itens zerados", abastFN(c.zerados,0), pctDe(c.zerados), c.zerados ? "#d64545" : "#1a9c62", "info");
+    mkCard("t", "Itens no picking", abastFN(c.total,0), `${abastFN(c.calculados,0)} com cálculo`, "", "info") +
+    mkCard("g", "Abastecimento geral", abastFP(c.ponderadoGeral), "caixas ÷ capacidade", abastFaixaDe(c.ponderadoGeral).tom, "info") +
+    mkCard("cx", "Caixas no picking", abastFN(c.somaCx,0), `de ${abastFN(c.somaCap,0)} cx de capacidade`, "", "info") +
+    mkCard("z", "Itens zerados", abastFN(c.zerados,0), pctDe(c.zerados), c.zerados ? "neg" : "pos", "info");
 
-  // faixa de ruas menos abastecida (para destacar)
+  // intervalo de ruas menos abastecido (para destacar)
   const comDados = c.porRuaRange.filter(r=>r.calculados>0 && r.ponderado!=null);
   const pior = comDados.length ? comDados.reduce((a,b)=> b.ponderado < a.ponderado ? b : a) : null;
 
   const cardsRua = c.porRuaRange.filter(r=>r.itens>0).map(r=>{
-    const cor = abastCorPct(r.ponderado);
-    const ativo = AbastState.rua===r.rg.id ? " abast-ativo" : "";
-    const badge = (pior && pior.rg.id===r.rg.id && comDados.length>1) ? `<span class="abast-badge">⚠ menos abastecida</span>` : "";
-    return `<div class="cap-card abast-card abast-click${ativo}" data-rua="${r.rg.id}" onclick="abastSetRua('${r.rg.id}')" style="border-top:4px solid ${cor};">
-      <div class="cap-card-label">${r.rg.label}</div>
-      <div class="cap-card-value" style="color:${cor}">${abastFP(r.ponderado)}</div>
-      <div class="cap-card-sub">abastecimento ponderado ${badge}</div>
-      <div class="abast-mini">
+    const badge = (pior && pior.rg.id===r.rg.id && comDados.length>1) ? ` <span class="abast-badge">menos abastecida</span>` : "";
+    const mini = `<div class="abast-mini">
         <span><b>${abastFN(r.itens,0)}</b> itens</span>
         <span>média <b>${abastFP(r.media)}</b></span>
-        <span style="color:${r.abaixo50?"#d64545":"inherit"}"><b>${abastFN(r.abaixo50,0)}</b> abaixo de 50%</span>
-        <span><b>${abastFN(r.zerados,0)}</b> zerados</span>
-      </div></div>`;
+        <span><b>${abastFN(r.abaixo50,0)}</b> abaixo de 50%</span>
+        <span><b>${abastFN(r.zerados,0)}</b> zerados</span></div>`;
+    return mkCard(r.rg.id, r.rg.label, abastFP(r.ponderado), `da capacidade${badge}`, abastFaixaDe(r.ponderado).tom, "rua", mini);
   }).join("");
 
   const linhasRua = c.porRua.map(r=>`
@@ -12445,38 +12443,48 @@ function renderAbastecimentoPicking(){
   const notas = [
     `Aba 1707 sem cabeçalho, lida por posição: coluna J = código do produto, coluna R = QTD DISP (soma das linhas de cada produto; código 0 = endereço vazio é ignorado).`,
     `Unidades por caixa: primeiro número de EMBALAGEMMASTER da 8022 Nova (ex.: CX12UN → 12, FD24UN275ML → 24, UN → 1).${c.embPorQtunitcx ? ` Em ${abastFN(c.embPorQtunitcx,0)} item(ns) sem EMBALAGEMMASTER legível usei QTUNITCX.` : ""}`,
-    `% abastecido = (QTD DISP ÷ unidades por caixa) ÷ CAPACIDADE da 8022 Nova.`,
+    `Qtd disp (cx) = QTD DISP (un) ÷ unidades por caixa. % abastecido = Qtd disp (cx) ÷ CAPACIDADE da 8022 Nova.`,
+    `Nas ruas e intervalos de ruas o percentual é ponderado: soma das caixas ÷ soma das capacidades.`,
     c.ausentes1707 ? `${abastFN(c.ausentes1707,0)} produto(s) da 8022 Nova não aparecem na 1707 (sem estoque): contam como 0%.` : "",
     c.negativos ? `${abastFN(c.negativos,0)} produto(s) com QTD DISP negativa na 1707: tratados como 0.` : "",
     c.semCadastro ? `${abastFN(c.semCadastro,0)} produto(s) da 1707 não estão na 8022 Nova e foram ignorados.` : ""
   ].filter(Boolean).map(t=>`<li>${t}</li>`).join("");
 
   pane.innerHTML = `
-  <div class="cap-root">
-    <div class="cap-header">
-      <h2 class="cap-title">Abastecimento do Picking</h2>
-      <div class="cap-filtro-row">
-        <button class="btn btn-outline btn-sm" onclick="abastExportar()">⤓ Exportar Excel</button>
-      </div>
+    <div class="panel-header">
+      <h3 style="font-size:18px;">Abastecimento do Picking</h3>
+      <div class="panel-actions"><button class="btn btn-outline btn-sm" onclick="abastExportar()">⤓ Exportar Excel</button></div>
     </div>
 
-    <div class="cap-cards-row">${cardsResumo}</div>
+    <div class="cards-grid">${cardsResumo}</div>
 
-    <div class="cap-section-title">Itens por faixa de abastecimento <span class="abast-hint">(clique para filtrar a lista)</span></div>
-    <div class="cap-cards-row">${cardsFaixa}</div>
+    <div class="panel">
+      <div class="panel-header"><h3>Itens por faixa de abastecimento</h3><span class="panel-note">clique em um card para filtrar a lista</span></div>
+      <div class="cards-grid" style="margin-bottom:0;">${cardsFaixa}</div>
+    </div>
 
-    <div class="cap-section-title">Por intervalo de ruas <span class="abast-hint">(clique para filtrar a lista)</span></div>
-    <div class="cap-cards-row">${cardsRua}</div>
+    <div class="panel">
+      <div class="panel-header"><h3>Por intervalo de ruas</h3><span class="panel-note">clique em um card para filtrar a lista</span></div>
+      <div class="cards-grid" style="margin-bottom:0;">${cardsRua}</div>
+    </div>
 
-    <div class="cap-charts-row">
-      <div class="cap-chart-box" style="flex:2 1 420px;">
-        <div class="cap-chart-title">Itens por faixa de abastecimento em cada intervalo de ruas</div>
-        <div style="position:relative;height:300px;"><canvas id="abast-chart-ruas"></canvas></div>
+    <div class="panel">
+      <div class="panel-header">
+        <h3>📊 Abastecimento por Rua — % da capacidade (8022 Nova)</h3>
+        <span class="panel-note">a parte escura mostra o % abastecido, preenchendo de baixo para cima · clique na barra para filtrar a lista</span>
       </div>
-      <div class="cap-chart-box" style="flex:1 1 320px;">
-        <div class="cap-chart-title">Ruas — da menos para a mais abastecida</div>
-        <div class="cap-table-wrap" style="max-height:300px;overflow-y:auto;">
-          <table class="cap-table data-table">
+      <div class="chart-wrap tall"><canvas id="abast-chart-rua-pct"></canvas></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-header"><h3>Faixas de abastecimento por intervalo de ruas</h3></div>
+        <div class="chart-wrap"><canvas id="abast-chart-ruas"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3>Ruas — da menos para a mais abastecida</h3></div>
+        <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
+          <table class="data-table">
             <thead><tr><th>Rua</th><th>Itens</th><th>Abast.</th><th>Média</th><th>&lt; 50%</th><th>Zerados</th></tr></thead>
             <tbody>${linhasRua}</tbody>
           </table>
@@ -12487,29 +12495,32 @@ function renderAbastecimentoPicking(){
     ${avisoEmb}
     ${blocoPontos}
 
-    <div class="cap-section-title">Lista de itens</div>
-    <div class="abast-filtros">
-      <input type="search" id="abast-busca" placeholder="Buscar código ou descrição…" value="${escapeHtml(AbastState.busca)}" oninput="abastSetBusca(this.value)">
-      <span id="abast-filtros-ativos"></span>
-      <button class="cap-btn-clear" onclick="abastLimpar()">Limpar filtros</button>
+    <div class="panel" id="abast-lista">
+      <div class="panel-header"><h3>Lista de produtos</h3></div>
+      <div class="abast-filtros">
+        <input type="search" id="abast-busca" placeholder="Buscar código ou descrição…" value="${escapeHtml(AbastState.busca)}" oninput="abastSetBusca(this.value)">
+        <span id="abast-filtros-ativos"></span>
+        <button class="cap-btn-clear" onclick="abastLimpar()">Limpar filtros</button>
+      </div>
+      <div id="abast-tabela"></div>
     </div>
-    <div id="abast-tabela"></div>
 
-    <details class="abast-notas"><summary>Como o cálculo é feito</summary><ul>${notas}</ul></details>
-  </div>`;
+    <details class="abast-notas"><summary>Como o cálculo é feito</summary><ul>${notas}</ul></details>`;
 
   abastDesenharGrafico(c);
+  abastDesenharGraficoRuas(c);
   abastAtualizarLista();
 }
 
+// Faixas de abastecimento por intervalo de ruas (barras empilhadas)
 function abastDesenharGrafico(c){
   const grupos = c.porRuaRange.filter(r=>r.itens>0);
   Charts.make("abast-chart-ruas", {
     type: "bar",
     data: {
-      labels: grupos.map(g=>g.rg.label),
+      labels: grupos.map(g=>g.rg.label.replace("Ruas ","")),
       datasets: ABAST_FAIXAS.map(f=>({
-        label: f.label, backgroundColor: f.cor,
+        label: f.label, backgroundColor: f.corGraf,
         data: grupos.map(g=>g.faixas[f.id])
       }))
     },
@@ -12524,12 +12535,70 @@ function abastDesenharGrafico(c){
   });
 }
 
+// Rua a rua: % da capacidade abastecida, barra preenchendo de baixo para cima
+// (mesmo estilo do "Cobertura por Rua" da Capacidade CD: azul escuro = preenchido, azul claro = vazio)
+function abastDesenharGraficoRuas(c){
+  const ruas = c.porRua.filter(r=>r.ruaNum >= 0).sort((a,b)=>a.ruaNum-b.ruaNum);
+  const real  = ruas.map(r => r.ponderado == null ? 0 : r.ponderado);
+  const fill  = real.map(p => Math.min(100, Math.max(0, Math.round(p*10)/10)));
+  const vazio = fill.map(p => Math.round((100 - p)*10)/10);
+  const COR_FILL = "#2563CC", COR_VAZIO = "#A8C8FF";
+  Charts.make("abast-chart-rua-pct", {
+    type: "bar",
+    data: {
+      labels: ruas.map(r=>String(r.ruaNum)),
+      datasets: [
+        { label:"Abastecido (%)", data:fill, backgroundColor:COR_FILL, borderWidth:0, stack:"rua",
+          datalabels:{ display: ctx => fill[ctx.dataIndex] >= 12, color:"#fff", anchor:"center", align:"center", rotation:-90,
+                       font:{ weight:"bold", size:9 }, formatter:(v,ctx)=> Math.round(real[ctx.dataIndex]) + "%" } },
+        { label:"Falta para a capacidade (%)", data:vazio, backgroundColor:COR_VAZIO, borderWidth:0, stack:"rua",
+          datalabels:{ display: ctx => fill[ctx.dataIndex] < 12, color:"#123a6b", anchor:"center", align:"center", rotation:-90,
+                       font:{ weight:"bold", size:9 }, formatter:(v,ctx)=> Math.round(real[ctx.dataIndex]) + "%" } }
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      onClick: (evt, els) => {
+        if(els && els.length){
+          abastSetRuaExata(ruas[els[0].index].ruaNum);
+          const alvo = $("#abast-lista"); if(alvo && alvo.scrollIntoView) alvo.scrollIntoView({ behavior:"smooth", block:"start" });
+        }
+      },
+      plugins: {
+        legend: { display:false },
+        tooltip: {
+          filter: item => item.datasetIndex === 0,
+          callbacks: {
+            title: items => "Rua " + ruas[items[0].dataIndex].ruaNum,
+            label: item => {
+              const r = ruas[item.dataIndex];
+              return [
+                "Abastecido: " + abastFP(real[item.dataIndex]) + " da capacidade",
+                abastFN(r.cx,0) + " de " + abastFN(r.cp,0) + " cx",
+                abastFN(r.itens,0) + " itens · " + abastFN(r.zerados,0) + " zerados"
+              ];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { stacked:true, ticks:{ color:"#7a8798", font:{size:9} }, grid:{ color:"#eef1f4" } },
+        y: { stacked:true, beginAtZero:true, max:100, ticks:{ color:"#7a8798", font:{size:9}, callback:v=>v+"%" }, grid:{ color:"#eef1f4" } }
+      }
+    }
+  });
+}
+
 function abastAtualizarLista(){
   const c = AbastState.comp;
   const wrap = $("#abast-tabela");
   if(!c || !wrap) return;
   const lista = abastLinhasFiltradas();
-  const LIMITE = 1000;
+  const LIMITE = AbastState.mostrarTodos ? Infinity : 1000;
+  const barra = r => {
+    if(r.pct == null) return "—";
+    return `<div class="abast-bar"><div class="abast-track"><div class="abast-fill" style="width:${Math.min(100, Math.max(0, r.pct))}%;background:${r.faixa.cor};"></div></div><span class="abast-bar-txt" style="color:${r.faixa.cor};">${abastFP(r.pct)}</span></div>`;
+  };
   const corpo = lista.slice(0, LIMITE).map(r=>`
     <tr>
       <td>${escapeHtml(r.codprod)}</td>
@@ -12538,22 +12607,21 @@ function abastAtualizarLista(){
       <td>${escapeHtml(r.predio==null?"":r.predio)}</td>
       <td>${escapeHtml(r.apto==null?"":r.apto)}</td>
       <td>${escapeHtml(r.embalagem||"")}</td>
-      <td>${r.unCx==null?"—":r.unCx}</td>
-      <td>${abastFN(r.qtd,0)}</td>
-      <td>${abastFN(r.caixas,1)}</td>
       <td>${abastFN(r.capacidade,0)}</td>
-      <td><b style="color:${r.faixa.cor}">${abastFP(r.pct)}</b></td>
-      <td><span class="abast-pill" style="background:${r.faixa.cor}">${r.faixa.label}</span></td>
+      <td>${abastFN(r.caixas,1)}</td>
+      <td>${abastFN(r.qtd,0)}</td>
+      <td>${barra(r)}</td>
     </tr>`).join("");
 
+  const cortado = lista.length > LIMITE;
   wrap.innerHTML = `
-    <div class="cap-table-wrap" style="max-height:520px;overflow-y:auto;">
-      <table class="cap-table data-table">
-        <thead><tr><th>Cód.</th><th>Descrição</th><th>Rua</th><th>Prédio</th><th>Apto</th><th>Embalagem</th><th>Un/Cx</th><th>Qtd Disp (un)</th><th>Caixas</th><th>Capacidade</th><th>% Abast.</th><th>Faixa</th></tr></thead>
-        <tbody>${corpo || `<tr><td colspan="12" style="text-align:center;color:#7a8798;padding:24px;">Nenhum item com os filtros atuais.</td></tr>`}</tbody>
+    <div class="table-wrap" style="max-height:540px;overflow:auto;">
+      <table class="data-table">
+        <thead><tr><th>Cód.</th><th>Descrição</th><th>Rua</th><th>Prédio</th><th>Apto</th><th>Embalagem</th><th>Capacidade (cx)</th><th>Qtd disp (cx)</th><th>Qtd disp (un)</th><th>% Abastecido</th></tr></thead>
+        <tbody>${corpo || `<tr><td colspan="10" style="text-align:center;color:#7a8798;padding:24px;">Nenhum item com os filtros atuais.</td></tr>`}</tbody>
       </table>
     </div>
-    <div class="abast-hint" style="margin-top:6px;">${abastFN(lista.length,0)} item(ns)${lista.length>LIMITE?` — mostrando os ${LIMITE} menos abastecidos (o Excel exporta todos)`:""}</div>`;
+    <div class="panel-note" style="margin-top:8px;">${abastFN(lista.length,0)} item(ns)${cortado ? ` — mostrando os ${abastFN(LIMITE,0)} menos abastecidos. <a href="#" onclick="abastMostrarTodos();return false;">mostrar todos</a> (ou use Exportar Excel)` : ""}</div>`;
 
   // chips dos filtros ativos + destaque dos cards
   const chips = [];
@@ -12562,16 +12630,17 @@ function abastAtualizarLista(){
   if(AbastState.ruaExata !== "") chips.push("Rua " + (AbastState.ruaExata==="-1" ? "—" : AbastState.ruaExata));
   const chipEl = $("#abast-filtros-ativos");
   if(chipEl) chipEl.innerHTML = chips.map(t=>`<span class="abast-chip">${escapeHtml(t)}</span>`).join("");
-  $all(".abast-card[data-faixa]").forEach(el=> el.classList.toggle("abast-ativo", !!el.dataset.faixa && el.dataset.faixa===AbastState.faixa));
-  $all(".abast-card[data-rua]").forEach(el=> el.classList.toggle("abast-ativo", el.dataset.rua===AbastState.rua));
+  $all(".card[data-faixa]").forEach(el=> el.classList.toggle("abast-ativo", el.dataset.faixa===AbastState.faixa));
+  $all(".card[data-rua]").forEach(el=> el.classList.toggle("abast-ativo", el.dataset.rua===AbastState.rua));
 }
 
+function abastMostrarTodos(){ AbastState.mostrarTodos = true; abastAtualizarLista(); }
 function abastSetFaixa(id){ AbastState.faixa = AbastState.faixa===id ? "" : id; abastAtualizarLista(); }
 function abastSetRua(id){ AbastState.rua = AbastState.rua===id ? "" : id; AbastState.ruaExata = ""; abastAtualizarLista(); }
 function abastSetRuaExata(n){ AbastState.ruaExata = AbastState.ruaExata===String(n) ? "" : String(n); AbastState.rua = ""; abastAtualizarLista(); }
 function abastSetBusca(v){ AbastState.busca = v || ""; abastAtualizarLista(); }
 function abastLimpar(){
-  AbastState.faixa = ""; AbastState.rua = ""; AbastState.ruaExata = ""; AbastState.busca = "";
+  AbastState.faixa = ""; AbastState.rua = ""; AbastState.ruaExata = ""; AbastState.busca = ""; AbastState.mostrarTodos = false;
   const b = $("#abast-busca"); if(b) b.value = "";
   abastAtualizarLista();
 }
@@ -12581,9 +12650,11 @@ function abastExportar(){
   if(!lista.length){ toast("Nada para exportar com os filtros atuais.", "error"); return; }
   const dados = lista.map(r=>({
     "CODPROD": r.codprod, "DESCRIÇÃO": r.descricao, "RUA": r.rua, "PRÉDIO": r.predio, "APTO": r.apto,
-    "EMBALAGEMMASTER": r.embalagem, "UN POR CAIXA": r.unCx, "QTD DISP (UN)": r.qtd,
-    "CAIXAS": r.caixas==null ? null : Math.round(r.caixas*100)/100,
-    "CAPACIDADE": r.capacidade, "% ABASTECIDO": r.pct, "FAIXA": r.faixa.label
+    "EMBALAGEMMASTER": r.embalagem, "UN POR CAIXA": r.unCx,
+    "CAPACIDADE (CX)": r.capacidade,
+    "QTD DISP (CX)": r.caixas==null ? null : Math.round(r.caixas*100)/100,
+    "QTD DISP (UN)": r.qtd,
+    "% ABASTECIDO": r.pct, "FAIXA": r.faixa.label
   }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dados), "Abastecimento Picking");
