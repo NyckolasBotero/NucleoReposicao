@@ -713,6 +713,7 @@ const DataProcessor = {
         predio: r["PREDIO"] != null ? String(r["PREDIO"]).trim() : null,
         apto: r["APTO"] != null ? String(r["APTO"]).trim() : null,
         revenda: r["REVENDA"] != null ? String(r["REVENDA"]).trim().toUpperCase() : '',
+        qtunitcx: Number(r["QTUNITCX"]) || 0,
         embalagem: (() => { const v = getFieldFlexible(r, ["EMBALAGEMMASTER","EMBALAGEM MASTER","EMBALAGEM_MASTER"]); return v != null ? String(v).trim() : ''; })(),
       };
     }).filter(Boolean) : null;
@@ -12190,6 +12191,7 @@ function renderOrganograma(){
 /* QTD DISP (1707, coluna R) ÷ unidades por caixa (EMBALAGEMMASTER, 8022 Nova) */
 /* → caixas no picking → % da CAPACIDADE (8022 Nova)                         */
 /* ======================================================================== */
+const ABAST_COL_COD_PROD = 9;  // coluna J
 const ABAST_COL_QTD_DISP = 17; // coluna R (A=0 … R=17)
 
 const ABAST_FAIXAS = [
@@ -12223,6 +12225,9 @@ function abastParseEmbalagem(s){
     const n = parseInt(m[1], 10);
     return n > 0 ? n : null;
   }
+  // formatos fora do padrão: "CX C/10UN" → 10, "-500GCX14UN" → 14 (número colado em "UN")
+  const m2 = t.match(/(\d+)\s*UN/);
+  if(m2){ const n = parseInt(m2[1], 10); return n > 0 ? n : null; }
   return /^[A-ZÀ-Ý\s.]+$/.test(t) ? 1 : null; // "UN" sem número = 1 unidade por embalagem
 }
 
@@ -12248,46 +12253,23 @@ function abastCompute(processed, raw){
   const nova = processed && processed.p8022Nova;
   if(!aoa)  return { erro:"A aba <strong>1707</strong> não foi encontrada no arquivo carregado." };
   if(!nova) return { erro:"A aba <strong>8022 Nova</strong> não foi encontrada no arquivo carregado." };
-  if(aoa.length < 2) return { erro:"A aba <strong>1707</strong> está vazia." };
+  if(aoa.length < 1) return { erro:"A aba <strong>1707</strong> está vazia." };
 
-  const headerRaw = aoa[0] || [];
-  const header = headerRaw.map(h=>normStr(h));
-  const findCol = aliases => {
-    for(const a of aliases){ const i = header.indexOf(normStr(a)); if(i>=0) return i; }
-    return -1;
-  };
-  const iCod = findCol(["CODPROD","COD PROD","COD. PROD","COD.PROD","CODPRODUTO","COD PRODUTO","CODIGO PRODUTO","CODIGO DO PRODUTO","COD"]);
-  const iEnd = findCol(["CODENDERECO","COD ENDERECO","COD. ENDERECO","ENDERECO"]);
-  if(iCod < 0){
-    return { erro:"Não encontrei a coluna do código do produto (CODPROD) na aba <strong>1707</strong>. Colunas lidas: " +
-      escapeHtml(headerRaw.filter(h=>h!=null && String(h).trim()!=="").join(", ")) };
-  }
-  const nomeColQtd = headerRaw[ABAST_COL_QTD_DISP] != null ? String(headerRaw[ABAST_COL_QTD_DISP]).trim() : "(sem título)";
+  // A 1707 NÃO tem cabeçalho: posições fixas (A=endereço, J=código do produto, R=QTD DISP).
+  // Só pula a 1ª linha se ela for claramente um título (QTD DISP em texto não numérico).
+  const primeira = aoa[0] || [];
+  const q0 = primeira[ABAST_COL_QTD_DISP];
+  const temTitulo = typeof q0 === "string" && q0.trim() !== "" && isNaN(Number(q0.replace(",",".")));
+  const linhaInicial = temTitulo ? 1 : 0;
 
-  // --- 1707: QTD DISP por produto (e por endereço, se a aba tiver CODENDERECO) ---
-  const porProd = new Map(); // cod → { total, porEnd: Map }
-  for(let i=1; i<aoa.length; i++){
+  // --- 1707: QTD DISP somada por produto ---
+  const porProd = new Map(); // cod → total (todas as linhas do produto)
+  for(let i=linhaInicial; i<aoa.length; i++){
     const row = aoa[i];
     if(!row) continue;
-    const cod = row[iCod]!=null ? String(row[iCod]).trim() : "";
-    if(!cod) continue;
-    const q = abastToNum(row[ABAST_COL_QTD_DISP]);
-    let o = porProd.get(cod);
-    if(!o){ o = { total:0, porEnd:new Map() }; porProd.set(cod, o); }
-    o.total += q;
-    if(iEnd >= 0){
-      const e = row[iEnd]!=null ? String(row[iEnd]).trim() : "";
-      o.porEnd.set(e, (o.porEnd.get(e)||0) + q);
-    }
-  }
-
-  // Se a 1707 tem endereço, soma só o endereço de picking da 8022 Nova — mas só se o
-  // endereço realmente casar; senão cai para a soma por produto.
-  let usaEndereco = false;
-  if(iEnd >= 0){
-    let casou = 0;
-    nova.forEach(n=>{ const o = porProd.get(n.codprod); if(o && n.codendereco && o.porEnd.has(n.codendereco)) casou++; });
-    usaEndereco = casou > 0;
+    const cod = row[ABAST_COL_COD_PROD]!=null ? String(row[ABAST_COL_COD_PROD]).trim() : "";
+    if(!cod || cod === "0") continue; // código 0 = endereço vazio
+    porProd.set(cod, (porProd.get(cod)||0) + abastToNum(row[ABAST_COL_QTD_DISP]));
   }
 
   // --- 8022 Nova: uma linha por produto (prefere a que tem capacidade) ---
@@ -12298,12 +12280,15 @@ function abastCompute(processed, raw){
   });
 
   const rows = [];
-  const embSemLeitura = new Map(); // texto → ocorrências
+  const embSemLeitura = new Map(); // texto → ocorrências (sem EMBALAGEMMASTER legível nem QTUNITCX)
+  let embPorQtunitcx = 0, ausentes1707 = 0, negativos = 0;
   novaPorProd.forEach(n=>{
-    const o = porProd.get(n.codprod);
-    let qtd = 0;
-    if(o) qtd = usaEndereco ? (o.porEnd.get(n.codendereco) || 0) : o.total;
-    const unCx = abastParseEmbalagem(n.embalagem);
+    const bruto = porProd.get(n.codprod);
+    if(bruto === undefined) ausentes1707++;          // produto sem estoque na 1707 → picking vazio
+    if(bruto < 0) negativos++;
+    const qtd = Math.max(0, bruto || 0);             // QTD DISP negativa é tratada como 0
+    let unCx = abastParseEmbalagem(n.embalagem);
+    if(unCx == null && n.qtunitcx > 0){ unCx = n.qtunitcx; embPorQtunitcx++; } // reserva: QTUNITCX da 8022 Nova
     if(unCx == null){ const k = n.embalagem || "(vazio)"; embSemLeitura.set(k, (embSemLeitura.get(k)||0)+1); }
     const cap = n.capacidade > 0 ? n.capacidade : null;
     const caixas = unCx ? qtd / unCx : null;
@@ -12352,7 +12337,7 @@ function abastCompute(processed, raw){
   porProd.forEach((_,cod)=>{ if(!novaPorProd.has(cod)) semCadastro++; });
 
   return {
-    erro:null, rows, nomeColQtd, usaEndereco, temEndereco: iEnd >= 0,
+    erro:null, rows, ausentes1707, negativos, embPorQtunitcx, linhaInicial,
     total: rows.length, calculados: calculados.length,
     ponderadoGeral: somaCap > 0 ? somaCx / somaCap * 100 : null,
     zerados: rows.filter(r=>r.zerado).length,
@@ -12449,12 +12434,11 @@ function renderAbastecimentoPicking(){
     ${c.embSemLeitura.slice(0,8).map(([t,n])=>`<code>${escapeHtml(t)}</code> (${n})`).join(", ")}${c.embSemLeitura.length>8?" …":""}</div>` : "";
 
   const notas = [
-    `Quantidade disponível: coluna R da aba 1707 (“${escapeHtml(c.nomeColQtd)}”).`,
-    c.usaEndereco ? "Soma apenas o endereço de picking de cada produto (CODENDERECO da 8022 Nova)."
-                  : (c.temEndereco ? "Os endereços da 1707 não casaram com a 8022 Nova; somei todas as linhas do produto."
-                                   : "Somei todas as linhas de cada produto na 1707."),
-    `Unidades por caixa: primeiro número de EMBALAGEMMASTER (ex.: CX12UN → 12, FD24UN275ML → 24, UN → 1).`,
+    `Aba 1707 sem cabeçalho, lida por posição: coluna J = código do produto, coluna R = QTD DISP (soma das linhas de cada produto; código 0 = endereço vazio é ignorado).`,
+    `Unidades por caixa: primeiro número de EMBALAGEMMASTER da 8022 Nova (ex.: CX12UN → 12, FD24UN275ML → 24, UN → 1).${c.embPorQtunitcx ? ` Em ${abastFN(c.embPorQtunitcx,0)} item(ns) sem EMBALAGEMMASTER legível usei QTUNITCX.` : ""}`,
     `% abastecido = (QTD DISP ÷ unidades por caixa) ÷ CAPACIDADE da 8022 Nova.`,
+    c.ausentes1707 ? `${abastFN(c.ausentes1707,0)} produto(s) da 8022 Nova não aparecem na 1707 (sem estoque): contam como 0%.` : "",
+    c.negativos ? `${abastFN(c.negativos,0)} produto(s) com QTD DISP negativa na 1707: tratados como 0.` : "",
     c.semCadastro ? `${abastFN(c.semCadastro,0)} produto(s) da 1707 não estão na 8022 Nova e foram ignorados.` : ""
   ].filter(Boolean).map(t=>`<li>${t}</li>`).join("");
 
