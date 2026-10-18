@@ -12433,6 +12433,15 @@ function renderAbastecimentoPicking(){
     <div class="cap-aviso-inline">⚠️ ${abastFN(c.embSemLeitura.reduce((s,x)=>s+x[1],0),0)} item(ns) com EMBALAGEMMASTER que não consegui interpretar (ficam em “Sem cálculo”):
     ${c.embSemLeitura.slice(0,8).map(([t,n])=>`<code>${escapeHtml(t)}</code> (${n})`).join(", ")}${c.embSemLeitura.length>8?" …":""}</div>` : "";
 
+  const nAcima = c.porFaixa.acima || 0;
+  const pontos = [
+    nAcima ? `<li><b>${abastFN(nAcima,0)} itens acima de 100%</b> (${abastFP(c.total ? nAcima/c.total*100 : 0)} do picking). Indica picking acima do limite ou capacidade desatualizada. A conta assume que a CAPACIDADE da 8022 Nova está em caixas. <a href="#" onclick="abastSetFaixa('acima');return false;">ver itens</a></li>` : "",
+    c.ausentes1707 ? `<li><b>${abastFN(c.ausentes1707,0)} produtos da 8022 Nova não aparecem na 1707</b> e contam como 0% (supõe-se que estão sem estoque no picking).</li>` : "",
+    c.semCadastro ? `<li><b>${abastFN(c.semCadastro,0)} produtos da 1707 não estão na 8022 Nova</b> e ficaram de fora do cálculo.</li>` : ""
+  ].filter(Boolean);
+  const blocoPontos = pontos.length ? `
+    <details class="abast-pontos"><summary>⚠ ${pontos.length} ponto${pontos.length>1?"s":""} para conferir</summary><ul>${pontos.join("")}</ul></details>` : "";
+
   const notas = [
     `Aba 1707 sem cabeçalho, lida por posição: coluna J = código do produto, coluna R = QTD DISP (soma das linhas de cada produto; código 0 = endereço vazio é ignorado).`,
     `Unidades por caixa: primeiro número de EMBALAGEMMASTER da 8022 Nova (ex.: CX12UN → 12, FD24UN275ML → 24, UN → 1).${c.embPorQtunitcx ? ` Em ${abastFN(c.embPorQtunitcx,0)} item(ns) sem EMBALAGEMMASTER legível usei QTUNITCX.` : ""}`,
@@ -12476,6 +12485,7 @@ function renderAbastecimentoPicking(){
     </div>
 
     ${avisoEmb}
+    ${blocoPontos}
 
     <div class="cap-section-title">Lista de itens</div>
     <div class="abast-filtros">
