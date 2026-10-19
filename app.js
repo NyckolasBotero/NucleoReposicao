@@ -714,7 +714,6 @@ const DataProcessor = {
         apto: r["APTO"] != null ? String(r["APTO"]).trim() : null,
         revenda: r["REVENDA"] != null ? String(r["REVENDA"]).trim().toUpperCase() : '',
         qtunitcx: Number(r["QTUNITCX"]) || 0,
-        embalagem: (() => { const v = getFieldFlexible(r, ["EMBALAGEMMASTER","EMBALAGEM MASTER","EMBALAGEM_MASTER"]); return v != null ? String(v).trim() : ''; })(),
       };
     }).filter(Boolean) : null;
     out.p8022NovaDispo = !!raw8022Nova;
@@ -2968,7 +2967,7 @@ const UI = {
       { id:"operadores", label:"Produção Operadores" },
       { id:"relacoes", label:"Relações Rep" },
       { id:"capacidade", label:"Capacidade CD" },
-      { id:"abastecimento", label:"Abastecimento Picking" }
+      { id:"abastecimento", label:"Nível Abastecimento" }
     ],
     gestao: [
       { id:"feedbacks", label:"Feedbacks" },
@@ -12187,12 +12186,21 @@ function renderOrganograma(){
 }
 
 /* ======================================================================== */
-/* MODULE: Abastecimento do Picking                                          */
-/* QTD DISP (1707, coluna R) ÷ unidades por caixa (EMBALAGEMMASTER, 8022 Nova) */
-/* → caixas no picking → % da CAPACIDADE (8022 Nova)                         */
+/* MODULE: Nível de Abastecimento do Picking                                 */
+/* Qtd Disp dos endereços PK (1707) ÷ QTUNITCX (8022 Nova) = caixas          */
+/* caixas ÷ CAPACIDADE (8022 Nova) = nível de abastecimento                  */
 /* ======================================================================== */
-const ABAST_COL_COD_PROD = 9;  // coluna J
-const ABAST_COL_QTD_DISP = 17; // coluna R (A=0 … R=17)
+// 1707 sem cabeçalho, nesta ordem de colunas:
+// A Cod End | B Rua | C Prédio | D Nível | E Apto | F Status | G Cod Prod | H Desc Prod | I Bloq | J Dt Val |
+// K Bem | L Lastro | M Camada | N Cap Pick | O Tipo | P Palete Pick | Q Palete End | R Qtd Tot | S Qtd |
+// T Pend Entrada | U Pend Saída | V Qtd Disp
+const ABAST_COL_END      = 0;   // A
+const ABAST_COL_COD_PROD = 6;   // G
+const ABAST_COL_TIPO     = 14;  // O  (AE = aéreo, PK = picking)
+const ABAST_COL_QTD_DISP = 21;  // V
+const ABAST_NUM_COLS     = 22;
+const ABAST_RUAS_NAO_REVENDA = [48, 49];
+const ABAST_LIMITE_PADRAO = 5;
 
 const ABAST_FAIXAS = [
   { id:"acima", label:"Acima de 100%", tom:"",     cor:"#2f6fce", corGraf:"#123a6b", test:p=>p>100 },
@@ -12213,23 +12221,13 @@ const ABAST_RUAS = [
   { id:"outras",label:"Outras ruas",  min:null, max:null }
 ];
 
-const AbastState = { faixa:"", rua:"", ruaExata:"", busca:"", mostrarTodos:false, comp:null };
-
-// "CX12UN" → 12 | "FD24UN275ML" → 24 | "CX 12UN" → 12 | "CX12UN-500ML" → 12 | "CX6UN" → 6 | "UN" → 1
-// Pega o PRIMEIRO número depois das letras do tipo de embalagem; o resto (UN, ML, KG, L…) é ignorado.
-function abastParseEmbalagem(s){
-  const t = String(s==null ? "" : s).trim().toUpperCase();
-  if(!t) return null;
-  const m = t.match(/^[A-ZÀ-Ý\s.]*?(\d+)/);
-  if(m){
-    const n = parseInt(m[1], 10);
-    return n > 0 ? n : null;
-  }
-  // formatos fora do padrão: "CX C/10UN" → 10, "-500GCX14UN" → 14 (número colado em "UN")
-  const m2 = t.match(/(\d+)\s*UN/);
-  if(m2){ const n = parseInt(m2[1], 10); return n > 0 ? n : null; }
-  return /^[A-ZÀ-Ý\s.]+$/.test(t) ? 1 : null; // "UN" sem número = 1 unidade por embalagem
-}
+const AbastState = {
+  faixa:"", rua:"", ruaExata:"", busca:"", mostrarTodos:false, mostrarTodosSaldo:false,
+  // todos os toggles começam em "Não"; limite de saldo baixo começa em 5 caixas
+  opts: { saldoBaixo:false, naoRevenda:false, semAE:false, limite:ABAST_LIMITE_PADRAO },
+  limiteDigitado: null,   // valor digitado no campo e ainda não aplicado (só vale ao clicar em Buscar)
+  comp:null, base:null, cache:null
+};
 
 function abastToNum(v){
   if(v==null || v==="") return 0;
@@ -12248,57 +12246,129 @@ function abastRuaRange(ruaNum){
   return ABAST_RUAS.find(r=>r.min!=null && ruaNum>=r.min && ruaNum<=r.max) || ABAST_RUAS[ABAST_RUAS.length-1];
 }
 
-function abastCompute(processed, raw){
+// ---------------------------------------------------------------------------
+// Base: lê a 1707 e a 8022 Nova uma única vez por arquivo carregado
+// (os toggles e o limite de saldo baixo só refiltram, não relêem a planilha)
+// ---------------------------------------------------------------------------
+function abastBase(processed, raw){
+  const c = AbastState.cache;
+  if(c && c.raw === raw && c.processed === processed) return c.base;
+  const base = abastMontarBase(processed, raw);
+  AbastState.cache = { raw, processed, base };
+  return base;
+}
+
+function abastMontarBase(processed, raw){
   const aoa  = raw && raw["1707__aoa"];
   const nova = processed && processed.p8022Nova;
   if(!aoa)  return { erro:"A aba <strong>1707</strong> não foi encontrada no arquivo carregado." };
   if(!nova) return { erro:"A aba <strong>8022 Nova</strong> não foi encontrada no arquivo carregado." };
-  if(aoa.length < 1) return { erro:"A aba <strong>1707</strong> está vazia." };
+  if(!aoa.length) return { erro:"A aba <strong>1707</strong> está vazia." };
 
-  // A 1707 NÃO tem cabeçalho: posições fixas (A=endereço, J=código do produto, R=QTD DISP).
-  // Só pula a 1ª linha se ela for claramente um título (QTD DISP em texto não numérico).
-  const primeira = aoa[0] || [];
-  const q0 = primeira[ABAST_COL_QTD_DISP];
+  const largura = aoa.slice(0,300).reduce((m,r)=>Math.max(m, r ? r.length : 0), 0);
+  if(largura < ABAST_NUM_COLS){
+    return { erro:`A aba <strong>1707</strong> tem ${largura} colunas, mas a ordem combinada tem ${ABAST_NUM_COLS} (A a V, terminando em <em>Qtd Disp</em>).` +
+      (largura === 21 ? " Isso é o layout antigo do relatório, sem as colunas de tipo AE/PK." : "") +
+      " Carregue o arquivo com a 1707 no layout novo." };
+  }
+
+  // a 1707 não tem cabeçalho; só pula a 1ª linha se ela for claramente um título
+  const q0 = aoa[0] ? aoa[0][ABAST_COL_QTD_DISP] : null;
   const temTitulo = typeof q0 === "string" && q0.trim() !== "" && isNaN(Number(q0.replace(",",".")));
   const linhaInicial = temTitulo ? 1 : 0;
 
-  // --- 1707: QTD DISP somada por produto ---
-  const porProd = new Map(); // cod → total (todas as linhas do produto)
+  // 8022 Nova: uma linha por produto (prefere a que tem capacidade e QTUNITCX)
+  const score = n => (n.capacidade>0 ? 1 : 0) + (n.qtunitcx>0 ? 1 : 0);
+  const novaPorProd = new Map();
+  nova.forEach(n=>{
+    const a = novaPorProd.get(n.codprod);
+    if(!a || score(n) > score(a)) novaPorProd.set(n.codprod, n);
+  });
+
+  // 1707: soma Qtd Disp dos endereços PK de cada produto; guarda quais produtos têm endereço AE
+  const pkMap = new Map();      // cod → { qtd, n, end }
+  const aeSet = new Set();      // cods que aparecem em algum endereço AE
+  const tiposVistos = new Map();
+  const amostraCod = [];
+  let comProduto = 0, casamNova = 0, pkSemCadastro = 0;
   for(let i=linhaInicial; i<aoa.length; i++){
     const row = aoa[i];
     if(!row) continue;
     const cod = row[ABAST_COL_COD_PROD]!=null ? String(row[ABAST_COL_COD_PROD]).trim() : "";
-    if(!cod || cod === "0") continue; // código 0 = endereço vazio
-    porProd.set(cod, (porProd.get(cod)||0) + abastToNum(row[ABAST_COL_QTD_DISP]));
+    if(!cod || cod === "0") continue;                 // código 0 = endereço vazio
+    comProduto++;
+    if(amostraCod.length < 5) amostraCod.push(cod);
+    const naNova = novaPorProd.has(cod);
+    if(naNova) casamNova++;
+    const tipo = normStr(row[ABAST_COL_TIPO]);
+    tiposVistos.set(tipo, (tiposVistos.get(tipo)||0) + 1);
+    if(tipo === "PK"){
+      let p = pkMap.get(cod);
+      if(!p){ p = { qtd:0, n:0, end: row[ABAST_COL_END] }; pkMap.set(cod, p); }
+      p.qtd += abastToNum(row[ABAST_COL_QTD_DISP]);
+      p.n++;
+      if(!naNova) pkSemCadastro++;
+    } else if(tipo === "AE"){
+      aeSet.add(cod);
+    }
   }
 
-  // --- 8022 Nova: uma linha por produto (prefere a que tem capacidade) ---
-  const novaPorProd = new Map();
-  nova.forEach(n=>{
-    const atual = novaPorProd.get(n.codprod);
-    if(!atual || ((!(atual.capacidade>0)) && n.capacidade>0)) novaPorProd.set(n.codprod, n);
-  });
+  // conferências do layout: se a ordem das colunas não bate, avisa em vez de calcular errado
+  const tiposTxt = () => Array.from(tiposVistos.entries()).sort((a,b)=>b[1]-a[1]).slice(0,5)
+    .map(([t,n])=>`<code>${escapeHtml(t||"(vazio)")}</code> (${n})`).join(", ");
+  if(!comProduto){
+    return { erro:"Não encontrei códigos de produto na coluna <strong>G</strong> (Cod Prod) da aba <strong>1707</strong>. Confira a ordem das colunas." };
+  }
+  if(!(tiposVistos.get("PK") || tiposVistos.get("AE"))){
+    return { erro:`A coluna <strong>O</strong> (Tipo) da aba <strong>1707</strong> não tem valores <code>AE</code> nem <code>PK</code>. Valores encontrados: ${tiposTxt()}. Confira a ordem das colunas.` };
+  }
+  if(casamNova / comProduto < 0.3){
+    return { erro:`Poucos códigos da coluna <strong>G</strong> (Cod Prod) da aba <strong>1707</strong> existem na <strong>8022 Nova</strong> (${abastFN(casamNova,0)} de ${abastFN(comProduto,0)}). Exemplos lidos: ${amostraCod.map(c=>`<code>${escapeHtml(c)}</code>`).join(", ")}. Confira a ordem das colunas.` };
+  }
 
+  // um registro por produto da 8022 Nova
   const rows = [];
-  const embSemLeitura = new Map(); // texto → ocorrências (sem EMBALAGEMMASTER legível nem QTUNITCX)
-  let embPorQtunitcx = 0, ausentes1707 = 0, negativos = 0;
+  let negativos = 0, pkSemQtunitcx = 0;
   novaPorProd.forEach(n=>{
-    const bruto = porProd.get(n.codprod);
-    if(bruto === undefined) ausentes1707++;          // produto sem estoque na 1707 → picking vazio
-    if(bruto < 0) negativos++;
-    const qtd = Math.max(0, bruto || 0);             // QTD DISP negativa é tratada como 0
-    let unCx = abastParseEmbalagem(n.embalagem);
-    if(unCx == null && n.qtunitcx > 0){ unCx = n.qtunitcx; embPorQtunitcx++; } // reserva: QTUNITCX da 8022 Nova
-    if(unCx == null){ const k = n.embalagem || "(vazio)"; embSemLeitura.set(k, (embSemLeitura.get(k)||0)+1); }
+    const pk = pkMap.get(n.codprod);
+    const bruta = pk ? pk.qtd : 0;
+    if(bruta < 0) negativos++;
+    const qtdUn = Math.max(0, bruta);                         // QTD DISP negativa conta como 0
+    const fator = n.qtunitcx > 0 ? n.qtunitcx : null;         // unidades por caixa (QTUNITCX)
+    if(pk && !fator) pkSemQtunitcx += pk.n;
+    const caixas = fator ? qtdUn / fator : null;
     const cap = n.capacidade > 0 ? n.capacidade : null;
-    const caixas = unCx ? qtd / unCx : null;
     const pct = (caixas != null && cap != null) ? Math.round(caixas / cap * 10000) / 100 : null;
     const ruaNum = (() => { const d = String(n.rua==null ? "" : n.rua).replace(/\D/g,""); return d ? parseInt(d,10) : null; })();
     rows.push({
       codprod:n.codprod, descricao:n.descricao, rua:n.rua, ruaNum, predio:n.predio, apto:n.apto,
-      embalagem:n.embalagem, unCx, qtd, caixas, capacidade:cap, pct,
-      faixa: abastFaixaDe(pct), ruaRange: abastRuaRange(ruaNum), zerado: qtd <= 0
+      fator, qtd:qtdUn, caixas, capacidade:cap, pct,
+      faixa: abastFaixaDe(pct), ruaRange: abastRuaRange(ruaNum), zerado: qtdUn <= 0,
+      temAE: aeSet.has(n.codprod), temPK: !!pk, enderecosPK: pk ? pk.n : 0, codEnd: pk ? pk.end : null
     });
+  });
+
+  return { erro:null, rows, linhaInicial, negativos, pkSemCadastro, pkSemQtunitcx,
+           totalProdutos: rows.length, tiposIgnorados: Array.from(tiposVistos.entries()).filter(([t])=>t!=="PK" && t!=="AE") };
+}
+
+// ---------------------------------------------------------------------------
+// Cálculo: aplica toggles e limite sobre a base
+// ---------------------------------------------------------------------------
+function abastCompute(base, opts){
+  const lim = Number(opts.limite);
+  const ehNaoRevenda = r => ABAST_RUAS_NAO_REVENDA.includes(r.ruaNum);
+  // saldo baixo = produto SÓ com picking (sem AE), com endereço PK ocupado e até `lim` caixas
+  const ehSaldoBaixo = r => !r.temAE && r.temPK && r.caixas != null && r.caixas <= lim;
+
+  // ---- nível de abastecimento (afetado pelos 3 toggles) ----
+  const fora = { naoRevenda:0, semAE:0, saldoBaixo:0 };
+  const rows = [];
+  base.rows.forEach(r=>{
+    if(!opts.naoRevenda && ehNaoRevenda(r)){ fora.naoRevenda++; return; }
+    if(!opts.semAE && !r.temAE){ fora.semAE++; return; }
+    if(!opts.saldoBaixo && ehSaldoBaixo(r)){ fora.saldoBaixo++; return; }
+    rows.push(r);
   });
   rows.sort((a,b)=> (a.pct==null?1e9:a.pct) - (b.pct==null?1e9:b.pct));
 
@@ -12333,17 +12403,23 @@ function abastCompute(processed, raw){
     ruaNum: k, ruaLabel: k>=0 ? String(k) : "—", ...agrega(lista)
   })).sort((a,b)=> (a.ponderado==null?1e9:a.ponderado) - (b.ponderado==null?1e9:b.ponderado));
 
-  let semCadastro = 0;
-  porProd.forEach((_,cod)=>{ if(!novaPorProd.has(cod)) semCadastro++; });
+  // ---- saldo baixo (só a regra das ruas 48/49 vale aqui; AE e saldo baixo são o próprio critério) ----
+  const pkBase = base.rows.filter(r=> r.temPK && r.fator && (opts.naoRevenda || !ehNaoRevenda(r)));
+  const soma = lista => lista.reduce((s,r)=>s+r.enderecosPK, 0);
+  const baixos = pkBase.filter(ehSaldoBaixo)
+    .sort((a,b)=> (a.caixas - b.caixas) || String(a.codprod).localeCompare(String(b.codprod), undefined, {numeric:true}));
+  const pkOcupados = soma(pkBase), pkSemAE = soma(pkBase.filter(r=>!r.temAE)), pkBaixos = soma(baixos);
 
   return {
-    erro:null, rows, ausentes1707, negativos, embPorQtunitcx, linhaInicial,
+    erro:null, rows, fora,
     total: rows.length, calculados: calculados.length,
     ponderadoGeral: somaCap > 0 ? somaCx / somaCap * 100 : null,
     zerados: rows.filter(r=>r.zerado).length,
     somaCx, somaCap,
-    porFaixa, porRuaRange, porRua, semCadastro,
-    embSemLeitura: Array.from(embSemLeitura.entries()).sort((a,b)=>b[1]-a[1])
+    porFaixa, porRuaRange, porRua,
+    ausentes: rows.filter(r=>!r.temPK).length,
+    semCalculo: rows.filter(r=>r.pct == null),
+    saldo: { baixos, pkOcupados, pkSemAE, pkBaixos, pct: pkOcupados ? pkBaixos / pkOcupados * 100 : null, limite: lim }
   };
 }
 
@@ -12365,6 +12441,11 @@ function abastLinhasFiltradas(){
   });
 }
 
+function abastBarraHtml(r){
+  if(r.pct == null) return "—";
+  return `<div class="abast-bar"><div class="abast-track"><div class="abast-fill" style="width:${Math.min(100, Math.max(0, r.pct))}%;background:${r.faixa.cor};"></div></div><span class="abast-bar-txt" style="color:${r.faixa.cor};">${abastFP(r.pct)}</span></div>`;
+}
+
 function renderAbastecimentoPicking(){
   const pane = $("#pane-abastecimento");
   if(!pane) return;
@@ -12375,14 +12456,40 @@ function renderAbastecimentoPicking(){
     return;
   }
 
-  const c = abastCompute(processed, raw);
-  AbastState.comp = c;
-  if(c.erro){
-    pane.innerHTML = `<div class="panel"><div class="panel-header"><h3>Abastecimento do Picking</h3></div><div class="cap-aviso">⚠️ ${c.erro}</div></div>`;
+  const base = abastBase(processed, raw);
+  AbastState.base = base;
+  if(base.erro){
+    AbastState.comp = null;
+    pane.innerHTML = `<div class="panel-header"><h3 style="font-size:18px;">Abastecimento do Picking</h3></div><div class="cap-aviso" style="line-height:1.6;">⚠️ ${base.erro}</div>`;
     return;
   }
 
-  // Mesmo padrão de cards das outras abas (.cards-grid / .card), só com azul, verde, laranja e vermelho.
+  const o = AbastState.opts;
+  const c = abastCompute(base, o);
+  AbastState.comp = c;
+  const s = c.saldo;
+
+  // ---- barra de controles (toggles + critério de saldo baixo) ----
+  const tg = (chave, rotulo, valor, dica) => `
+      <div class="filter-group" title="${escapeHtml(dica)}">
+        <label>${rotulo}</label>
+        <div class="toggle-group" style="width:fit-content;">
+          <button class="${valor?"active":""}" onclick="abastSetToggle('${chave}',true)">Sim</button>
+          <button class="${!valor?"active":""}" onclick="abastSetToggle('${chave}',false)">Não</button>
+        </div>
+      </div>`;
+  const limiteCampo = AbastState.limiteDigitado != null ? AbastState.limiteDigitado : String(o.limite);
+
+  const foraTxt = [
+    c.fora.semAE      ? `${abastFN(c.fora.semAE,0)} sem AE` : "",
+    c.fora.naoRevenda ? `${abastFN(c.fora.naoRevenda,0)} das ruas 48 e 49` : "",
+    c.fora.saldoBaixo ? `${abastFN(c.fora.saldoBaixo,0)} com saldo baixo` : ""
+  ].filter(Boolean).join(" · ");
+  const infoToolbar = `Considerando <b>${abastFN(c.total,0)}</b> de ${abastFN(base.totalProdutos,0)} produtos da 8022 Nova${foraTxt ? ` · fora do cálculo: ${foraTxt}` : ""}.
+    Saldo baixo = produto só com picking (sem AE) com até ${abastFN(s.limite,1)} caixas.
+    “Considerar Não Revenda?” (ruas 48 e 49) vale para a aba toda; “Considerar Itens AE?” (Sim = inclui produtos sem AE) e “Considerar saldo baixo?” valem para o nível de abastecimento.`;
+
+  // Mesmo padrão de cards das outras abas (.cards-grid / .card)
   const mkCard = (id, label, valor, sub, tom, tipo, extra) => {
     const ativo = ((tipo==="faixa" && AbastState.faixa===id) || (tipo==="rua" && AbastState.rua===id)) ? " abast-ativo" : "";
     const attr  = tipo==="faixa" ? ` data-faixa="${id}" onclick="abastSetFaixa('${id}')"`
@@ -12427,27 +12534,37 @@ function renderAbastecimentoPicking(){
       <td>${abastFN(r.zerados,0)}</td>
     </tr>`).join("");
 
-  const avisoEmb = c.embSemLeitura.length ? `
-    <div class="cap-aviso-inline">⚠️ ${abastFN(c.embSemLeitura.reduce((s,x)=>s+x[1],0),0)} item(ns) com EMBALAGEMMASTER que não consegui interpretar (ficam em “Sem cálculo”):
-    ${c.embSemLeitura.slice(0,8).map(([t,n])=>`<code>${escapeHtml(t)}</code> (${n})`).join(", ")}${c.embSemLeitura.length>8?" …":""}</div>` : "";
+  // ---- cards do saldo baixo ----
+  const cardsSaldo =
+    mkCard("pko", "PK ocupados", abastFN(s.pkOcupados,0), "endereços de picking com produto", "", "info") +
+    mkCard("pka", "PK sem AE", abastFN(s.pkSemAE,0), "só existe o que está no picking", "", "info") +
+    mkCard("pkb", "PK com saldo baixo", abastFN(s.pkBaixos,0), `sem AE e até ${abastFN(s.limite,1)} cx`, s.pkBaixos ? "neg" : "pos", "info") +
+    mkCard("pkp", "% com saldo baixo", abastFP(s.pct), "dos PK ocupados", s.pkBaixos ? "warn" : "pos", "info");
 
+  // ---- pontos para conferir (discreto) ----
   const nAcima = c.porFaixa.acima || 0;
+  const semCalc = c.semCalculo.length;
   const pontos = [
     nAcima ? `<li><b>${abastFN(nAcima,0)} itens acima de 100%</b> (${abastFP(c.total ? nAcima/c.total*100 : 0)} do picking). Indica picking acima do limite ou capacidade desatualizada. A conta assume que a CAPACIDADE da 8022 Nova está em caixas. <a href="#" onclick="abastSetFaixa('acima');return false;">ver itens</a></li>` : "",
-    c.ausentes1707 ? `<li><b>${abastFN(c.ausentes1707,0)} produtos da 8022 Nova não aparecem na 1707</b> e contam como 0% (supõe-se que estão sem estoque no picking).</li>` : "",
-    c.semCadastro ? `<li><b>${abastFN(c.semCadastro,0)} produtos da 1707 não estão na 8022 Nova</b> e ficaram de fora do cálculo.</li>` : ""
+    semCalc ? `<li><b>${abastFN(semCalc,0)} produtos sem cálculo</b> (sem QTUNITCX ou sem CAPACIDADE na 8022 Nova). Ex.: ${c.semCalculo.slice(0,5).map(r=>`<code>${escapeHtml(r.codprod)}</code>`).join(", ")}</li>` : "",
+    c.ausentes ? `<li><b>${abastFN(c.ausentes,0)} produtos da 8022 Nova sem endereço PK com estoque na 1707</b> contam como 0%.</li>` : "",
+    base.pkSemCadastro ? `<li><b>${abastFN(base.pkSemCadastro,0)} endereços PK da 1707 são de produtos que não estão na 8022 Nova</b> e ficaram de fora do cálculo.</li>` : "",
+    base.pkSemQtunitcx ? `<li><b>${abastFN(base.pkSemQtunitcx,0)} endereços PK</b> de produtos sem QTUNITCX na 8022 Nova não puderam ser convertidos em caixas.</li>` : ""
   ].filter(Boolean);
   const blocoPontos = pontos.length ? `
     <details class="abast-pontos"><summary>⚠ ${pontos.length} ponto${pontos.length>1?"s":""} para conferir</summary><ul>${pontos.join("")}</ul></details>` : "";
 
   const notas = [
-    `Aba 1707 sem cabeçalho, lida por posição: coluna J = código do produto, coluna R = QTD DISP (soma das linhas de cada produto; código 0 = endereço vazio é ignorado).`,
-    `Unidades por caixa: primeiro número de EMBALAGEMMASTER da 8022 Nova (ex.: CX12UN → 12, FD24UN275ML → 24, UN → 1).${c.embPorQtunitcx ? ` Em ${abastFN(c.embPorQtunitcx,0)} item(ns) sem EMBALAGEMMASTER legível usei QTUNITCX.` : ""}`,
-    `Qtd disp (cx) = QTD DISP (un) ÷ unidades por caixa. % abastecido = Qtd disp (cx) ÷ CAPACIDADE da 8022 Nova.`,
-    `Nas ruas e intervalos de ruas o percentual é ponderado: soma das caixas ÷ soma das capacidades.`,
-    c.ausentes1707 ? `${abastFN(c.ausentes1707,0)} produto(s) da 8022 Nova não aparecem na 1707 (sem estoque): contam como 0%.` : "",
-    c.negativos ? `${abastFN(c.negativos,0)} produto(s) com QTD DISP negativa na 1707: tratados como 0.` : "",
-    c.semCadastro ? `${abastFN(c.semCadastro,0)} produto(s) da 1707 não estão na 8022 Nova e foram ignorados.` : ""
+    `1707 sem cabeçalho, lida por posição: coluna G = Cod Prod, O = Tipo (AE ou PK) e V = Qtd Disp. Código de produto 0 = endereço vazio e é ignorado.`,
+    `Qtd Disp em unidades = soma dos endereços <b>PK</b> do produto. Caixas = Qtd Disp ÷ QTUNITCX (8022 Nova). Nível de abastecimento = caixas ÷ CAPACIDADE (8022 Nova).`,
+    `O produto “tem AE” quando existe ao menos um endereço de Tipo AE com o código dele na 1707.`,
+    `Considerar Itens AE? Não = só entram produtos que têm AE. Sim = entram também os que não têm.`,
+    `Considerar Não Revenda? Não = ignora as ruas 48 e 49 em toda a aba, inclusive no saldo baixo.`,
+    `Saldo baixo = produto sem AE, com endereço PK ocupado e caixas igual ou abaixo do limite. Considerar saldo baixo? Não = esses produtos saem do nível de abastecimento. Só faz diferença quando “Considerar Itens AE?” está em Sim, porque saldo baixo é sempre de produto sem AE.`,
+    `PK ocupado = endereço de Tipo PK com produto, de produto cadastrado na 8022 Nova com QTUNITCX.`,
+    `Nas ruas e intervalos de ruas o percentual é ponderado: soma das caixas ÷ soma das capacidades. Rua e prédio vêm da 8022 Nova.`,
+    base.negativos ? `${abastFN(base.negativos,0)} produto(s) com Qtd Disp negativa na 1707 foram tratados como 0.` : "",
+    base.tiposIgnorados.length ? `Linhas com Tipo diferente de AE e PK foram ignoradas: ${base.tiposIgnorados.map(([t,n])=>`${escapeHtml(t||"(vazio)")} (${n})`).join(", ")}.` : ""
   ].filter(Boolean).map(t=>`<li>${t}</li>`).join("");
 
   pane.innerHTML = `
@@ -12455,6 +12572,21 @@ function renderAbastecimentoPicking(){
       <h3 style="font-size:18px;">Abastecimento do Picking</h3>
       <div class="panel-actions"><button class="btn btn-outline btn-sm" onclick="abastExportar()">⤓ Exportar Excel</button></div>
     </div>
+
+    <div class="toolbar" id="abast-toolbar" style="margin-bottom:8px;">
+      <div class="filter-group" title="Produtos só com picking (sem AE) com esta quantidade de caixas ou menos são saldo baixo">
+        <label>Saldo baixo: até (caixas)</label>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input type="number" id="abast-limite" min="0" step="any" value="${escapeHtml(limiteCampo)}" style="width:90px;"
+                 oninput="AbastState.limiteDigitado=this.value" onkeydown="if(event.key==='Enter'){abastBuscar();}">
+          <button class="btn btn-primary btn-sm" onclick="abastBuscar()">Buscar</button>
+        </div>
+      </div>
+      ${tg("saldoBaixo","Considerar saldo baixo?", o.saldoBaixo, "Sim = produtos com saldo baixo entram no nível de abastecimento. Não = ficam fora de tudo.")}
+      ${tg("naoRevenda","Considerar Não Revenda?", o.naoRevenda, "Sim = inclui as ruas 48 e 49. Não = essas ruas ficam fora do cálculo.")}
+      ${tg("semAE","Considerar Itens AE?", o.semAE, "Não = só produtos que têm endereço AE. Sim = inclui também os produtos sem AE.")}
+    </div>
+    <div class="panel-note" style="margin:0 2px 16px;line-height:1.5;">${infoToolbar}</div>
 
     <div class="cards-grid">${cardsResumo}</div>
 
@@ -12492,7 +12624,6 @@ function renderAbastecimentoPicking(){
       </div>
     </div>
 
-    ${avisoEmb}
     ${blocoPontos}
 
     <div class="panel" id="abast-lista">
@@ -12505,11 +12636,24 @@ function renderAbastecimentoPicking(){
       <div id="abast-tabela"></div>
     </div>
 
+    <div class="panel" id="abast-saldo">
+      <div class="panel-header">
+        <h3>Saldo baixo no picking</h3>
+        <div class="panel-actions">
+          <span class="panel-note">produtos só com picking (sem AE) com até ${abastFN(s.limite,1)} caixas</span>
+          <button class="btn btn-outline btn-sm" onclick="abastExportarSaldo()">⤓ Exportar Excel</button>
+        </div>
+      </div>
+      <div class="cards-grid">${cardsSaldo}</div>
+      <div id="abast-saldo-lista"></div>
+    </div>
+
     <details class="abast-notas"><summary>Como o cálculo é feito</summary><ul>${notas}</ul></details>`;
 
   abastDesenharGrafico(c);
   abastDesenharGraficoRuas(c);
   abastAtualizarLista();
+  abastDesenharSaldo();
 }
 
 // Faixas de abastecimento por intervalo de ruas (barras empilhadas)
@@ -12595,10 +12739,6 @@ function abastAtualizarLista(){
   if(!c || !wrap) return;
   const lista = abastLinhasFiltradas();
   const LIMITE = AbastState.mostrarTodos ? Infinity : 1000;
-  const barra = r => {
-    if(r.pct == null) return "—";
-    return `<div class="abast-bar"><div class="abast-track"><div class="abast-fill" style="width:${Math.min(100, Math.max(0, r.pct))}%;background:${r.faixa.cor};"></div></div><span class="abast-bar-txt" style="color:${r.faixa.cor};">${abastFP(r.pct)}</span></div>`;
-  };
   const corpo = lista.slice(0, LIMITE).map(r=>`
     <tr>
       <td>${escapeHtml(r.codprod)}</td>
@@ -12606,19 +12746,20 @@ function abastAtualizarLista(){
       <td>${escapeHtml(r.rua==null?"":r.rua)}</td>
       <td>${escapeHtml(r.predio==null?"":r.predio)}</td>
       <td>${escapeHtml(r.apto==null?"":r.apto)}</td>
-      <td>${escapeHtml(r.embalagem||"")}</td>
+      <td>${r.temAE ? "Sim" : "Não"}</td>
+      <td>${r.fator==null ? "—" : abastFN(r.fator,0)}</td>
       <td>${abastFN(r.capacidade,0)}</td>
       <td>${abastFN(r.caixas,1)}</td>
       <td>${abastFN(r.qtd,0)}</td>
-      <td>${barra(r)}</td>
+      <td>${abastBarraHtml(r)}</td>
     </tr>`).join("");
 
   const cortado = lista.length > LIMITE;
   wrap.innerHTML = `
     <div class="table-wrap" style="max-height:540px;overflow:auto;">
       <table class="data-table">
-        <thead><tr><th>Cód.</th><th>Descrição</th><th>Rua</th><th>Prédio</th><th>Apto</th><th>Embalagem</th><th>Capacidade (cx)</th><th>Qtd disp (cx)</th><th>Qtd disp (un)</th><th>% Abastecido</th></tr></thead>
-        <tbody>${corpo || `<tr><td colspan="10" style="text-align:center;color:#7a8798;padding:24px;">Nenhum item com os filtros atuais.</td></tr>`}</tbody>
+        <thead><tr><th>Cód.</th><th>Descrição</th><th>Rua</th><th>Prédio</th><th>Apto</th><th>Tem AE</th><th>Un/Cx</th><th>Capacidade (cx)</th><th>Qtd disp (cx)</th><th>Qtd disp (un)</th><th>% Abastecido</th></tr></thead>
+        <tbody>${corpo || `<tr><td colspan="11" style="text-align:center;color:#7a8798;padding:24px;">Nenhum item com os filtros atuais.</td></tr>`}</tbody>
       </table>
     </div>
     <div class="panel-note" style="margin-top:8px;">${abastFN(lista.length,0)} item(ns)${cortado ? ` — mostrando os ${abastFN(LIMITE,0)} menos abastecidos. <a href="#" onclick="abastMostrarTodos();return false;">mostrar todos</a> (ou use Exportar Excel)` : ""}</div>`;
@@ -12634,7 +12775,60 @@ function abastAtualizarLista(){
   $all(".card[data-rua]").forEach(el=> el.classList.toggle("abast-ativo", el.dataset.rua===AbastState.rua));
 }
 
+// Lista exclusiva de saldo baixo: produtos só com picking, com caixas <= limite, do menor para o maior
+function abastDesenharSaldo(){
+  const c = AbastState.comp;
+  const wrap = $("#abast-saldo-lista");
+  if(!c || !wrap) return;
+  const lista = c.saldo.baixos;
+  const LIMITE = AbastState.mostrarTodosSaldo ? Infinity : 1000;
+  const corpo = lista.slice(0, LIMITE).map(r=>`
+    <tr>
+      <td>${escapeHtml(r.codprod)}</td>
+      <td>${escapeHtml(r.descricao)}</td>
+      <td>${escapeHtml(r.rua==null?"":r.rua)}</td>
+      <td>${escapeHtml(r.predio==null?"":r.predio)}</td>
+      <td>${escapeHtml(r.apto==null?"":r.apto)}</td>
+      <td>${r.fator==null ? "—" : abastFN(r.fator,0)}</td>
+      <td>${abastFN(r.capacidade,0)}</td>
+      <td><b>${abastFN(r.caixas,1)}</b></td>
+      <td>${abastFN(r.qtd,0)}</td>
+      <td>${abastBarraHtml(r)}</td>
+    </tr>`).join("");
+  const cortado = lista.length > LIMITE;
+  wrap.innerHTML = `
+    <div class="table-wrap" style="max-height:480px;overflow:auto;">
+      <table class="data-table">
+        <thead><tr><th>Cód.</th><th>Descrição</th><th>Rua</th><th>Prédio</th><th>Apto</th><th>Un/Cx</th><th>Capacidade (cx)</th><th>Qtd disp (cx)</th><th>Qtd disp (un)</th><th>% Abastecido</th></tr></thead>
+        <tbody>${corpo || `<tr><td colspan="10" style="text-align:center;color:#7a8798;padding:24px;">Nenhum produto sem AE com até ${abastFN(c.saldo.limite,1)} caixas.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="panel-note" style="margin-top:8px;">${abastFN(lista.length,0)} produto(s)${cortado ? ` — mostrando os ${abastFN(LIMITE,0)} com menos caixas. <a href="#" onclick="abastMostrarTodosSaldo();return false;">mostrar todos</a> (ou use Exportar Excel)` : ""}</div>`;
+}
+
+function abastSetToggle(chave, valor){
+  AbastState.opts[chave] = !!valor;
+  AbastState.mostrarTodos = false; AbastState.mostrarTodosSaldo = false;
+  renderAbastecimentoPicking();
+}
+
+// Aplica o limite digitado (campo "Saldo baixo: até (caixas)") e recalcula a aba
+function abastBuscar(){
+  const campo = $("#abast-limite");
+  const txt = campo ? String(campo.value).replace(",", ".").trim() : String(AbastState.opts.limite);
+  const n = Number(txt);
+  if(txt === "" || !isFinite(n) || n < 0){
+    toast("Digite uma quantidade de caixas válida (0 ou mais).", "error");
+    return;
+  }
+  AbastState.opts.limite = n;
+  AbastState.limiteDigitado = null;
+  AbastState.mostrarTodos = false; AbastState.mostrarTodosSaldo = false;
+  renderAbastecimentoPicking();
+}
+
 function abastMostrarTodos(){ AbastState.mostrarTodos = true; abastAtualizarLista(); }
+function abastMostrarTodosSaldo(){ AbastState.mostrarTodosSaldo = true; abastDesenharSaldo(); }
 function abastSetFaixa(id){ AbastState.faixa = AbastState.faixa===id ? "" : id; abastAtualizarLista(); }
 function abastSetRua(id){ AbastState.rua = AbastState.rua===id ? "" : id; AbastState.ruaExata = ""; abastAtualizarLista(); }
 function abastSetRuaExata(n){ AbastState.ruaExata = AbastState.ruaExata===String(n) ? "" : String(n); AbastState.rua = ""; abastAtualizarLista(); }
@@ -12650,13 +12844,28 @@ function abastExportar(){
   if(!lista.length){ toast("Nada para exportar com os filtros atuais.", "error"); return; }
   const dados = lista.map(r=>({
     "CODPROD": r.codprod, "DESCRIÇÃO": r.descricao, "RUA": r.rua, "PRÉDIO": r.predio, "APTO": r.apto,
-    "EMBALAGEMMASTER": r.embalagem, "UN POR CAIXA": r.unCx,
+    "TEM AE": r.temAE ? "SIM" : "NÃO", "UN POR CAIXA (QTUNITCX)": r.fator,
     "CAPACIDADE (CX)": r.capacidade,
     "QTD DISP (CX)": r.caixas==null ? null : Math.round(r.caixas*100)/100,
     "QTD DISP (UN)": r.qtd,
     "% ABASTECIDO": r.pct, "FAIXA": r.faixa.label
   }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dados), "Abastecimento Picking");
-  XLSX.writeFile(wb, "Abastecimento_Picking.xlsx");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dados), "Nivel Abastecimento");
+  XLSX.writeFile(wb, "Nivel_Abastecimento.xlsx");
+}
+
+function abastExportarSaldo(){
+  const c = AbastState.comp;
+  const lista = c ? c.saldo.baixos : [];
+  if(!lista.length){ toast("Nenhum produto com saldo baixo para exportar.", "error"); return; }
+  const dados = lista.map(r=>({
+    "CODPROD": r.codprod, "DESCRIÇÃO": r.descricao, "RUA": r.rua, "PRÉDIO": r.predio, "APTO": r.apto,
+    "UN POR CAIXA (QTUNITCX)": r.fator, "CAPACIDADE (CX)": r.capacidade,
+    "QTD DISP (CX)": r.caixas==null ? null : Math.round(r.caixas*100)/100,
+    "QTD DISP (UN)": r.qtd, "% ABASTECIDO": r.pct
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dados), "Saldo Baixo");
+  XLSX.writeFile(wb, "Saldo_Baixo_Picking.xlsx");
 }
