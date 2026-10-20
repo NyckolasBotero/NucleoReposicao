@@ -12207,7 +12207,7 @@ function renderOrganograma(){
 /* ======================================================================== */
 /* MODULE: Nível de Abastecimento do Picking                                 */
 /* Qtd Disp dos endereços PK (1707) ÷ QTUNITCX (8022 Nova) = caixas          */
-/* caixas ÷ CAPACIDADE (8022 Nova) = nível de abastecimento                  */
+/* caixas ÷ Cap Pick (1707 col. N) = nível de abastecimento                  */
 /* ======================================================================== */
 // 1707 sem cabeçalho, nesta ordem de colunas:
 // A Cod End | B Rua | C Prédio | D Nível | E Apto | F Status | G Cod Prod | H Desc Prod | I Bloq | J Dt Val |
@@ -12215,6 +12215,7 @@ function renderOrganograma(){
 // T Pend Entrada | U Pend Saída | V Qtd Disp
 const ABAST_COL_END      = 0;   // A
 const ABAST_COL_RUA      = 1;   // B
+const ABAST_COL_CAP_PICK = 13;  // N  (Cap Pick = capacidade do picking, em caixas)
 const ABAST_COL_COD_PROD = 6;   // G
 const ABAST_COL_TIPO     = 14;  // O  (AE = aéreo, AP/PK = picking)
 const ABAST_COL_QTD_DISP = 21;  // V
@@ -12325,8 +12326,9 @@ function abastMontarBase(processed, raw){
     tiposVistos.set(tipo, (tiposVistos.get(tipo)||0) + 1);
     if(tipo === "PK"){
       let p = pkMap.get(cod);
-      if(!p){ p = { qtd:0, n:0, end: row[ABAST_COL_END], rua: abastToNum(row[ABAST_COL_RUA]) || null }; pkMap.set(cod, p); }
+      if(!p){ p = { qtd:0, n:0, end: row[ABAST_COL_END], rua: abastToNum(row[ABAST_COL_RUA]) || null, cap:0 }; pkMap.set(cod, p); }
       p.qtd += abastToNum(row[ABAST_COL_QTD_DISP]);
+      p.cap += abastToNum(row[ABAST_COL_CAP_PICK]);
       p.n++;
       if(!naNova) pkSemCadastro++;
     } else if(tipo === "AE"){
@@ -12358,7 +12360,8 @@ function abastMontarBase(processed, raw){
     const fator = n.qtunitcx > 0 ? n.qtunitcx : null;         // unidades por caixa (QTUNITCX)
     if(pk && !fator) pkSemQtunitcx += pk.n;
     const caixas = fator ? qtdUn / fator : null;
-    const cap = n.capacidade > 0 ? n.capacidade : null;
+    // capacidade: Cap Pick (coluna N) do(s) endereço(s) PK da 1707; se faltar, usa a CAPACIDADE da 8022 Nova
+    const cap = (pk && pk.cap > 0) ? pk.cap : (n.capacidade > 0 ? n.capacidade : null);
     const pct = (caixas != null && cap != null) ? Math.round(caixas / cap * 10000) / 100 : null;
     const ruaNum = (pk && pk.rua) ? pk.rua : (() => { const d = String(n.rua==null ? "" : n.rua).replace(/\D/g,""); return d ? parseInt(d,10) : null; })();
     rows.push({
@@ -12566,7 +12569,7 @@ function renderAbastecimentoPicking(){
   const nAcima = c.porFaixa.acima || 0;
   const semCalc = c.semCalculo.length;
   const pontos = [
-    nAcima ? `<li><b>${abastFN(nAcima,0)} itens acima de 100%</b> (${abastFP(c.total ? nAcima/c.total*100 : 0)} do picking). Indica picking acima do limite ou capacidade desatualizada. A conta assume que a CAPACIDADE da 8022 Nova está em caixas. <a href="#" onclick="abastSetFaixa('acima');return false;">ver itens</a></li>` : "",
+    nAcima ? `<li><b>${abastFN(nAcima,0)} itens acima de 100%</b> (${abastFP(c.total ? nAcima/c.total*100 : 0)} do picking). Indica picking acima do limite ou capacidade desatualizada. A capacidade usada é o Cap Pick da 1707 (coluna N). <a href="#" onclick="abastSetFaixa('acima');return false;">ver itens</a></li>` : "",
     semCalc ? `<li><b>${abastFN(semCalc,0)} produtos sem cálculo</b> (sem QTUNITCX ou sem CAPACIDADE na 8022 Nova). Ex.: ${c.semCalculo.slice(0,5).map(r=>`<code>${escapeHtml(r.codprod)}</code>`).join(", ")}</li>` : "",
     c.ausentes ? `<li><b>${abastFN(c.ausentes,0)} produtos da 8022 Nova sem endereço PK com estoque na 1707</b> contam como 0%.</li>` : "",
     base.pkSemCadastro ? `<li><b>${abastFN(base.pkSemCadastro,0)} endereços PK da 1707 são de produtos que não estão na 8022 Nova</b> e ficaram de fora do cálculo.</li>` : "",
@@ -12577,13 +12580,13 @@ function renderAbastecimentoPicking(){
 
   const notas = [
     `1707 sem cabeçalho, lida por posição: coluna G = Cod Prod, O = Tipo (AE ou AP/PK) e V = Qtd Disp. Código de produto 0 = endereço vazio e é ignorado.`,
-    `Qtd Disp em unidades = soma dos endereços <b>PK</b> do produto. Caixas = Qtd Disp ÷ QTUNITCX (8022 Nova). Nível de abastecimento = caixas ÷ CAPACIDADE (8022 Nova).`,
+    `Qtd Disp em unidades = soma dos endereços <b>PK</b> do produto. Caixas = Qtd Disp ÷ QTUNITCX (8022 Nova). Nível de abastecimento = caixas ÷ Cap Pick (coluna N da 1707; se faltar, CAPACIDADE da 8022 Nova).`,
     `O produto “tem AE” quando existe ao menos um endereço de Tipo AE com o código dele na 1707.`,
     `Não considerar itens sem AE? Sim = só entram produtos que têm AE (produtos só com AP saem do cálculo). Não = entram também os que não têm AE.`,
     `Considerar Não Revenda? Não = ignora as ruas acima da 47 em toda a aba, inclusive no saldo baixo.`,
     `Saldo baixo = produto sem AE, com endereço PK ocupado e caixas igual ou abaixo do limite. Considerar saldo baixo? Não = esses produtos saem do nível de abastecimento. Só faz diferença quando “Não considerar itens sem AE?” está em Não, porque saldo baixo é sempre de produto sem AE.`,
     `PK ocupado = endereço de Tipo PK com produto, de produto cadastrado na 8022 Nova com QTUNITCX.`,
-    `Nas ruas e intervalos de ruas o percentual é ponderado: soma das caixas ÷ soma das capacidades. Rua e prédio vêm da 8022 Nova.`,
+    `Nas ruas e intervalos de ruas o percentual é ponderado: soma das caixas ÷ soma das capacidades. A rua vem da coluna B da 1707.`,
     base.negativos ? `${abastFN(base.negativos,0)} produto(s) com Qtd Disp negativa na 1707 foram tratados como 0.` : "",
     base.tiposIgnorados.length ? `Linhas com Tipo diferente de AE e PK foram ignoradas: ${base.tiposIgnorados.map(([t,n])=>`${escapeHtml(t||"(vazio)")} (${n})`).join(", ")}.` : ""
   ].filter(Boolean).map(t=>`<li>${t}</li>`).join("");
@@ -12623,7 +12626,7 @@ function renderAbastecimentoPicking(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>📊 Abastecimento por Rua — % da capacidade (8022 Nova)</h3>
+        <h3>📊 Abastecimento por Rua — % da capacidade (Cap Pick, 1707)</h3>
         <span class="panel-note">a parte escura mostra o % abastecido, preenchendo de baixo para cima · clique na barra para filtrar a lista</span>
       </div>
       <div class="chart-wrap tall"><canvas id="abast-chart-rua-pct"></canvas></div>
