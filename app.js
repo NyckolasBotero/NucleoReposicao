@@ -2214,7 +2214,22 @@ const Charts = {
   destroy(id){
     if(this.instances[id]){ this.instances[id].destroy(); delete this.instances[id]; }
   },
+  // destrói gráficos cujo <canvas> saiu do DOM (painel redesenhado): evita listeners/tooltip órfãos
+  purgeOrfaos(){
+    Object.keys(this.instances).forEach(k=>{
+      const ch = this.instances[k];
+      if(!ch || !ch.canvas || !document.body.contains(ch.canvas)){ try{ ch && ch.destroy(); }catch(e){} delete this.instances[k]; }
+    });
+  },
+  // painéis ocultos (display:none) medem 0x0; ao exibir, força o recálculo do tamanho
+  resizeAll(){
+    requestAnimationFrame(()=>{
+      this.purgeOrfaos();
+      Object.values(this.instances).forEach(ch=>{ try{ ch.resize(); ch.update("none"); }catch(e){} });
+    });
+  },
   make(id, config){
+    this.purgeOrfaos();
     this.destroy(id);
     const el = document.getElementById(id);
     if(!el) return;
@@ -2971,7 +2986,12 @@ function activateSortableAll(){
   document.querySelectorAll("table.data-table").forEach(makeSortable);
 }
 // Observa mudanças no DOM para ativar em tabelas criadas dinamicamente
-const _sortObs = new MutationObserver(()=> activateSortableAll());
+let _sortPend = false;   // agrupa várias mutações num único passe (evita travar com tabelas grandes)
+const _sortObs = new MutationObserver(()=>{
+  if(_sortPend) return;
+  _sortPend = true;
+  requestAnimationFrame(()=>{ _sortPend = false; activateSortableAll(); });
+});
 
 /* ---------------------------------------------------------------------- */
 /* MODULE: UI                                                              */
@@ -3118,8 +3138,9 @@ const UI = {
     const items = this.subnavConfig[view];
     this.currentPane = items[0].id;
     this.buildSubnav();
+    $("#pane-"+this.currentPane).classList.add("active");   // visível antes de desenhar os gráficos
     this.renderPane(this.currentPane);
-    $("#pane-"+this.currentPane).classList.add("active");
+    Charts.resizeAll();
   },
 
   switchPane(pane){
@@ -3131,6 +3152,7 @@ const UI = {
     $all(".pane").forEach(p=>p.classList.remove("active"));
     $("#pane-"+pane).classList.add("active");
     this.renderPane(pane);
+    Charts.resizeAll();
   },
 
   renderPane(pane){
