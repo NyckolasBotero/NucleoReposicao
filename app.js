@@ -12195,11 +12195,12 @@ function renderOrganograma(){
 // K Bem | L Lastro | M Camada | N Cap Pick | O Tipo | P Palete Pick | Q Palete End | R Qtd Tot | S Qtd |
 // T Pend Entrada | U Pend Saída | V Qtd Disp
 const ABAST_COL_END      = 0;   // A
+const ABAST_COL_RUA      = 1;   // B
 const ABAST_COL_COD_PROD = 6;   // G
 const ABAST_COL_TIPO     = 14;  // O  (AE = aéreo, AP/PK = picking)
 const ABAST_COL_QTD_DISP = 21;  // V
 const ABAST_NUM_COLS     = 22;
-const ABAST_RUAS_NAO_REVENDA = [48, 49];
+const ABAST_RUA_MAX_REVENDA = 47;   // ruas acima da 47 (coluna B da 1707) são Não Revenda
 const ABAST_LIMITE_PADRAO = 5;
 
 const ABAST_FAIXAS = [
@@ -12305,7 +12306,7 @@ function abastMontarBase(processed, raw){
     tiposVistos.set(tipo, (tiposVistos.get(tipo)||0) + 1);
     if(tipo === "PK"){
       let p = pkMap.get(cod);
-      if(!p){ p = { qtd:0, n:0, end: row[ABAST_COL_END] }; pkMap.set(cod, p); }
+      if(!p){ p = { qtd:0, n:0, end: row[ABAST_COL_END], rua: abastToNum(row[ABAST_COL_RUA]) || null }; pkMap.set(cod, p); }
       p.qtd += abastToNum(row[ABAST_COL_QTD_DISP]);
       p.n++;
       if(!naNova) pkSemCadastro++;
@@ -12340,7 +12341,7 @@ function abastMontarBase(processed, raw){
     const caixas = fator ? qtdUn / fator : null;
     const cap = n.capacidade > 0 ? n.capacidade : null;
     const pct = (caixas != null && cap != null) ? Math.round(caixas / cap * 10000) / 100 : null;
-    const ruaNum = (() => { const d = String(n.rua==null ? "" : n.rua).replace(/\D/g,""); return d ? parseInt(d,10) : null; })();
+    const ruaNum = (pk && pk.rua) ? pk.rua : (() => { const d = String(n.rua==null ? "" : n.rua).replace(/\D/g,""); return d ? parseInt(d,10) : null; })();
     rows.push({
       codprod:n.codprod, descricao:n.descricao, rua:n.rua, ruaNum, predio:n.predio, apto:n.apto,
       fator, qtd:qtdUn, caixas, capacidade:cap, pct,
@@ -12358,7 +12359,7 @@ function abastMontarBase(processed, raw){
 // ---------------------------------------------------------------------------
 function abastCompute(base, opts){
   const lim = Number(opts.limite);
-  const ehNaoRevenda = r => ABAST_RUAS_NAO_REVENDA.includes(r.ruaNum);
+  const ehNaoRevenda = r => r.ruaNum != null && r.ruaNum > ABAST_RUA_MAX_REVENDA;
   // saldo baixo = produto SÓ com picking (sem AE), com endereço PK ocupado e até `lim` caixas
   const ehSaldoBaixo = r => !r.temAE && r.temPK && r.caixas != null && r.caixas <= lim;
 
@@ -12404,7 +12405,7 @@ function abastCompute(base, opts){
     ruaNum: k, ruaLabel: k>=0 ? String(k) : "—", ...agrega(lista)
   })).sort((a,b)=> (a.ponderado==null?1e9:a.ponderado) - (b.ponderado==null?1e9:b.ponderado));
 
-  // ---- saldo baixo (só a regra das ruas 48/49 vale aqui; AE e saldo baixo são o próprio critério) ----
+  // ---- saldo baixo (só a regra das ruas acima da 47 vale aqui; AE e saldo baixo são o próprio critério) ----
   const pkBase = base.rows.filter(r=> r.temPK && r.fator && (opts.naoRevenda || !ehNaoRevenda(r)));
   const soma = lista => lista.reduce((s,r)=>s+r.enderecosPK, 0);
   const baixos = pkBase.filter(ehSaldoBaixo)
@@ -12483,12 +12484,12 @@ function renderAbastecimentoPicking(){
 
   const foraTxt = [
     c.fora.semAE      ? `${abastFN(c.fora.semAE,0)} sem AE` : "",
-    c.fora.naoRevenda ? `${abastFN(c.fora.naoRevenda,0)} das ruas 48 e 49` : "",
+    c.fora.naoRevenda ? `${abastFN(c.fora.naoRevenda,0)} das ruas acima da 47` : "",
     c.fora.saldoBaixo ? `${abastFN(c.fora.saldoBaixo,0)} com saldo baixo` : ""
   ].filter(Boolean).join(" · ");
   const infoToolbar = `Considerando <b>${abastFN(c.total,0)}</b> de ${abastFN(base.totalProdutos,0)} produtos da 8022 Nova${foraTxt ? ` · fora do cálculo: ${foraTxt}` : ""}.
     Saldo baixo = produto só com picking (sem AE) com até ${abastFN(s.limite,1)} caixas.
-    “Considerar Não Revenda?” (ruas 48 e 49) vale para a aba toda; “Não considerar itens sem AE?” (Sim = tira os produtos sem AE) e “Considerar saldo baixo?” valem para o nível de abastecimento.`;
+    “Considerar Não Revenda?” (ruas acima da 47) vale para a aba toda; “Não considerar itens sem AE?” (Sim = tira os produtos sem AE) e “Considerar saldo baixo?” valem para o nível de abastecimento.`;
 
   // Mesmo padrão de cards das outras abas (.cards-grid / .card)
   const mkCard = (id, label, valor, sub, tom, tipo, extra) => {
@@ -12560,7 +12561,7 @@ function renderAbastecimentoPicking(){
     `Qtd Disp em unidades = soma dos endereços <b>PK</b> do produto. Caixas = Qtd Disp ÷ QTUNITCX (8022 Nova). Nível de abastecimento = caixas ÷ CAPACIDADE (8022 Nova).`,
     `O produto “tem AE” quando existe ao menos um endereço de Tipo AE com o código dele na 1707.`,
     `Não considerar itens sem AE? Sim = só entram produtos que têm AE (produtos só com AP saem do cálculo). Não = entram também os que não têm AE.`,
-    `Considerar Não Revenda? Não = ignora as ruas 48 e 49 em toda a aba, inclusive no saldo baixo.`,
+    `Considerar Não Revenda? Não = ignora as ruas acima da 47 em toda a aba, inclusive no saldo baixo.`,
     `Saldo baixo = produto sem AE, com endereço PK ocupado e caixas igual ou abaixo do limite. Considerar saldo baixo? Não = esses produtos saem do nível de abastecimento. Só faz diferença quando “Não considerar itens sem AE?” está em Não, porque saldo baixo é sempre de produto sem AE.`,
     `PK ocupado = endereço de Tipo PK com produto, de produto cadastrado na 8022 Nova com QTUNITCX.`,
     `Nas ruas e intervalos de ruas o percentual é ponderado: soma das caixas ÷ soma das capacidades. Rua e prédio vêm da 8022 Nova.`,
@@ -12584,7 +12585,7 @@ function renderAbastecimentoPicking(){
         </div>
       </div>
       ${tg("saldoBaixo","Considerar saldo baixo?", o.saldoBaixo, "Sim = produtos com saldo baixo entram no nível de abastecimento. Não = ficam fora de tudo.")}
-      ${tg("naoRevenda","Considerar Não Revenda?", o.naoRevenda, "Sim = inclui as ruas 48 e 49. Não = essas ruas ficam fora do cálculo.")}
+      ${tg("naoRevenda","Considerar Não Revenda?", o.naoRevenda, "Sim = inclui as ruas acima da 47. Não = essas ruas ficam fora do cálculo.")}
       ${tg("excluirSemAE","Não considerar itens sem AE?", o.excluirSemAE, "Sim = tira do cálculo os produtos que só têm picking (AP) e não têm AE. Não = inclui esses produtos.")}
     </div>
     <div class="panel-note" style="margin:0 2px 16px;line-height:1.5;">${infoToolbar}</div>
