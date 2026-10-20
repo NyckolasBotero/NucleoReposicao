@@ -12196,7 +12196,7 @@ function renderOrganograma(){
 // T Pend Entrada | U Pend Saída | V Qtd Disp
 const ABAST_COL_END      = 0;   // A
 const ABAST_COL_COD_PROD = 6;   // G
-const ABAST_COL_TIPO     = 14;  // O  (AE = aéreo, PK = picking)
+const ABAST_COL_TIPO     = 14;  // O  (AE = aéreo, AP/PK = picking)
 const ABAST_COL_QTD_DISP = 21;  // V
 const ABAST_NUM_COLS     = 22;
 const ABAST_RUAS_NAO_REVENDA = [48, 49];
@@ -12300,7 +12300,8 @@ function abastMontarBase(processed, raw){
     if(amostraCod.length < 5) amostraCod.push(cod);
     const naNova = novaPorProd.has(cod);
     if(naNova) casamNova++;
-    const tipo = normStr(row[ABAST_COL_TIPO]);
+    let tipo = normStr(row[ABAST_COL_TIPO]);
+    if(tipo === "AP") tipo = "PK";                    // na 1707 o picking vem como AP; aqui tratamos como PK
     tiposVistos.set(tipo, (tiposVistos.get(tipo)||0) + 1);
     if(tipo === "PK"){
       let p = pkMap.get(cod);
@@ -12320,7 +12321,7 @@ function abastMontarBase(processed, raw){
     return { erro:"Não encontrei códigos de produto na coluna <strong>G</strong> (Cod Prod) da aba <strong>1707</strong>. Confira a ordem das colunas." };
   }
   if(!(tiposVistos.get("PK") || tiposVistos.get("AE"))){
-    return { erro:`A coluna <strong>O</strong> (Tipo) da aba <strong>1707</strong> não tem valores <code>AE</code> nem <code>PK</code>. Valores encontrados: ${tiposTxt()}. Confira a ordem das colunas.` };
+    return { erro:`A coluna <strong>O</strong> (Tipo) da aba <strong>1707</strong> não tem valores <code>AE</code> nem <code>AP</code>/<code>PK</code>. Valores encontrados: ${tiposTxt()}. Confira a ordem das colunas.` };
   }
   if(casamNova / comProduto < 0.3){
     return { erro:`Poucos códigos da coluna <strong>G</strong> (Cod Prod) da aba <strong>1707</strong> existem na <strong>8022 Nova</strong> (${abastFN(casamNova,0)} de ${abastFN(comProduto,0)}). Exemplos lidos: ${amostraCod.map(c=>`<code>${escapeHtml(c)}</code>`).join(", ")}. Confira a ordem das colunas.` };
@@ -12555,7 +12556,7 @@ function renderAbastecimentoPicking(){
     <details class="abast-pontos"><summary>⚠ ${pontos.length} ponto${pontos.length>1?"s":""} para conferir</summary><ul>${pontos.join("")}</ul></details>` : "";
 
   const notas = [
-    `1707 sem cabeçalho, lida por posição: coluna G = Cod Prod, O = Tipo (AE ou PK) e V = Qtd Disp. Código de produto 0 = endereço vazio e é ignorado.`,
+    `1707 sem cabeçalho, lida por posição: coluna G = Cod Prod, O = Tipo (AE ou AP/PK) e V = Qtd Disp. Código de produto 0 = endereço vazio e é ignorado.`,
     `Qtd Disp em unidades = soma dos endereços <b>PK</b> do produto. Caixas = Qtd Disp ÷ QTUNITCX (8022 Nova). Nível de abastecimento = caixas ÷ CAPACIDADE (8022 Nova).`,
     `O produto “tem AE” quando existe ao menos um endereço de Tipo AE com o código dele na 1707.`,
     `Considerar Itens AE? Não = só entram produtos que têm AE. Sim = entram também os que não têm.`,
