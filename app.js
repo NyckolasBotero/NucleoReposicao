@@ -291,6 +291,24 @@ const ExcelLoader = {
   },
 
   // encontra o nome real da aba tolerando espaços extras e maiúsculas/minúsculas
+  // "8022 Nova": em algumas versões do arquivo o cabeçalho ganhou uma coluna extra chamada "cap"
+  // (posição O) que NÃO existe nas linhas de dados. Aí todos os nomes depois dela ficam deslocados
+  // (CAPACIDADE lê o ponto de reposição, RUA lê o prédio...). Detecta pelo CODENDERECO/CODFILIAL e realinha.
+  realinhar8022Nova(ws, json){
+    try{
+      const aoa = XLSX.utils.sheet_to_json(ws, { header:1, defval:null, raw:true });
+      const hdr = (aoa[0]||[]).map(h=>h==null?"":String(h).trim());
+      const iCap = hdr.indexOf("cap"), iEnd = hdr.indexOf("CODENDERECO"), iFil = hdr.indexOf("CODFILIAL");
+      if(iCap < 0 || iEnd < 0 || iFil < 0) return json;
+      const grandes = i => aoa.slice(1, 301).filter(r=>typeof r[i]==="number" && r[i] > 100000).length;
+      if(grandes(iFil) <= grandes(iEnd)) return json;          // dados alinhados com o cabeçalho
+      const nomes = hdr.filter((_,i)=>i!==iCap);
+      return aoa.slice(1).filter(r=>r && r.some(v=>v!=null && v!=="")).map(r=>{
+        const o = {}; nomes.forEach((h,j)=>{ if(h) o[h] = r[j]===undefined ? null : r[j]; }); return o;
+      });
+    }catch(e){ return json; }
+  },
+
   resolveSheetName(wb, wanted){
     if(wb.SheetNames.includes(wanted)) return wanted;
     const wantedNorm = normStr(wanted);
@@ -368,6 +386,7 @@ const ExcelLoader = {
       if(real){
         try{
           raw[sheetName] = XLSX.utils.sheet_to_json(wb.Sheets[real], { defval:null, raw:true });
+          if(sheetName === "8022 Nova") raw[sheetName] = ExcelLoader.realinhar8022Nova(wb.Sheets[real], raw[sheetName]);
           // 1707: o indicador de abastecimento lê a coluna R por POSIÇÃO, então guarda também a matriz bruta
           if(sheetName === "1707"){
             raw["1707__aoa"] = XLSX.utils.sheet_to_json(wb.Sheets[real], { header:1, defval:null, raw:true });
