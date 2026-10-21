@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CD 3D · Núcleo Reposição</title>
+<title>NVL 3D · Núcleo Reposição</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -284,6 +284,7 @@ function passes(a){
 /* ---------- layout em metros ---------- */
 function rm(r){const g=S.cfg.global,p=S.cfg.perRua[r]||{};
   return {bay:p.bay??g.bay,depth:p.depth??g.depth,aisle:p.aisle??g.aisle,levelH:p.levelH??g.levelH}}
+const FLOW_RUAS=[13]; /* ruas com flowrack (aptos 1-2 frente/fundo, 3-4 acima...) */
 function layout(){
   const cfg=S.cfg.global,info={};
   for(const a of S.list){let I=info[a.rua];if(!I){const m=rm(a.rua);I=info[a.rua]={r:a.rua,m,pitch:2*m.depth+m.aisle,maxP:0,maxN:1,sides:{}};}
@@ -312,7 +313,12 @@ function layout(){
     g.sort((x,y)=>x.apto-y.apto);
     const a0=g[0],I=info[a0.rua],m=I.m,lh=m.levelH,b=Math.ceil(a0.pred/2)-1,bs=bayStart(I,b);
     const cr=sideSign(a0)*(m.aisle/2+m.depth/2),n=g.length,y0=(a0.niv-1)*lh+0.08,hF=lh*0.82;
-    if(n<=8){const fr=g.map(a=>frac(effTipo(a))),sum=fr.reduce((x,y)=>x+y,0);let off=0;
+    if(FLOW_RUAS.includes(a0.rua)&&a0.niv===1&&n>2){
+      /* flowrack: apto 1 frente / 2 fundo no nível mais baixo, 3-4 acima, 5-6 acima... (tudo é nível 1 no sistema) */
+      const tiers=Math.ceil(Math.max(...g.map(a=>a.apto))/2),th=hF/tiers,sg=sideSign(a0);
+      g.forEach(a=>{const t=Math.ceil(a.apto/2)-1,back=a.apto%2===0;
+        put(a,I,bs+m.bay/2,cr+(back?1:-1)*sg*m.depth/4,m.bay*0.92,m.depth*0.46,y0+t*th,th*0.86)});
+    } else if(n<=8){const fr=g.map(a=>frac(effTipo(a))),sum=fr.reduce((x,y)=>x+y,0);let off=0;
       g.forEach((a,i)=>{const w=fr[i]/sum*m.bay;put(a,I,bs+off+w/2,cr,w*0.92,m.depth*0.92,y0,hF);off+=w})}
     else{const cols=n>20?10:Math.ceil(n/2),rows=Math.ceil(n/cols),cw=m.bay/cols,rh=hF/rows;
       g.forEach((a,i)=>put(a,I,bs+(i%cols)*cw+cw/2,cr,cw*0.9,m.depth*0.92,y0+Math.floor(i/cols)*rh,rh*0.86))}

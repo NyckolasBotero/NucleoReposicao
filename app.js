@@ -3325,7 +3325,7 @@ const UI = {
       { id:"relacoes", label:"Relações Rep" },
       { id:"capacidade", label:"Capacidade CD" },
       { id:"abastecimento", label:"Nível Abastecimento" },
-      { id:"cd3d", label:"CD 3D" }
+      { id:"cd3d", label:"NVL 3D" }
     ],
     gestao: [
       { id:"feedbacks", label:"Feedbacks" },
@@ -8117,7 +8117,7 @@ function renderCD3D(){
   const pane = document.getElementById('pane-cd3d');
   if(!pane) return;
   if(!document.getElementById('cd3d-frame')){
-    pane.innerHTML = '<iframe id="cd3d-frame" src="cd3d.html" title="CD 3D" ' +
+    pane.innerHTML = '<iframe id="cd3d-frame" src="cd3d.html" title="NVL 3D" ' +
       'style="width:100%;height:calc(100vh - 150px);min-height:560px;border:1px solid #dde3ea;border-radius:10px;background:#0f1218;display:block;"></iframe>';
   } else {
     cd3dEnviarEmbalagem(); // Núcleo carregado depois: reenvia a embalagem
