@@ -1951,17 +1951,19 @@ const Audit = {
 // exclusivo deste relatório — o restante do painel continua usando
 // processed.auditoria normalmente.
 //
-// Estrutura real da planilha (colunas): id, Data, Data//hora Registro,
-// usuario, Rua, Quantidade de Produdos em Picking Errado, Quantidade de
-// Produtos Avariados, Quantidade Produtos Próx. Vencimento, Quantidade
-// Produtos Sem Saldo, Repositor Atualmente ("CODIGO - Nome"), Possui Imagem,
-// Foto, Foto 2.
+// Estrutura da planilha (uma LINHA = um PRODUTO auditado): ID_Auditoria, DataHora (B),
+// Matricula_Auditor, Nome_Auditor, Produto, Descricao_Produto, Endereco, Rua (H), Predio,
+// Nivel, Apto, Erro_Produto (L), Endereco_Correto, Prox_Vencimento (N), Data_Vencimento,
+// Sem_Saldo (P), Avaria (Q), Tipo_Avaria, Foto_Avaria, ..., Possui_NC (X),
+// Matricula_Colaborador_NC (Y), Nome_Colaborador_NC (Z), ..., Links_Fotos.
 //
-// Não existem mais os 7 critérios SIM/NÃO — cada auditoria traz 4 contagens
-// de ocorrências. "Qualidade" de uma auditoria = 100% quando ela não tem
-// NENHUMA ocorrência (as 4 contagens somam zero); caso contrário conta como
-// "com ocorrência". A qualidade média de um conjunto = % de auditorias sem
-// nenhuma ocorrência (impecáveis) sobre o total.
+// Os critérios (L, N, P, Q) vêm como TRUE/FALSE por linha: cada TRUE = 1 ocorrência.
+// O repositor responsável (Y/Z) só vem preenchido nas linhas com NC.
+// As linhas são agrupadas em "auditorias" por DIA (B) + RUA (H) + REPOSITOR (Y/Z):
+//  - cada grupo com ocorrência vira uma auditoria daquele repositor, com a CONTAGEM de
+//    ocorrências por critério;
+//  - rua auditada no dia sem nenhuma ocorrência vira UMA auditoria impecável (sem repositor).
+// Qualidade de cada auditoria segue os pesos abaixo (AUDITORIA_PESOS_CRITERIOS).
 const AUDITORIA_ONLINE_SHEET_ID = "1Srs2JdL1WEGsaa-SaLec2TaYQYX_eUmNsU2zE1M4CAA";
 // Peso de cada critério na qualidade "por critério" (usada quando a rua da auditoria
 // não tem itens cadastrados na 8022 — nesse caso não dá pra calcular por volume, então
@@ -2061,56 +2063,85 @@ const AuditOnline = {
       }
       return -1;
     };
-    const iData = findCol(["Data"]);
-    const iAuditor = findCol(["usuario","Usuário","Auditor"]);
-    const iRua = findCol(["Rua"]);
-    const iPickErrado = findCol(["Quantidade de Produdos em Picking Errado","Quantidade de Produtos em Picking Errado"]);
-    const iAvariado = findCol(["Quantidade de Produtos Avariados"]);
-    const iProxVenc = findCol(["Quantidade Produtos Próx. Vencimento","Quantidade Produtos Prox. Vencimento"]);
-    const iSemSaldo = findCol(["Quantidade Produtos Sem Saldo"]);
-    const iRepositor = findCol(["Repositor Atualmente"]);
-    const iPossuiImagem = findCol(["Possui Imagem"]);
-    const iFoto = findCol(["Foto"]);
-    const iFoto2 = findCol(["Foto 2"]);
+    const iData = findCol(["DataHora","Data Hora","Data"]);                       // B
+    const iAuditor = findCol(["Nome_Auditor","Auditor","usuario"]);                // D
+    const iRua = findCol(["Rua"]);                                                 // H
+    const iProduto = findCol(["Produto"]);                                         // E
+    const iDescProd = findCol(["Descricao_Produto"]);                              // F
+    const iEndereco = findCol(["Endereco"]);                                       // G
+    const iPickErrado = findCol(["Erro_Produto"]);                                 // L
+    const iProxVenc = findCol(["Prox_Vencimento"]);                                // N
+    const iSemSaldo = findCol(["Sem_Saldo"]);                                      // P
+    const iAvariado = findCol(["Avaria"]);                                         // Q
+    const iFotoAvaria = findCol(["Foto_Avaria"]);                                  // S
+    const iPossuiNC = findCol(["Possui_NC"]);                                      // X
+    const iMatricula = findCol(["Matricula_Colaborador_NC"]);                      // Y
+    const iNomeColab = findCol(["Nome_Colaborador_NC"]);                           // Z
+    const iLinksFotos = findCol(["Links_Fotos"]);
 
-    const numOr0 = (v) => { const n = parseInt(trimStr(v).replace(/[^\d\-]/g,''),10); return isNaN(n) ? 0 : n; };
+    const faltando = [["DataHora",iData],["Rua",iRua],["Erro_Produto",iPickErrado],["Prox_Vencimento",iProxVenc],
+      ["Sem_Saldo",iSemSaldo],["Avaria",iAvariado],["Matricula_Colaborador_NC",iMatricula],["Nome_Colaborador_NC",iNomeColab]]
+      .filter(x=>x[1]===-1).map(x=>x[0]);
+    if(faltando.length) throw new Error("A planilha de Auditoria não tem as colunas esperadas: "+faltando.join(", ")+".");
 
-    const out = [];
+    const isTrue = (v) => /^(true|verdadeiro|sim|s|1|x)$/i.test(trimStr(v));
+    const cell = (cols, i) => i!==-1 ? trimStr(cols[i]) : "";
+
+    // 1) agrupa as linhas (produtos) por dia + rua + repositor
+    const grupos = new Map();
     for(let li=1; li<lines.length; li++){
       const cols = lines[li];
       if(!cols || cols.every(c=>trimStr(c)==="")) continue;
-      const data = iData!==-1 ? this.parseDateFlexible(cols[iData]) : null;
+      const data = this.parseDateFlexible(cols[iData]);
       if(!data) continue;
+      const rua = cell(cols,iRua);
+      if(!rua) continue;
+      const cod = cell(cols,iMatricula) || null;
+      const nome = cell(cols,iNomeColab);
+      const gkey = ymdKey(data)+"|"+rua+"|"+(cod?normStr(cod):(nome?"N:"+normStr(nome):""));
+      if(!grupos.has(gkey)) grupos.set(gkey, { data, rua, cod, nome, auditores:new Set(), pickErrado:0, avariado:0, proxVenc:0, semSaldo:0, produtos:0, itens:[], fotos:[] });
+      const g = grupos.get(gkey);
+      g.produtos++;
+      const aud = cell(cols,iAuditor); if(aud) g.auditores.add(aud);
+      const pe = isTrue(cols[iPickErrado]), av = isTrue(cols[iAvariado]), pv = isTrue(cols[iProxVenc]), ss = isTrue(cols[iSemSaldo]);
+      if(pe) g.pickErrado++; if(av) g.avariado++; if(pv) g.proxVenc++; if(ss) g.semSaldo++;
+      if(pe||av||pv||ss){
+        const tipos = [pe?"Picking errado":"", av?"Avaria":"", pv?"Próx. vencimento":"", ss?"Sem saldo":""].filter(Boolean).join(", ");
+        g.itens.push({ produto:cell(cols,iProduto), desc:cell(cols,iDescProd), endereco:cell(cols,iEndereco), tipos });
+      }
+      [cell(cols,iFotoAvaria), cell(cols,iLinksFotos)].forEach(f=>{ if(f && !g.fotos.includes(f)) g.fotos.push(f); });
+    }
 
-      const { cod, nome } = iRepositor!==-1 ? this.parseRepositor(cols[iRepositor]) : { cod:null, nome:"" };
-      const auditor = iAuditor!==-1 ? trimStr(cols[iAuditor]) : "";
-      const pickErrado = iPickErrado!==-1 ? numOr0(cols[iPickErrado]) : 0;
-      const avariado = iAvariado!==-1 ? numOr0(cols[iAvariado]) : 0;
-      const proxVenc = iProxVenc!==-1 ? numOr0(cols[iProxVenc]) : 0;
-      const semSaldo = iSemSaldo!==-1 ? numOr0(cols[iSemSaldo]) : 0;
+    // 2) rua auditada no dia: se já há auditoria(s) com repositor/ocorrência, o grupo "sem
+    //    repositor e sem ocorrência" é descartado (a rua já está representada); se não há
+    //    nenhuma, ele permanece como UMA auditoria impecável da rua.
+    const lista = Array.from(grupos.values());
+    const temOutro = new Set(lista.filter(g=>g.cod||g.nome||g.pickErrado+g.avariado+g.proxVenc+g.semSaldo>0).map(g=>ymdKey(g.data)+"|"+g.rua));
+    const finais = lista.filter(g=>{
+      const vazio = !g.cod && !g.nome && g.pickErrado+g.avariado+g.proxVenc+g.semSaldo===0;
+      return !(vazio && temOutro.has(ymdKey(g.data)+"|"+g.rua));
+    }).sort((x,y)=> x.data-y.data || String(x.rua).localeCompare(String(y.rua),undefined,{numeric:true}));
+
+    // 3) converte cada grupo em uma "auditoria" com as contagens de ocorrência
+    const pesos = AUDITORIA_PESOS_CRITERIOS;
+    const pesoTotal = pesos.avariado + pesos.pickErrado + pesos.proxVenc + pesos.semSaldo;
+    return finais.map((g,idx)=>{
+      const { pickErrado, avariado, proxVenc, semSaldo } = g;
       const totalOcorrencias = pickErrado + avariado + proxVenc + semSaldo;
-      // qualidade por critério (ponderada): cada critério OK (valor 0) soma seu peso;
-      // qualidade = soma dos pesos OK / soma total dos pesos × 100
-      const pesos = AUDITORIA_PESOS_CRITERIOS;
-      const pesoTotal = pesos.avariado + pesos.pickErrado + pesos.proxVenc + pesos.semSaldo;
       const pesoOk = (avariado===0?pesos.avariado:0) + (pickErrado===0?pesos.pickErrado:0) + (proxVenc===0?pesos.proxVenc:0) + (semSaldo===0?pesos.semSaldo:0);
       const criteriosOk = (pickErrado===0?1:0)+(avariado===0?1:0)+(proxVenc===0?1:0)+(semSaldo===0?1:0);
-      const qualidade = pesoOk/pesoTotal*100;
-      const possuiImagem = iPossuiImagem!==-1 ? /^S/i.test(trimStr(cols[iPossuiImagem])) : false;
-      const foto = iFoto!==-1 ? trimStr(cols[iFoto]) : "";
-      const foto2 = iFoto2!==-1 ? trimStr(cols[iFoto2]) : "";
-
-      out.push({
-        _row: li-1, data, rua: iRua!==-1?trimStr(cols[iRua]):"", cod, nome, auditor,
-        codKey: cod ? normStr(cod) : (nome?"NOME::"+normStr(nome):null),
+      return {
+        _row: idx, data: g.data, rua: g.rua, cod: g.cod, nome: g.nome,
+        auditor: Array.from(g.auditores).join(" / "),
+        codKey: g.cod ? normStr(g.cod) : (g.nome?"NOME::"+normStr(g.nome):null),
         pickErrado, avariado, proxVenc, semSaldo, totalOcorrencias,
-        criteriosOk, qualidade,
+        criteriosOk, qualidade: pesoOk/pesoTotal*100,
         impecavel: totalOcorrencias===0,
         temProblema: totalOcorrencias>0,
-        possuiImagem, foto, foto2
-      });
-    }
-    return out;
+        produtosAuditados: g.produtos, itens: g.itens,
+        possuiImagem: g.fotos.length>0, foto: g.fotos[0]||"", foto2: g.fotos[1]||""
+      };
+    });
   },
 
   getRows(){
@@ -5787,6 +5818,8 @@ function showAuditDetailOnline(rowIdx){
       <li><span>Prox. Vencimento</span><span class="${r.proxVenc>0?'badge-nao':'badge-sim'}">${r.proxVenc}</span></li>
       <li><span>Sem Saldo</span><span class="${r.semSaldo>0?'badge-nao':'badge-sim'}">${r.semSaldo}</span></li>
     </ul>
+    <p class="small-muted">Produtos auditados na rua neste dia (por este repositor): <strong>${r.produtosAuditados||0}</strong></p>
+    ${(r.itens&&r.itens.length) ? `<div class="table-wrap" style="max-height:220px;overflow-y:auto;"><table class="data-table"><thead><tr><th>Produto</th><th>Descrição</th><th>Endereço</th><th>Ocorrência</th></tr></thead><tbody>${r.itens.map(i=>`<tr><td>${escapeHtml(i.produto)}</td><td>${escapeHtml(i.desc)}</td><td>${escapeHtml(i.endereco)}</td><td>${escapeHtml(i.tipos)}</td></tr>`).join("")}</tbody></table></div>` : ''}
     <div style="margin-top:10px;">
       ${temFoto ? (linkFoto(r.foto,'Ver evidencia 1')+linkFoto(r.foto2,'Ver evidencia 2')) : '<span class="small-muted">Sem imagem</span>'}
     </div>
