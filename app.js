@@ -1962,7 +1962,7 @@ const Audit = {
 // NENHUMA ocorrência (as 4 contagens somam zero); caso contrário conta como
 // "com ocorrência". A qualidade média de um conjunto = % de auditorias sem
 // nenhuma ocorrência (impecáveis) sobre o total.
-const AUDITORIA_ONLINE_SHEET_ID = "1_WCpwtsyUJbc3j3v2oX9TuwzBZxnFwIobPEzg19Umy0";
+const AUDITORIA_ONLINE_SHEET_ID = "1Srs2JdL1WEGsaa-SaLec2TaYQYX_eUmNsU2zE1M4CAA";
 // Peso de cada critério na qualidade "por critério" (usada quando a rua da auditoria
 // não tem itens cadastrados na 8022 — nesse caso não dá pra calcular por volume, então
 // cai nessa fórmula ponderada). Critério OK (valor 0) soma o peso; senão soma 0.
