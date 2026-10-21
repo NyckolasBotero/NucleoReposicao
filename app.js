@@ -3324,7 +3324,8 @@ const UI = {
       { id:"operadores", label:"Produção Operadores" },
       { id:"relacoes", label:"Relações Rep" },
       { id:"capacidade", label:"Capacidade CD" },
-      { id:"abastecimento", label:"Nível Abastecimento" }
+      { id:"abastecimento", label:"Nível Abastecimento" },
+      { id:"cd3d", label:"NVL 3D" }
     ],
     gestao: [
       { id:"feedbacks", label:"Feedbacks" },
@@ -3352,6 +3353,7 @@ const UI = {
     $("#btn-reload").addEventListener("click", ()=> $("#file-input").click());
     $("#btn-empty-upload").addEventListener("click", ()=> $("#file-input").click());
     $("#btn-ir-avaria").addEventListener("click", ()=> abrirAvariaSemArquivo());
+    $("#btn-ir-cd3d").addEventListener("click", ()=> abrirCD3DSemArquivo());
     $("#file-input").addEventListener("change", (e)=>{
       if(e.target.files[0]) this.handleFile(e.target.files[0]);
     });
@@ -3496,11 +3498,11 @@ const UI = {
 
   renderPane(pane){
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
-    if(!window.APP_STATE.ready && pane !== 'avaria') return;
+    if(!window.APP_STATE.ready && pane !== 'avaria' && pane !== 'cd3d') return;
     const fns = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
-      cronograma: renderCronograma, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking
+      cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking
     };
     if(fns[pane]) fns[pane]();
   },
@@ -8081,6 +8083,44 @@ function abrirAvariaSemArquivo(){
   const pane = $("#pane-avaria");
   if(pane && !document.getElementById('avaria-sem-arquivo-hint')){
     pane.insertBefore(hint, pane.firstChild);
+  }
+}
+
+
+// ===== CD 3D: módulo em iframe (cd3d.html), independe do Núcleo Reposição =====
+function abrirCD3DSemArquivo(){
+  $("#empty-state").style.display = "none";
+  $("#main-content").style.display = "block";
+  const gestaoBtn = $(".nav-btn[data-view='gestao']");
+  if(gestaoBtn && !window.APP_STATE.ready){
+    gestaoBtn.title = "Carregue o Núcleo Reposição para acessar Gestão";
+    gestaoBtn.style.opacity = "0.4";
+    gestaoBtn.style.pointerEvents = "none";
+  }
+  UI.switchView('indicadores', true);
+  UI.switchPane('cd3d');
+}
+
+function cd3dEnviarEmbalagem(){
+  const fr = document.getElementById('cd3d-frame');
+  const proc = window.APP_STATE && window.APP_STATE.processed;
+  if(!fr || !fr.contentWindow || !proc || !proc.p8022Nova) return;
+  const pairs = proc.p8022Nova.filter(r => r.qtunitcx > 0).map(r => [r.codprod, r.qtunitcx]);
+  if(pairs.length) fr.contentWindow.postMessage({ type:'cd3d-emb', pairs }, '*');
+}
+
+window.addEventListener('message', ev => {
+  if(ev.data && ev.data.type === 'cd3d-ready') cd3dEnviarEmbalagem();
+});
+
+function renderCD3D(){
+  const pane = document.getElementById('pane-cd3d');
+  if(!pane) return;
+  if(!document.getElementById('cd3d-frame')){
+    pane.innerHTML = '<iframe id="cd3d-frame" src="cd3d.html" title="NVL 3D" ' +
+      'style="width:100%;height:calc(100vh - 150px);min-height:560px;border:1px solid #dde3ea;border-radius:10px;background:#0f1218;display:block;"></iframe>';
+  } else {
+    cd3dEnviarEmbalagem(); // Núcleo carregado depois: reenvia a embalagem
   }
 }
 
