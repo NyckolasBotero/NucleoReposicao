@@ -284,7 +284,7 @@ function passes(a){
 /* ---------- layout em metros ---------- */
 function rm(r){const g=S.cfg.global,p=S.cfg.perRua[r]||{};
   return {bay:p.bay??g.bay,depth:p.depth??g.depth,aisle:p.aisle??g.aisle,levelH:p.levelH??g.levelH}}
-const FLOW_RUAS=[13]; /* ruas com flowrack (aptos 1-2 frente/fundo, 3-4 acima...) */
+const FLOW_RUAS=[13]; /* ruas com flowrack só no lado ímpar (aptos 1-2 frente/fundo, 3-4 acima...); lado par = terços/meios normais */
 function layout(){
   const cfg=S.cfg.global,info={};
   for(const a of S.list){let I=info[a.rua];if(!I){const m=rm(a.rua);I=info[a.rua]={r:a.rua,m,pitch:2*m.depth+m.aisle,maxP:0,maxN:1,sides:{}};}
@@ -313,7 +313,7 @@ function layout(){
     g.sort((x,y)=>x.apto-y.apto);
     const a0=g[0],I=info[a0.rua],m=I.m,lh=m.levelH,b=Math.ceil(a0.pred/2)-1,bs=bayStart(I,b);
     const cr=sideSign(a0)*(m.aisle/2+m.depth/2),n=g.length,y0=(a0.niv-1)*lh+0.08,hF=lh*0.82;
-    if(FLOW_RUAS.includes(a0.rua)&&a0.niv===1&&n>2){
+    if(FLOW_RUAS.includes(a0.rua)&&a0.niv===1&&a0.pred%2===1){
       /* flowrack: apto 1 frente / 2 fundo no nível mais baixo, 3-4 acima, 5-6 acima... (tudo é nível 1 no sistema) */
       const tiers=Math.ceil(Math.max(...g.map(a=>a.apto))/2),th=hF/tiers,sg=sideSign(a0);
       g.forEach(a=>{const t=Math.ceil(a.apto/2)-1,back=a.apto%2===0;
