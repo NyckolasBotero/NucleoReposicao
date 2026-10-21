@@ -81,7 +81,7 @@ const REQUIRED_COLUMNS = {
   "FEEDBACK REP": ["Data","Cod","Nome","Resumo Assunto","Avaliação Pessoal","Avaliação Gestor","Desempenho","Classificação"],
   "QUADRO REP": ["DATA","CODIGO","NOME","STATUS"],
   "8271": ["DATA","RUA","TIPOOS","NUMOS"],
-  "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTINICIOOS"],
+  "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTFIMSEPARACAO"],
   "MISSÕES": ["DATA","HORA INICIO","HORA FIM","CODIGO","NOME","TIPO"]
 };
 
@@ -272,6 +272,177 @@ function avg(arr){ return arr.length ? sum(arr)/arr.length : 0; }
 /* ---------------------------------------------------------------------- */
 /* MODULE: Excel Loader                                                    */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* MODULE: LoadingScreen (tela de carregamento do arquivo)                 */
+/* ---------------------------------------------------------------------- */
+const LoadingScreen = {
+  root(){ return document.getElementById("flow-overlay-root"); },
+  steps: [
+    { id:"recebido", label:"Arquivo recebido" },
+    { id:"lendo", label:"Lendo arquivo..." },
+    { id:"validando", label:"Validando estrutura..." },
+    { id:"sheets", label:"Identificando sheets..." },
+    { id:"processando", label:"Processando dados..." },
+    { id:"finalizando", label:"Finalizando..." }
+  ],
+  show(filename){
+    const root = this.root();
+    root.innerHTML = `
+      <div class="flow-backdrop">
+        <div class="flow-card">
+          <div class="flow-spinner"></div>
+          <div class="flow-title">Carregando arquivo</div>
+          <div class="flow-filename">📄 ${escapeHtml(filename)}</div>
+          <div class="flow-progress-track" style="margin-top:18px;"><div class="flow-progress-bar" id="flow-progress-bar" style="width:2%;"></div></div>
+          <div class="flow-steps" id="flow-steps">
+            ${this.steps.map(s=>`<div class="flow-step" id="flow-step-${s.id}"><span class="flow-step-icon">•</span><span>${s.label}</span></div>`).join("")}
+          </div>
+        </div>
+      </div>`;
+    root.classList.add("show");
+  },
+  // marca um passo como ativo (spinner) e todos os anteriores como concluídos (✓),
+  // avança a barra de progresso. pct opcional (0-100); se omitido, calcula pela posição do passo.
+  async step(stepId, pct){
+    const idx = this.steps.findIndex(s=>s.id===stepId);
+    if(idx===-1) return;
+    this.steps.forEach((s,i)=>{
+      const el = document.getElementById("flow-step-"+s.id);
+      if(!el) return;
+      el.classList.remove("active","done");
+      if(i<idx){ el.classList.add("done"); el.querySelector(".flow-step-icon").textContent = "✓"; }
+      else if(i===idx){ el.classList.add("active"); el.querySelector(".flow-step-icon").textContent = "•"; }
+      else { el.querySelector(".flow-step-icon").textContent = "•"; }
+    });
+    const bar = document.getElementById("flow-progress-bar");
+    if(bar) bar.style.width = (pct!==undefined ? pct : Math.round((idx+1)/this.steps.length*100)) + "%";
+    // pequena pausa proposital para o usuário perceber a etapa (processamento real
+    // costuma ser rápido demais pra "ver" as etapas sem isso)
+    await new Promise(res=>setTimeout(res, 260));
+  },
+  hide(){
+    const root = this.root();
+    root.classList.remove("show");
+    root.innerHTML = "";
+  }
+};
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: ImportLog (tela de log de importação, pós-processamento)        */
+/* ---------------------------------------------------------------------- */
+const ImportLog = {
+  root(){ return document.getElementById("flow-overlay-root"); },
+
+  // varre as linhas de uma sheet procurando colunas cujo nome contenha DATA/DT e
+  // retorna a data mais recente encontrada entre elas. Não inventa datas: se não
+  // achar nenhuma coluna candidata ou nenhum valor válido, retorna null.
+  detectMaxDate(rows){
+    if(!rows || !rows.length) return null;
+    const sampleKeys = Object.keys(rows[0]||{});
+    const dateKeys = sampleKeys.filter(k=>/DATA/i.test(k) || /^DT/i.test(k));
+    if(!dateKeys.length) return null;
+    let max = null;
+    rows.forEach(r=>{
+      dateKeys.forEach(k=>{
+        const d = toDate(r[k]);
+        if(d && !isNaN(d.getTime()) && d.getFullYear()>1901){
+          if(!max || d>max) max = d;
+        }
+      });
+    });
+    return max;
+  },
+
+  // monta o log dinâmico a partir do "raw" realmente carregado — nunca lista sheets
+  // fixas/hardcoded, sempre a partir de REQUIRED_SHEETS + OPTIONAL_SHEETS + o que
+  // efetivamente veio em raw
+  buildLog(raw){
+    const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
+    return allSheets.map(name=>{
+      const rows = raw[name];
+      if(rows===null || rows===undefined){
+        return { name, status:"nao-encontrada", statusLabel:"— Não encontrada (opcional)", date:null, msg:null, rowCount:0 };
+      }
+      if(!rows.length){
+        return { name, status:"vazia", statusLabel:"Sem dados", date:null, msg:"A aba foi encontrada, mas não contém nenhuma linha de dados.", rowCount:0 };
+      }
+      const maxDate = this.detectMaxDate(rows);
+      if(!maxDate){
+        return { name, status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:null,
+          msg:`Sheet ${name} carregada, porém nenhuma coluna de data válida foi identificada.`, rowCount:rows.length };
+      }
+      return { name, status:"ok", statusLabel:"✓ Carregada", date:maxDate, msg:null, rowCount:rows.length };
+    });
+  },
+
+  show(file, raw, onAccessDashboard, onLoadAnother){
+    const log = this.buildLog(raw);
+    const encontradas = log.filter(s=>s.status!=="nao-encontrada");
+    const comSucesso = log.filter(s=>s.status==="ok"||s.status==="vazia");
+    const comAlerta = log.filter(s=>s.status==="alerta");
+    const agora = new Date();
+
+    const statusCls = (s)=> s==="ok"?"ok": s==="alerta"?"alerta": s==="vazia"?"vazia": "vazia";
+
+    const root = this.root();
+    root.innerHTML = `
+      <div class="flow-backdrop">
+        <div class="flow-card wide">
+          <div class="flow-log-header">
+            <div class="flow-log-check">✓</div>
+            <div>
+              <div class="flow-log-title">Arquivo processado com sucesso</div>
+              <div class="flow-log-sub">📄 ${escapeHtml(file.name)} · carregado em ${fmtDateBR(agora)} às ${agora.toLocaleTimeString('pt-BR')}</div>
+            </div>
+          </div>
+
+          <div class="flow-summary-grid">
+            <div class="flow-summary-card"><div class="flow-summary-label">Sheets Encontradas</div><div class="flow-summary-value">${encontradas.length}</div></div>
+            <div class="flow-summary-card"><div class="flow-summary-label">Processadas OK</div><div class="flow-summary-value" style="color:var(--green);">${comSucesso.length}</div></div>
+            <div class="flow-summary-card"><div class="flow-summary-label">Com Alerta</div><div class="flow-summary-value" style="color:${comAlerta.length?'var(--orange)':'var(--gray-300)'};">${comAlerta.length}</div></div>
+            <div class="flow-summary-card"><div class="flow-summary-label">Total de Abas no Arquivo</div><div class="flow-summary-value">${log.length}</div></div>
+          </div>
+
+          <table class="flow-sheet-table">
+            <thead><tr><th>Sheet</th><th>Status</th><th>Registros</th><th>Última Data Encontrada</th></tr></thead>
+            <tbody>
+              ${log.map((s,i)=>`
+                <tr style="animation-delay:${i*30}ms;">
+                  <td><strong>${escapeHtml(s.name)}</strong></td>
+                  <td><span class="flow-sheet-status ${statusCls(s.status)}">${s.statusLabel}</span></td>
+                  <td>${s.status==="nao-encontrada"?"—":fmtNum(s.rowCount)}</td>
+                  <td>${s.date?fmtDateBR(s.date):(s.status==="nao-encontrada"?"—":"Sem data identificada")}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+
+          ${comAlerta.length ? `<div class="warn-box" style="margin-bottom:18px;">${comAlerta.map(s=>escapeHtml(s.msg)).join("<br>")}</div>` : ``}
+
+          <div class="flow-log-actions">
+            <button class="btn btn-outline" id="flow-btn-outro">📂 Carregar outro arquivo</button>
+            <button class="btn btn-primary" id="flow-btn-entrar">Acessar Dashboard →</button>
+          </div>
+        </div>
+      </div>`;
+    root.classList.add("show");
+
+    document.getElementById("flow-btn-entrar").addEventListener("click", ()=>{
+      this.hide();
+      onAccessDashboard();
+    });
+    document.getElementById("flow-btn-outro").addEventListener("click", ()=>{
+      this.hide();
+      onLoadAnother();
+    });
+  },
+
+  hide(){
+    const root = this.root();
+    root.classList.remove("show");
+    root.innerHTML = "";
+  }
+};
+
 const ExcelLoader = {
   // verifica se as bibliotecas externas (CDN) carregaram corretamente
   checkLibraries(){
@@ -501,8 +672,15 @@ const DataProcessor = {
     }).filter(r=>r.data);
 
     // ---- 8460 ----
+    // Usa DTFIMSEPARACAO (não DTINICIOOS) como data da O.S. — uma O.S. tipo 58 só
+    // pode ser contabilizada como "feita" quando ela foi de fato FINALIZADA (separação
+    // concluída). Se a O.S. ainda não terminou, DTFIMSEPARACAO fica vazia e a linha é
+    // descartada automaticamente pelo filtro abaixo (r=>r.dtinicio).
+    // Mantém o nome interno do campo como "dtinicio" (usado em todo o resto do app —
+    // Produção, Comissão, Missões, Acompanhamento Individual etc.) para não precisar
+    // alterar todas as outras funções; o que muda é só a coluna de origem.
     out.p8460 = raw["8460"].map((r,idx)=>{
-      const dtinicio = toDate(r["DTINICIOOS"]);
+      const dtinicio = toDate(getFieldFlexible(r, ["DTFIMSEPARACAO","DT FIM SEPARACAO","DATA FIM SEPARACAO"]));
       const cod = r["CODFUNCOS"]!==null && r["CODFUNCOS"]!==undefined && r["CODFUNCOS"]!=="" ? String(r["CODFUNCOS"]).trim() : null;
       const nome = trimStr(r["NOME"]);
       const tipoos = r["TIPOOS"]!==null && r["TIPOOS"]!==undefined ? Number(r["TIPOOS"]) : null;
@@ -883,7 +1061,7 @@ function buildNameRegistry(processed){
 }
 
 /* ---------------------------------------------------------------------- */
-/* MODULE: Production (fonte: 8460, TIPOOS = 58, data = DTINICIOOS)        */
+/* MODULE: Production (fonte: 8460, TIPOOS = 58, data = DTFIMSEPARACAO)     */
 /* ---------------------------------------------------------------------- */
 const Production = {
   state: {
@@ -891,10 +1069,11 @@ const Production = {
     dataInicial: null,
     dataFinal: null,
     employees: [],            // codKeys selecionados (vazio = todos)
-    quadroAtual: "SIM",
+    quadroAtual: "NAO",
     weekCompareMode: "anterior", // anterior | mesCorrespondente
     mesmaPeriodicidade: "SIM",
-    projectionBase: 0
+    projectionBase: 1,
+    dailyChartMes: 1  // 0=mês atual, 1=mês anterior (mês fechado) — usado só no gráfico Produção Diária
   },
 
   getBaseRows(){
@@ -1123,6 +1302,31 @@ const Production = {
       const y = Math.floor(k/10000), m = Math.floor((k%10000)/100)-1, d = k%100;
       return { date:new Date(y,m,d), total: byDay.get(k), media };
     });
+  },
+
+  // Série diária usada especificamente no gráfico "Produção Diária" — independente
+  // do filtro Data Inicial/Data Final do painel. state.dailyChartMes escolhe qual mês
+  // mostrar: 0 = mês atual (dia 1 até hoje), 1 = mês anterior (mês fechado, completo).
+  // Preenche todos os dias do intervalo (mesmo sem produção) para o eixo ficar completo.
+  dailySeriesForChart(){
+    const opt = this.state.dailyChartMes===0 ? 0 : 1;
+    const hoje = this.maxDataDate() || new Date();
+    const y = hoje.getFullYear(), m = hoje.getMonth();
+    const targetM = opt===0 ? m : m-1;
+    const ini = dateOnly(new Date(y, targetM, 1));
+    const fim = opt===0 ? dateOnly(hoje) : dateOnly(new Date(y, targetM+1, 0));
+    const rows = this.getBaseRows().filter(r=>{ const d=dateOnly(r.dtinicio); return d>=ini && d<=fim; });
+    const byDay = this.countByDay(rows);
+    const vals = Array.from(byDay.values());
+    const media = vals.length ? avg(vals) : 0;
+    const out = [];
+    let cur = new Date(ini);
+    while(cur<=fim){
+      const k = ymdKey(cur);
+      out.push({ date:new Date(cur), total: byDay.get(k)||0, media });
+      cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()+1);
+    }
+    return out;
   },
 
   weeklyTable(){
@@ -1759,6 +1963,10 @@ const Audit = {
 // "com ocorrência". A qualidade média de um conjunto = % de auditorias sem
 // nenhuma ocorrência (impecáveis) sobre o total.
 const AUDITORIA_ONLINE_SHEET_ID = "1_WCpwtsyUJbc3j3v2oX9TuwzBZxnFwIobPEzg19Umy0";
+// Peso de cada critério na qualidade "por critério" (usada quando a rua da auditoria
+// não tem itens cadastrados na 8022 — nesse caso não dá pra calcular por volume, então
+// cai nessa fórmula ponderada). Critério OK (valor 0) soma o peso; senão soma 0.
+const AUDITORIA_PESOS_CRITERIOS = { avariado:6, pickErrado:2, proxVenc:2, semSaldo:2 };
 const AUDITORIA_ONLINE_GID = "0";
 // status de qualidade por faixa (usado em toda a Auditoria): Excelente/Boa/Atenção/Crítica
 function auditoriaStatusQual(v){
@@ -1881,9 +2089,13 @@ const AuditOnline = {
       const proxVenc = iProxVenc!==-1 ? numOr0(cols[iProxVenc]) : 0;
       const semSaldo = iSemSaldo!==-1 ? numOr0(cols[iSemSaldo]) : 0;
       const totalOcorrencias = pickErrado + avariado + proxVenc + semSaldo;
-      // qualidade por critério: cada um dos 4 vale 25% — 0 = OK, >0 = falha nesse critério
+      // qualidade por critério (ponderada): cada critério OK (valor 0) soma seu peso;
+      // qualidade = soma dos pesos OK / soma total dos pesos × 100
+      const pesos = AUDITORIA_PESOS_CRITERIOS;
+      const pesoTotal = pesos.avariado + pesos.pickErrado + pesos.proxVenc + pesos.semSaldo;
+      const pesoOk = (avariado===0?pesos.avariado:0) + (pickErrado===0?pesos.pickErrado:0) + (proxVenc===0?pesos.proxVenc:0) + (semSaldo===0?pesos.semSaldo:0);
       const criteriosOk = (pickErrado===0?1:0)+(avariado===0?1:0)+(proxVenc===0?1:0)+(semSaldo===0?1:0);
-      const qualidade = criteriosOk/4*100;
+      const qualidade = pesoOk/pesoTotal*100;
       const possuiImagem = iPossuiImagem!==-1 ? /^S/i.test(trimStr(cols[iPossuiImagem])) : false;
       const foto = iFoto!==-1 ? trimStr(cols[iFoto]) : "";
       const foto2 = iFoto2!==-1 ? trimStr(cols[iFoto2]) : "";
@@ -1916,10 +2128,31 @@ const AuditOnline = {
     return rows;
   },
 
-  // qualidade média de um conjunto de linhas — cada auditoria vale 0-100% conforme
-  // quantos dos 4 critérios estão OK (valor 0); a média do conjunto é a qualidade geral
+  // "penalidade" de uma linha, em item-equivalentes: cada ocorrência de um critério
+  // "consome" o peso daquele critério em itens da rua. Ex.: 1 avaria (peso 6) tira
+  // 6 dos itens da rua; 3 avarias tiram 18.
+  penalidadeLinha(row){
+    const p = AUDITORIA_PESOS_CRITERIOS;
+    return row.pickErrado*p.pickErrado + row.avariado*p.avariado + row.proxVenc*p.proxVenc + row.semSaldo*p.semSaldo;
+  },
+
+  // qualidade de UMA linha = (itens cadastrados na 8022 da rua - penalidade ponderada
+  // daquela auditoria) / itens da rua. Ex.: rua com 100 itens e 1 avaria (peso 6) →
+  // (100-6)/100 = 94%. Quando a rua não tem itens conhecidos na 8022, cai para a nota
+  // por critério em percentual (peso OK / peso total × 100).
+  qualidadeLinha(row){
+    const itens = this.ruaItensMap().get(String(row.rua)) || 0;
+    if(itens>0){
+      const pen = this.penalidadeLinha(row);
+      return Math.max(0, Math.min(100, (itens-pen)/itens*100));
+    }
+    return row.qualidade;
+  },
+
+  // qualidade média de um conjunto de linhas — média da qualidade (por volume ponderado,
+  // com fallback por critério) de cada uma
   qualidadeDe(rows){
-    return rows.length ? avg(rows.map(r=>r.qualidade)) : null;
+    return rows.length ? avg(rows.map(r=>this.qualidadeLinha(r))) : null;
   },
 
   // qualidade média num intervalo [ini,fim], respeitando os filtros de repositor/rua/
@@ -1936,6 +2169,19 @@ const AuditOnline = {
       if(codes) rows = rows.filter(r=>r.codKey && codes.has(r.codKey));
     }
     return this.qualidadeDe(rows);
+  },
+
+  // qualidade por repositor num intervalo [ini,fim] — ignora TODOS os filtros da tela
+  // de Auditoria (usado por outras telas, como o Ranking de Repositores do Feedback,
+  // que precisam de um número "cru" e estável independente do que está selecionado
+  // em Gestão > Auditoria no momento)
+  qualidadePorRepositorNoIntervalo(ini, fim){
+    const rows = (this.rows||[]).filter(r=>{ const d=dateOnly(r.data); return d>=ini && d<=fim && r.codKey; });
+    const map = new Map();
+    rows.forEach(r=>{ if(!map.has(r.codKey)) map.set(r.codKey, []); map.get(r.codKey).push(r); });
+    const out = new Map();
+    map.forEach((rs,codKey)=>{ out.set(codKey, { auditorias: rs.length, qualidadeMedia: this.qualidadeDe(rs) }); });
+    return out;
   },
 
   cards(){
@@ -2038,12 +2284,15 @@ const AuditOnline = {
     return map;
   },
 
-  // Qualidade de uma rua = (itens cadastrados na 8022 para essa rua - ocorrências
-  // encontradas nas auditorias) / itens cadastrados, em %. Se a 8022 não tiver dados
-  // para essa rua (itens=0/indisponível), cai para a média por critério (qualidadeDe).
+  // Qualidade agregada de uma rua = (itens cadastrados na 8022 - soma da penalidade
+  // ponderada de todas as auditorias daquela rua) / itens. Sem itens conhecidos,
+  // cai para a média da nota por critério.
   qualidadeRuaPorCatalogo(rua, ocorrencias, rowsDaRua){
     const itens = this.ruaItensMap().get(String(rua)) || 0;
-    if(itens>0) return { qualidade: Math.max(0, Math.min(100, (itens-ocorrencias)/itens*100)), itens };
+    if(itens>0){
+      const penTotal = sum(rowsDaRua.map(r=>this.penalidadeLinha(r)));
+      return { qualidade: Math.max(0, Math.min(100, (itens-penTotal)/itens*100)), itens };
+    }
     return { qualidade: this.qualidadeDe(rowsDaRua), itens: 0 };
   },
 
@@ -2155,6 +2404,16 @@ const Commission = {
   findException(codKey, cod, exceptions){
     return (exceptions||[]).find(e=> e.active!==false && e.codigo && normStr(e.codigo)===normStr(cod||"") );
   },
+  // Fator de ajuste por qualidade, aplicado SEMPRE em cima da comissão normal (por
+  // faixa/exceção) — não é um modelo alternativo, é um multiplicador sobre o valor já
+  // calculado: <50%=0 (zera) · 50-69,99%=0.5 (metade) · >=70%=qualidade/100 (proporcional,
+  // ex.: 71% de qualidade mantém 71% do valor da comissão).
+  qualityFactor(qualidade){
+    if(qualidade===null || qualidade===undefined) return null; // sem dado de auditoria — não penaliza, mantém valor cheio
+    if(qualidade < 50) return 0;
+    if(qualidade < 70) return 0.5;
+    return qualidade/100;
+  },
   computeAll(dataInicial, dataFinal, considerarMissoes){
     considerarMissoes = considerarMissoes !== false; // default true
     const cfg = window.APP_STATE.commissionConfig;
@@ -2180,10 +2439,28 @@ const Commission = {
       }
     });
 
+    // % Qualidade — vem da Auditoria online (Gestão > Auditoria, mesma planilha Google
+    // Sheets), calculada no MESMO período filtrado nesta tela (mês/intervalo selecionado
+    // em Gestão > Comissão). Sem filtro de data ativo, usa o mês atual até o momento
+    // (maxDataDate), que é o período padrão exibido.
+    const maxDateProd = Production.maxDataDate();
+    let qIni, qFim;
+    if(dataInicial || dataFinal){
+      qIni = dataInicial ? dateOnly(dataInicial) : dateOnly(new Date(dataFinal.getFullYear(), dataFinal.getMonth(), 1));
+      qFim = dataFinal ? dateOnly(dataFinal) : dateOnly(maxDateProd||new Date());
+    } else if(maxDateProd){
+      qIni = dateOnly(new Date(maxDateProd.getFullYear(), maxDateProd.getMonth(), 1));
+      qFim = dateOnly(maxDateProd);
+    }
+    const qualidadePorRep = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
+
     return Array.from(map.values()).map(e=>{
       const missaoInfo = missoesPorFuncionario.get(e.codKey);
       const missoesOs = missaoInfo ? missaoInfo.totalOs : 0;
       const pontos = considerarMissoes ? (e.producao + missoesOs) : e.producao;
+      const qInfo = qualidadePorRep.get(e.codKey);
+      const qualidade = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null;
+
       const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
       let valorPonto, regra, band;
       if(exc){
@@ -2193,10 +2470,23 @@ const Commission = {
         valorPonto = band ? band.value : 0;
         regra = band ? "Regra Normal" : "Sem faixa aplicável";
       }
-      const comissaoTotal = pontos * valorPonto;
+      const comissaoBase = pontos * valorPonto;
+
+      const fator = this.qualityFactor(qualidade);
+      const comissaoComDesconto = fator===null ? comissaoBase : comissaoBase*fator;
+      if(fator===null) regra += " — sem auditoria no período (comissão integral)";
+      else if(fator===0) regra += ` — qualidade ${fmtNum(qualidade,1)}% (<50%): comissão zerada`;
+      else if(fator===0.5) regra += ` — qualidade ${fmtNum(qualidade,1)}% (50-69%): metade da comissão`;
+      else regra += ` — qualidade ${fmtNum(qualidade,1)}%: ${fmtNum(fator*100,1)}% da comissão`;
+
+      // comissaoTotal = o valor "oficial" exibido/exportado, conforme o toggle
+      // "Aplicar desconto por qualidade?" — comissaoBase e comissaoComDesconto ficam
+      // sempre disponíveis nos dois totais do resumo, independente do toggle.
+      const comissaoTotal = commissionAplicarDesconto==="SIM" ? comissaoComDesconto : comissaoBase;
+
       return {
-        ...e, missoesOs, pontos, valorPonto, regra, band,
-        comissaoTotal
+        ...e, missoesOs, pontos, valorPonto, regra, band, qualidade,
+        comissaoBase, comissaoComDesconto, comissaoTotal
       };
     }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
   }
@@ -2404,6 +2694,14 @@ const FeedbackDoc = {
         ${cardHtml("O.S. Última Semana", fmtNum(hist.osSemana))}
         ${cardHtml("O.S. Mês Anterior", fmtNum(hist.osMesAnterior), hist.mesAnteriorLabel)}
         ${cardHtml("O.S. Últimos 3 Meses", fmtNum(hist.os3Meses))}
+      </div>
+
+      <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">🔍 Qualidade — Auditoria (Últimos 3 Meses)</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        ${cardHtml("% Qualidade (3m)",
+          (employee.qualidade!==null && employee.qualidade!==undefined) ? fmtNum(employee.qualidade,1)+'%' : 'Sem auditoria no período',
+          'Fonte: Gestão > Auditoria',
+          (employee.qualidade===null||employee.qualidade===undefined) ? '#7a8798' : employee.qualidade>=90 ? '#1a9c62' : employee.qualidade>=70 ? '#e08a1f' : '#d64545')}
       </div>
 
       <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">📈 Indicadores de Desempenho — Comparação Modo Mês</div>
@@ -2661,6 +2959,10 @@ const Export = {
     const target = targetOverride || this.currentArea();
     if(!target){ toast("Nada para exportar.","error"); return; }
     toast("Gerando imagem PNG...");
+    // trava animações/transições antes do screenshot, para não capturar o pane/card
+    // ainda no meio do fade-in (opacidade parcial) — ver .export-no-anim no CSS
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const canvas = await html2canvas(target, { backgroundColor:"#f4f6f9", scale:2, useCORS:true });
       const link = document.createElement("a");
@@ -2671,6 +2973,8 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PNG: "+err.message,"error");
+    }finally{
+      document.body.classList.remove("export-no-anim");
     }
   },
 
@@ -2761,11 +3065,16 @@ const Export = {
     const hiddenEls = Array.from(target.querySelectorAll(".pdf-hide-geral"));
     const prevDisplay = hiddenEls.map(el=>el.style.display);
     hiddenEls.forEach(el=>{ el.style.display="none"; });
+    // trava animações/transições antes do screenshot, para não capturar o pane/card
+    // ainda no meio do fade-in (opacidade parcial) — ver .export-no-anim no CSS
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const scale = 2;
       const units = this.findBreakUnits(target);
       const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale, useCORS:true });
       hiddenEls.forEach((el,i)=>{ el.style.display = prevDisplay[i]; });
+      document.body.classList.remove("export-no-anim");
 
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
@@ -2817,6 +3126,7 @@ const Export = {
       toast("PDF exportado com sucesso.","success");
     }catch(err){
       hiddenEls.forEach((el,i)=>{ el.style.display = prevDisplay[i]; });
+      document.body.classList.remove("export-no-anim");
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
     }
@@ -2828,6 +3138,8 @@ const Export = {
     const target = targetOverride || this.currentArea();
     if(!target){ toast("Nada para exportar.","error"); return; }
     toast("Gerando PDF em 1 página...");
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const canvas = await html2canvas(target, { backgroundColor:"#ffffff", scale:2, useCORS:true });
       const { jsPDF } = window.jspdf;
@@ -2855,6 +3167,8 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
+    }finally{
+      document.body.classList.remove("export-no-anim");
     }
   },
 
@@ -2863,6 +3177,8 @@ const Export = {
   async toPDFMultiPage(targets, filenamePrefix, orientation){
     if(!targets || !targets.length){ toast("Nada para exportar.","error"); return; }
     toast(`Gerando PDF com ${targets.length} página(s)...`);
+    document.body.classList.add("export-no-anim");
+    await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
     try{
       const { jsPDF } = window.jspdf;
       const orient = orientation || "landscape";
@@ -2892,6 +3208,8 @@ const Export = {
     }catch(err){
       console.error(err);
       toast("Falha ao exportar PDF: "+err.message,"error");
+    }finally{
+      document.body.classList.remove("export-no-anim");
     }
   }
 };
@@ -3045,12 +3363,17 @@ const UI = {
 
   async handleFile(file){
     $("#empty-error").innerHTML = "";
-    toast("Lendo arquivo "+file.name+"...");
+    LoadingScreen.show(file.name);
     let stage = "leitura do arquivo (Excel Loader)";
     try{
+      await LoadingScreen.step("recebido", 5);
+      await LoadingScreen.step("lendo", 20);
       const raw = await ExcelLoader.load(file);
 
+      await LoadingScreen.step("validando", 45);
+
       stage = "processamento dos dados (Data Processor)";
+      await LoadingScreen.step("sheets", 60);
       const processed = DataProcessor.process(raw);
 
       stage = "identificação do quadro atual (Current Team)";
@@ -3058,6 +3381,8 @@ const UI = {
 
       stage = "montagem do cadastro de nomes";
       const nameRegistry = buildNameRegistry(processed);
+
+      await LoadingScreen.step("processando", 85);
 
       window.APP_STATE.raw = raw;
       window.APP_STATE.processed = processed;
@@ -3082,25 +3407,39 @@ const UI = {
         if(currentTeam.cargoCounts.NAO_INFORMADO>0) extras.push(currentTeam.cargoCounts.NAO_INFORMADO+" sem cargo informado");
         if(extras.length) badgeText += " (+" + extras.join(", ") + ")";
       }
-      $("#quadro-badge").textContent = badgeText;
-      $("#empty-state").style.display = "none";
-      $("#main-content").style.display = "block";
-      $("#btn-export-png").disabled = false;
-      $("#btn-export-pdf").disabled = false;
 
-      // Restaura o botão Gestão caso tenha sido bloqueado pelo modo "sem arquivo"
-      const gestaoBtn = $(".nav-btn[data-view='gestao']");
-      if(gestaoBtn){ gestaoBtn.style.opacity=""; gestaoBtn.style.pointerEvents=""; gestaoBtn.title=""; }
-      // Remove hint de "sem arquivo" se existir
-      const hint = document.getElementById('avaria-sem-arquivo-hint');
-      if(hint) hint.remove();
+      await LoadingScreen.step("finalizando", 100);
+      stage = "montagem do log de importação";
+      LoadingScreen.hide();
 
-      toast("Arquivo carregado com sucesso.","success");
+      // Só revela o dashboard quando o usuário clicar em "Acessar Dashboard" na
+      // tela de log — até lá, a interface continua na tela de boas-vindas por trás
+      // do overlay, então nunca aparece "meio carregada".
+      ImportLog.show(file, raw,
+        /* onAccessDashboard */ () => {
+          $("#quadro-badge").textContent = badgeText;
+          $("#empty-state").style.display = "none";
+          $("#main-content").style.display = "block";
+          $("#btn-export-png").disabled = false;
+          $("#btn-export-pdf").disabled = false;
 
-      stage = "renderização do painel (UI)";
-      this.switchView("indicadores", true);
+          const gestaoBtn = $(".nav-btn[data-view='gestao']");
+          if(gestaoBtn){ gestaoBtn.style.opacity=""; gestaoBtn.style.pointerEvents=""; gestaoBtn.title=""; }
+          const hint = document.getElementById('avaria-sem-arquivo-hint');
+          if(hint) hint.remove();
+
+          toast("Arquivo carregado com sucesso.","success");
+          this.switchView("indicadores", true);
+          $("#file-input").value = "";
+        },
+        /* onLoadAnother */ () => {
+          $("#file-input").value = "";
+          $("#file-input").click();
+        }
+      );
     }catch(err){
       console.error("[Central de Reposição] Erro na etapa:", stage, err);
+      LoadingScreen.hide();
       const msg = (err && err.message) ? err.message : String(err);
       const stackHint = (err && err.stack) ? "\n\nDetalhe técnico (stack):\n" + err.stack.split("\n").slice(0,4).join("\n") : "";
       $("#empty-error").innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;white-space:pre-line;">` +
@@ -3109,8 +3448,8 @@ const UI = {
       toast("Erro ao carregar arquivo.","error");
       // garante que a interface não fica "meio carregada"
       window.APP_STATE.ready = false;
+      $("#file-input").value = "";
     }
-    $("#file-input").value = "";
   },
 
   buildSubnav(){
@@ -3239,6 +3578,11 @@ function atalhoOp8457(tipo){
   const {ini,fim}=periodoAtalho(tipo);
   Op8457State.ini=ini; Op8457State.fim=fim;
   renderOperadores();
+}
+function atalhoTurnover(tipo){
+  const {ini,fim}=periodoAtalho(tipo);
+  TurnoverState.filtroIni = ini; TurnoverState.filtroFim = fim; TurnoverState.atalhoSel = tipo;
+  renderTurnover();
 }
 
 function periodoAtalho(tipo){
@@ -3381,7 +3725,7 @@ function renderProducao(){
     st.employees = e.target.value ? [e.target.value] : []; renderProducao();
   });
   $("#prod-clear").addEventListener("click", ()=>{
-    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"SIM", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:0 };
+    Production.state = { mode:"mes", dataInicial:null, dataFinal:null, employees:[], quadroAtual:"NAO", weekCompareMode:"anterior", mesmaPeriodicidade:"SIM", projectionBase:1, dailyChartMes:1 };
     renderProducao();
   });
 
@@ -3405,7 +3749,7 @@ function renderProducaoContent(){
   const cmp = Production.modeComparison();
   const yearCmp = Production.yearComparison();
   const ytd = Production.ytd();
-  const daily = Production.dailySeries();
+  const daily = Production.dailySeriesForChart();
 
   // Duas projeções fixas — sempre presentes no topo independente do filtro "Base" do painel:
   //   projMesAtual  → base = média dos dias úteis já passados neste mês (projectionBase=0)
@@ -3464,7 +3808,7 @@ function renderProducaoContent(){
 
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><h3>Evolução Mensal — O.S. 58</h3><span class="panel-note">Fonte: 8460 · DTINICIOOS</span></div>
+        <div class="panel-header"><h3>Evolução Mensal — O.S. 58</h3><span class="panel-note">Fonte: 8460 · DTFIMSEPARACAO</span></div>
         <div class="chart-wrap"><canvas id="chart-evo-mensal"></canvas></div>
       </div>
       <div class="panel">
@@ -3515,7 +3859,13 @@ function renderProducaoContent(){
 
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-header"><h3>Produção Diária</h3></div>
+        <div class="panel-header">
+          <h3>Produção Diária</h3>
+          <select id="prod-daily-mes-select" style="font-size:12px;padding:4px 8px;border:1px solid #dde3ea;border-radius:6px;">
+            <option value="0" ${Production.state.dailyChartMes===0?'selected':''}>Mês Atual</option>
+            <option value="1" ${Production.state.dailyChartMes!==0?'selected':''}>Mês Anterior (fechado)</option>
+          </select>
+        </div>
         ${daily.length ? `
         <div class="card" style="margin-bottom:10px;display:inline-flex;align-items:center;gap:14px;padding:10px 16px;border-left:4px solid var(--orange);">
           <div><div class="card-label">Média Diária</div><div style="font-size:22px;font-weight:800;color:var(--orange);">${fmtNum(daily[0]?daily[0].media:0,1)}</div></div>
@@ -3625,13 +3975,19 @@ function renderProducaoContent(){
     type:"bar",
     data:{ labels: daily.map(d=>fmtDateBR(d.date)), datasets:[
       { type:"bar", label:"O.S. 58", data: daily.map(d=>d.total), backgroundColor:Charts.colors.blueLight, borderRadius:4 },
-      { type:"line", label:"Média", data: daily.map(d=>d.media), borderColor:Charts.colors.orange, borderWidth:2, pointRadius:0, tension:0 }
+      { type:"line", label:"Média", data: daily.map(d=>d.media), borderColor:Charts.colors.orange, borderWidth:2, pointRadius:0, tension:0, datalabels:{ display:false } }
     ]},
     options: Charts.baseOptions({ plugins:{ tooltip:{ callbacks:{ label:(ctx)=>{
       const d = daily[ctx.dataIndex];
       if(ctx.dataset.label==="Média") return `Média: ${fmtNum(d.media,1)}`;
       return `Quantidade: ${fmtNum(d.total)} (dif. média: ${fmtNum(d.total-d.media,1)})`;
     }}}}})
+  });
+
+  const dailyMesSel = $("#prod-daily-mes-select");
+  if(dailyMesSel) dailyMesSel.addEventListener("change", e=>{
+    Production.state.dailyChartMes = Number(e.target.value);
+    renderProducaoContent();
   });
 
   // gráfico anual com barra do mês atual destacada
@@ -3668,6 +4024,14 @@ function renderProducaoContent(){
   const pbase = $("#proj-base-select");
   if(pbase) pbase.addEventListener("change", e=>{ Production.state.projectionBase = Number(e.target.value); renderProjecaoExpandida(Production.projection()); });
   renderProjecaoExpandida(proj);
+
+  // Semana atual sempre expandida por padrão (sem precisar clicar)
+  const hojeWk = weekOfYearMonday(Production.maxDataDate() || new Date());
+  const hojeWeekKey = hojeWk.year*100+hojeWk.week;
+  const semanaAtual = weekly.find(w=>w.weekKey===hojeWeekKey);
+  if(semanaAtual){
+    showWeekDrilldown(semanaAtual.weekKey, semanaAtual.anteriorWeekKey, semanaAtual.label, semanaAtual.anterior);
+  }
 }
 
 function renderProjecaoExpandida(proj){
@@ -3855,12 +4219,29 @@ function getRankingRows(periodoKey){
     if(repositorSet) filtered = filtered.filter(r=>repositorSet.has(r.codKey));
   }
 
+  // --- O.S. 58 Mês Anterior (mesmo período): dia 1 até o mesmo dia-do-mês de hoje,
+  // só que no mês anterior — ex.: hoje é dia 14, compara com dia 1-14 do mês passado.
+  // Independe do periodoKey selecionado acima (é sempre essa mesma janela fixa).
+  const diaAtual = maxDate.getDate();
+  const mesAntAno = maxDate.getMonth()-1<0 ? maxDate.getFullYear()-1 : maxDate.getFullYear();
+  const mesAntMes = (maxDate.getMonth()-1+12)%12;
+  const mesAntIni = dateOnly(new Date(mesAntAno, mesAntMes, 1));
+  const ultimoDiaMesAnt = new Date(mesAntAno, mesAntMes+1, 0).getDate();
+  const mesAntFim = dateOnly(new Date(mesAntAno, mesAntMes, Math.min(diaAtual, ultimoDiaMesAnt)));
+  let rowsMesAnt = allRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=mesAntIni && d<=mesAntFim; });
+  if(producaoOnlyRepositor){
+    const repositorSet = getRepositorCodeSet();
+    if(repositorSet) rowsMesAnt = rowsMesAnt.filter(r=>repositorSet.has(r.codKey));
+  }
+  const mapAnt = new Map();
+  rowsMesAnt.forEach(r=>{ mapAnt.set(r.codKey, (mapAnt.get(r.codKey)||0)+1); });
+
   const map = new Map();
   filtered.forEach(r=>{
     if(!map.has(r.codKey)) map.set(r.codKey, { codKey:r.codKey, nome: registry.get(r.codKey)||r.nome, total:0 });
     map.get(r.codKey).total++;
   });
-  return Array.from(map.values()).sort((a,b)=>b.total-a.total);
+  return Array.from(map.values()).map(e=>({...e, osMesAnterior: mapAnt.get(e.codKey)||0})).sort((a,b)=>b.total-a.total);
 }
 
 function renderRankingSection(periodoKey){
@@ -3890,7 +4271,7 @@ function renderRankingSection(periodoKey){
       <div class="grid-2">
         <!-- MELHORES -->
         <div>
-          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🏆 Top 5 Melhores Repositores</div>
+          <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">📈 Destaques em Produtividade</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             ${top5.map((r,i)=>`<div class="card pos" style="min-width:140px;flex:1;">
               <div class="card-label">${medalha(i)}</div>
@@ -3901,19 +4282,19 @@ function renderRankingSection(periodoKey){
           </div>
           <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
             <table class="data-table">
-              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
               <tbody>
-                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
+                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
         </div>
         <!-- PIORES -->
         <div>
-          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:10px;">⚠️ Top 5 Piores Repositores</div>
+          <div style="font-size:13px;font-weight:700;color:var(--orange);margin-bottom:10px;">🎯 Oportunidades de Desenvolvimento</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             ${bot5.map((r,i)=>`<div class="card neg" style="min-width:140px;flex:1;">
-              <div class="card-label">${i+1}º pior</div>
+              <div class="card-label">Atenção</div>
               <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:4px;">${escapeHtml(r.nome.split(" ")[0])} ${escapeHtml(r.nome.split(" ").slice(-1)[0])}</div>
               <div class="card-value neg" style="font-size:20px;">${fmtNum(r.total)}</div>
               <div class="card-sub">O.S. 58</div>
@@ -3921,9 +4302,9 @@ function renderRankingSection(periodoKey){
           </div>
           <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
             <table class="data-table">
-              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th></tr></thead>
+              <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
               <tbody>
-                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td></tr>`).join("") || '<tr><td colspan="3" class="small-muted">—</td></tr>'}
+                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -4147,7 +4528,12 @@ function getFeedbackRankingData(){
   const currentTeam = window.APP_STATE.currentTeam;
   const registry = window.APP_STATE.nameRegistry;
   const maxDate = Production.maxDataDate();
-  const auditByEmp = new Map(Audit.byRepositor().map(e=>[e.codKey,e]));
+  // Qualidade % vem da Auditoria online (Gestão > Auditoria, mesma planilha Google
+  // Sheets), sempre nos últimos 3 meses (mesma janela usada em "O.S. Últimos 3 Meses"
+  // abaixo) — independente de qualquer filtro que esteja ativo na tela de Auditoria.
+  const qIni = maxDate ? addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2) : null;
+  const qFim = maxDate ? dateOnly(maxDate) : null;
+  const auditByEmp = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
   const rows58 = processed.p8460.filter(r=>r.tipoos===58);
 
   // base de funcionários: quadro atual ou todo o histórico, conforme o toggle
@@ -4234,7 +4620,7 @@ function renderFeedbackRankingPanel(){
           <thead><tr>
             <th style="width:30px;"><input type="checkbox" id="feedback-select-all" ${allSelected?'checked':''}></th>
             <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
-            <th>O.S. Último Dia</th><th>Auditorias Realizadas</th><th>Qualidade %</th>
+            <th>O.S. Último Dia</th><th>Auditorias (3m)</th><th>Qualidade % (3m)</th>
           </tr></thead>
           <tbody>
             ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployees.has(e.codKey)?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="toggleFeedbackEmployee('${escapeHtml(e.codKey)}')">
@@ -4294,6 +4680,12 @@ function getFeedbackFiltered(){
 function renderFeedbacks(){
   const pane = $("#pane-feedbacks");
   const st = FeedbackState;
+  // % Qualidade (últimos 3 meses) no ranking vem do AuditOnline (Gestão > Auditoria,
+  // planilha Google Sheets) — carrega em background se ainda não tiver sido carregado
+  // (ex.: usuário nunca visitou a aba Auditoria nesta sessão) e re-renderiza quando chegar.
+  if(AuditOnline.rows===null && !AuditOnline.loading){
+    AuditOnline.load().then(()=> renderFeedbacksContent());
+  }
   pane.innerHTML = `
     <div class="toolbar">
       <div class="filter-group"><label>Data Inicial</label><input type="date" id="fb-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
@@ -5242,7 +5634,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade de uma auditoria = % dos 4 criterios OK (Picking Errado, Avariados, Prox. Vencimento, Sem Saldo = 0). Qualidade do grupo = media das auditorias.</div>
+    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua − penalidade) / Itens, onde penalidade = Avariados×6 + Prox.Vencimento×2 + Picking Errado×2 + Sem Saldo×2. Ex.: rua com 100 itens e 1 avaria = (100−6)/100 = 94%. Sem itens conhecidos na 8022, usa a nota por critério (peso OK / 12 × 100). Qualidade do grupo = media das auditorias.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
@@ -5306,7 +5698,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Repositor e Rua</h3>
-        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens · quando a rua nao tem itens na 8022, usa a media por auditoria</span>
+        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×6 + Prox.Venc×2 + Picking×2 + SemSaldo×2</span>
       </div>
       <div class="table-wrap" style="max-height:400px;overflow-y:auto;"><table class="data-table">
         <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
@@ -5317,7 +5709,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Resumo</h3>
-        <span class="panel-note">Qualidade = (Itens cadastrados na 8022 - Problemas encontrados) / Itens</span>
+        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×6 + Prox.Venc×2 + Picking×2 + SemSaldo×2</span>
       </div>
       <div class="table-wrap"><table class="data-table">
         <thead><tr><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Problemas</th><th>Qualidade Media</th><th>Status</th></tr></thead>
@@ -5429,6 +5821,7 @@ let commissionShowMissoes = true; // visibilidade da coluna Missões
 let commissionShowValorPonto = true; // visibilidade da coluna Valor/Ponto
 let commissionShowComissaoTotal = true; // visibilidade da coluna Comissão Total
 let commissionShowRegra = true; // visibilidade da coluna Regra
+let commissionAplicarDesconto = "SIM"; // se o desconto por % Qualidade é aplicado na Comissão Total exibida/exportada
 const CommissionState = { dataInicial: null, dataFinal: null };
 
 function renderComissao(){
@@ -5436,6 +5829,12 @@ function renderComissao(){
   const cfg = window.APP_STATE.commissionConfig;
   const currentTeam = window.APP_STATE.currentTeam;
   const st = CommissionState;
+
+  // % Qualidade (coluna + modelo por qualidade) vem do AuditOnline (Gestão > Auditoria) —
+  // carrega em background se ainda não tiver sido carregado nesta sessão.
+  if(AuditOnline.rows===null && !AuditOnline.loading){
+    AuditOnline.load().then(()=> renderCommissionTable());
+  }
 
   const badgePeriodo = (st.dataInicial || st.dataFinal)
     ? `<span class="hint-box" style="margin:0;padding:6px 12px;">📅 <strong>${st.dataInicial?fmtDateBR(st.dataInicial):'início'}</strong> até <strong>${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}</strong></span>`
@@ -5479,6 +5878,20 @@ function renderComissao(){
     </div>
     ${commissionOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
 
+    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
+      <div class="panel-header"><h3>🔍 Desconto por % Qualidade</h3></div>
+      <div class="toolbar" style="margin-bottom:0;">
+        <div class="filter-group">
+          <label>Aplicar desconto por qualidade?</label>
+          <div class="toggle-group" id="comm-desconto-toggle">
+            <button data-v="SIM" class="${commissionAplicarDesconto==='SIM'?'active':''}">Sim</button>
+            <button data-v="NAO" class="${commissionAplicarDesconto==='NAO'?'active':''}">Não</button>
+          </div>
+        </div>
+        <span class="small-muted">Qualidade &lt;50% zera a comissão · 50-69% paga metade · ≥70% paga o % da qualidade sobre o valor normal (ex.: 71% de qualidade = 71% da comissão). Sem auditoria no período, fica integral. Os dois totais (com e sem desconto) aparecem sempre no resumo abaixo — este toggle só decide qual valor conta como "Comissão Total" na tabela e na exportação.</span>
+      </div>
+    </div>
+
     <div class="grid-2">
       <div class="panel">
         <div class="panel-header"><h3>Faixas de Pontuação</h3><div class="panel-actions"><button class="btn btn-outline btn-sm" id="add-band">+ Adicionar faixa</button></div></div>
@@ -5521,6 +5934,11 @@ function renderComissao(){
     </div>
   `;
 
+  $("#comm-desconto-toggle").addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    commissionAplicarDesconto = b.dataset.v;
+    renderCommissionTable();
+  });
   $("#comm-quadro-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
     commissionQuadroAtual = b.dataset.v;
@@ -5692,15 +6110,18 @@ function getComissaoTableData(){
 function renderCommissionTable(){
   const data = getComissaoTableData();
   const st = CommissionState;
+  const qualClass = (v) => v===null||v===undefined ? '' : v>=90 ? 'cell-pos' : v>=70 ? 'cell-warn' : 'cell-neg';
+  const qualLabel = (v) => v===null||v===undefined ? '<span class="small-muted">Sem auditoria</span>' : fmtNum(v,1)+'%';
 
   // cabeçalho dinâmico conforme colunas visíveis
   const theadHtml = `<tr>
     <th>Código</th><th>Repositor</th><th>Produção (O.S. 58)</th>
     ${commissionShowMissoes?'<th>Missões (O.S. equiv.)</th>':''}
     <th>Pontos</th>
+    <th>% Qualidade (período)</th>
     ${commissionShowValorPonto?'<th>Valor/Ponto</th>':''}
     ${commissionShowRegra?'<th>Regra</th>':''}
-    ${commissionShowComissaoTotal?'<th>Comissão Total</th>':''}
+    ${commissionShowComissaoTotal?'<th>Comissão Base</th><th>Comissão Total (c/ ajuste)</th>':''}
   </tr>`;
   $("#commission-thead").innerHTML = theadHtml;
 
@@ -5709,19 +6130,26 @@ function renderCommissionTable(){
       <td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${fmtNum(e.producao)}</td>
       ${commissionShowMissoes?`<td>${e.missoesOs>0?`<span class="tag-pos">+${fmtNum(e.missoesOs)}</span>`:'-'}</td>`:''}
       <td><strong>${fmtNum(e.pontos)}</strong></td>
+      <td class="${qualClass(e.qualidade)}">${qualLabel(e.qualidade)}</td>
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
-      ${commissionShowRegra?`<td>${e.regra==='Exceção Individual'?`<span class="tag-warn">${e.regra}</span>`:e.regra==='Regra Normal'?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
-      ${commissionShowComissaoTotal?`<td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
-    </tr>`).join("") || `<tr><td colspan="8" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
+      ${commissionShowRegra?`<td>${e.regra.startsWith('Exceção Individual')?`<span class="tag-warn">${e.regra}</span>`:e.regra.startsWith('Regra Normal')?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
+      ${commissionShowComissaoTotal?`<td class="small-muted">${fmtBRL(e.comissaoBase)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
+    </tr>`).join("") || `<tr><td colspan="10" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
 
-  // resumo: período selecionado + valor total (respeitando todos os filtros/toggles ativos)
+  // resumo: período selecionado + os dois totais (com e sem desconto), sempre os dois —
+  // o toggle "Aplicar desconto?" só decide qual vira a "Comissão Total" oficial da tabela/export
   const periodoLabel = (st.dataInicial || st.dataFinal)
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'início'} até ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
     : "todo o histórico";
-  const totalGeral = sum(data.map(e=>e.comissaoTotal));
+  const totalSemDesconto = sum(data.map(e=>e.comissaoBase));
+  const totalComDesconto = sum(data.map(e=>e.comissaoComDesconto));
   const resumoEl = $("#commissao-resumo-periodo");
   if(resumoEl){
-    resumoEl.innerHTML = `📅 Período: <strong>${periodoLabel}</strong> &nbsp;·&nbsp; 👥 ${data.length} repositor(es) &nbsp;·&nbsp; 💰 Valor Total: <strong>${fmtBRL(totalGeral)}</strong>` +
+    resumoEl.innerHTML = `📅 Período: <strong>${periodoLabel}</strong> &nbsp;·&nbsp; 👥 ${data.length} repositor(es)<br>` +
+      `💰 Total <strong>sem</strong> desconto: <strong>${fmtBRL(totalSemDesconto)}</strong>` +
+      (commissionAplicarDesconto==='NAO' ? ' <span class="tag-pos">valor aplicado ✓</span>' : '') +
+      ` &nbsp;·&nbsp; 💰 Total <strong>com</strong> desconto: <strong>${fmtBRL(totalComDesconto)}</strong>` +
+      (commissionAplicarDesconto==='SIM' ? ' <span class="tag-pos">valor aplicado ✓</span>' : '') +
       (commissionConsiderarMissoes==='NAO' ? ' <span class="tag-neutral">missões não consideradas</span>' : '') +
       (commissionOnlyRepositor ? ' <span class="tag-neutral">somente cargo Repositor</span>' : '');
   }
@@ -5741,21 +6169,25 @@ function exportComissaoToExcel(){
   const header = ["Código", "Repositor", "Produção (O.S. 58)"];
   if(commissionShowMissoes) header.push("Missões (O.S. equiv.)");
   header.push("Pontos");
+  header.push("% Qualidade (período)");
   if(commissionShowValorPonto) header.push("Valor/Ponto (R$)");
   if(commissionShowRegra) header.push("Regra");
-  if(commissionShowComissaoTotal) header.push("Comissão Total (R$)");
+  if(commissionShowComissaoTotal) header.push("Comissão Base (R$)", "Comissão Total c/ ajuste (R$)");
 
   const periodoLabel = (st.dataInicial || st.dataFinal)
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'inicio'} ate ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
     : "todo o historico";
-  const totalGeral = sum(data.map(e=>e.comissaoTotal));
+  const totalSemDesconto = sum(data.map(e=>e.comissaoBase));
+  const totalComDesconto = sum(data.map(e=>e.comissaoComDesconto));
 
   const aoa = [
     ["Comissão Calculada — Núcleo Reposição"],
     ["Período:", periodoLabel],
     ["Considerar Missões:", commissionConsiderarMissoes==='SIM' ? 'Sim' : 'Não'],
     ["Apenas Repositor:", commissionOnlyRepositor ? 'Sim' : 'Não'],
-    ["Valor Total:", totalGeral],
+    ["Aplicar Desconto por Qualidade (valor usado como Comissão Total):", commissionAplicarDesconto==='SIM' ? 'Sim' : 'Não'],
+    ["Total SEM desconto:", totalSemDesconto],
+    ["Total COM desconto:", totalComDesconto],
     [],
     header
   ];
@@ -5763,9 +6195,10 @@ function exportComissaoToExcel(){
     const row = [e.cod||'-', e.nome, e.producao];
     if(commissionShowMissoes) row.push(e.missoesOs);
     row.push(e.pontos);
+    row.push(e.qualidade!==null && e.qualidade!==undefined ? +e.qualidade.toFixed(1) : 'Sem auditoria');
     if(commissionShowValorPonto) row.push(+e.valorPonto.toFixed(2));
     if(commissionShowRegra) row.push(e.regra);
-    if(commissionShowComissaoTotal) row.push(+e.comissaoTotal.toFixed(2));
+    if(commissionShowComissaoTotal){ row.push(+e.comissaoBase.toFixed(2)); row.push(+e.comissaoTotal.toFixed(2)); }
     aoa.push(row);
   });
 
@@ -6416,7 +6849,10 @@ function renderIndividualResult(){
 /* ---------------------------------------------------------------------- */
 /* MODULE: Turnover (Gestão → Turnover)                                    */
 /* ---------------------------------------------------------------------- */
-const TurnoverState = { periodoMeses: 3 }; // quantos meses atrás calcular
+// filtroIni/filtroFim = filtro de período aplicado (controla TODO o painel Turnover:
+// indicadores, admissões, desligamentos, transferências, comparações e tabelas).
+// null em ambos = usa o padrão (últimos 3 meses), igual ao comportamento anterior.
+const TurnoverState = { periodoMeses: 3, filtroIni: null, filtroFim: null, atalhoSel: null, transfIni: null, transfFim: null };
 
 function computeTurnover(){
   const processed = window.APP_STATE.processed;
@@ -6430,26 +6866,48 @@ function computeTurnover(){
   const quadroCadastrado = ativos.length;
 
   // --- Período de análise ---
+  // Controla TODO o painel (indicadores, admissões, desligamentos, transferências,
+  // comparações e tabelas). Se o usuário aplicou um filtro de Data Inicial/Data Final,
+  // usa exatamente esse intervalo; senão cai no padrão de sempre (últimos 3 meses).
+  const filtroAtivo = !!(TurnoverState.filtroIni || TurnoverState.filtroFim);
   const meses = TurnoverState.periodoMeses || 3;
-  const periodoFim = hoje;
-  const periodoIni = addMonths(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -meses+1);
-  periodoIni.setDate(1);
+  let periodoIni, periodoFim;
+  if(filtroAtivo){
+    periodoFim = TurnoverState.filtroFim ? dateOnly(TurnoverState.filtroFim) : dateOnly(hoje);
+    periodoIni = TurnoverState.filtroIni ? dateOnly(TurnoverState.filtroIni) : new Date(2000,0,1);
+  } else {
+    periodoFim = hoje;
+    periodoIni = addMonths(new Date(hoje.getFullYear(), hoje.getMonth(), 1), -meses+1);
+    periodoIni.setDate(1);
+  }
 
   const noPeriodo = (dt) => dt && dt >= periodoIni && dt <= periodoFim;
 
   // --- Contratações / Desligamentos / Transferências no período ---
-  // TIPO="TRANSFERIDO"/"TRANSFERENCIA" (ou qualquer variação contendo "transfer") conta só no
-  // card 🔀 Transferências, nunca em ➖ Desligamentos — por isso os dois filtros
-  // usam a mesma checagem (.includes("transfer")) para não haver contagem dupla
-  // nem TRANSFERIDO escapando da exclusão em Desligamentos.
+  // Considera transferido quem tiver: TIPO contendo "transfer" (TRANSFERIDO,
+  // TRANSFERENCIA etc.) OU a coluna DATA TRANSFERENCIA preenchida — o que vier
+  // primeiro já classifica a linha como transferência, mesmo que o TIPO esteja em
+  // branco ou com outro texto. Isso conta só no card 🔀 Transferências, nunca em
+  // ➖ Desligamentos.
   // Data de referência da transferência: prioriza a coluna DATA TRANSFERENCIA;
   // se não estiver preenchida, cai para DATA DESLIGAMENTO (transferido pra fora do
   // time) e por último DATA CONTRATAÇÃO (funcionário ATIVO=SIM que chegou via
   // transferência e não tem nenhuma das duas outras datas).
-  const isTransferencia = r => normStr(r.tipo||"").includes("transfer");
+  const isTransferencia = r => normStr(r.tipo||"").includes("transfer") || !!r.dtTransf;
   const contratacoes = tv.filter(r=>noPeriodo(r.dtAdm));
   const desligamentos = tv.filter(r=>r.dtDesl && noPeriodo(r.dtDesl) && !isTransferencia(r));
   const transferencias = tv.filter(r=>isTransferencia(r) && noPeriodo(r.dtTransf || r.dtDesl || r.dtAdm));
+
+  // --- Transferências: filtro dedicado por intervalo de datas (independente do
+  // período de análise geral) — usa DATA TRANSFERENCIA como referência; ignora
+  // linhas sem essa data preenchida.
+  const tIni = TurnoverState.transfIni, tFim = TurnoverState.transfFim;
+  const transferenciasFiltro = tv.filter(r=>{
+    if(!isTransferencia(r) || !r.dtTransf) return false;
+    if(tIni && r.dtTransf < dateOnly(tIni)) return false;
+    if(tFim && r.dtTransf > dateOnly(tFim)) return false;
+    return true;
+  }).sort((a,b)=>b.dtTransf-a.dtTransf);
 
   // --- Quadro médio para Turnover ---
   const quadroInicial = tv.filter(r=>{
@@ -6507,15 +6965,22 @@ function computeTurnover(){
   const scounts = { PRESENTE:0, SEGUNDO_TURNO:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0 };
   quadroRows.forEach(r=>{ scounts[r.bucket] = (scounts[r.bucket]||0)+1; });
 
+  // Quadro Geral (tabela) — quando o filtro de período está ativo, mostra só quem
+  // teve algum evento (admissão, desligamento ou transferência) dentro do intervalo;
+  // sem filtro, mostra o cadastro completo (comportamento de sempre).
+  const tvFiltrado = filtroAtivo
+    ? tv.filter(r => noPeriodo(r.dtAdm) || noPeriodo(r.dtDesl) || noPeriodo(r.dtTransf))
+    : tv;
+
   return {
-    hoje, periodoIni, periodoFim, meses,
+    hoje, periodoIni, periodoFim, meses, filtroAtivo,
     quadroCadastrado, quadroChamada, quadroInicial, quadroFinal, quadroMedio,
-    contratacoes, desligamentos, transferencias,
+    contratacoes, desligamentos, transferencias, transferenciasFiltro,
     turnoverTotal, turnoverEntrada, turnoverSaida,
     probatorio, efetivados, alertas, urgencias, semData,
     noTurnoverNaoChamada, naChamadaNaoTurnover,
     conciliados, pctConferencia,
-    scounts, ativos
+    scounts, ativos, tvFiltrado
   };
 }
 
@@ -6569,7 +7034,29 @@ function renderTurnover(){
   const corTurnover = d.turnoverTotal<=5?'#1a9c62':d.turnoverTotal<=10?'#e08a1f':'#d64545';
   const statusConf = d.noTurnoverNaoChamada.length===0 && d.naChamadaNaoTurnover.length===0;
 
+  const periodoLabel = d.filtroAtivo
+    ? `${fmtDateBR(d.periodoIni)} até ${fmtDateBR(d.periodoFim)}`
+    : `Últimos ${meses===1?'30 dias (mês atual)':meses+' meses'} (padrão)`;
+
   pane.innerHTML = `
+    <!-- ======================== FILTRO DE PERÍODO — controla todo o painel ======================== -->
+    <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
+      <div class="panel-header">
+        <h3>🗓️ Filtro de Período</h3>
+        <span class="panel-note" style="font-weight:700;color:#123a6b;">Ativo: ${periodoLabel}</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        ${renderAtalhos(TurnoverState.atalhoSel, 'atalhoTurnover', ['mes_atual','mes_ant','ultimos_3m','ano_atual','ano_ant','tudo'])}
+      </div>
+      <div class="toolbar" style="margin-bottom:0;">
+        <div class="filter-group"><label>Data Inicial</label><input type="date" id="tv-filtro-ini" value="${TurnoverState.filtroIni?toInputDate(TurnoverState.filtroIni):''}"></div>
+        <div class="filter-group"><label>Data Final</label><input type="date" id="tv-filtro-fim" value="${TurnoverState.filtroFim?toInputDate(TurnoverState.filtroFim):''}"></div>
+        <div class="spacer"></div>
+        <button class="btn btn-outline btn-sm" id="tv-filtro-limpar">Limpar filtro</button>
+        <button class="btn btn-primary btn-sm" id="tv-filtro-aplicar">Aplicar filtro</button>
+      </div>
+    </div>
+
     <!-- ======================== RESUMO + CARDS ======================== -->
     <div class="panel">
       <div class="panel-header">
@@ -6612,11 +7099,40 @@ function renderTurnover(){
       ${!statusConf ? `<div class="warn-box">⚠️ ATENÇÃO: O quadro da Reposição não está 100% conciliado com a chamada. ${d.noTurnoverNaoChamada.length} no Turnover sem chamada · ${d.naChamadaNaoTurnover.length} na chamada sem Turnover.</div>` : ''}
     </div>
 
+    <!-- ======================== TRANSFERÊNCIAS — DETALHAMENTO ======================== -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>🔀 Transferências — Detalhamento</h3>
+        <span class="panel-note">Filtra por DATA TRANSFERENCIA · independente do período de análise acima</span>
+      </div>
+      <div class="toolbar" style="margin-bottom:10px;">
+        <div class="filter-group"><label>Data Início</label><input type="date" id="tv-transf-ini" value="${TurnoverState.transfIni?toInputDate(TurnoverState.transfIni):''}"></div>
+        <div class="filter-group"><label>Data Fim</label><input type="date" id="tv-transf-fim" value="${TurnoverState.transfFim?toInputDate(TurnoverState.transfFim):''}"></div>
+        <div class="spacer"></div>
+        <button class="btn btn-outline btn-sm" id="tv-transf-clear">Limpar</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Matrícula</th><th>Nome</th><th>Data Transferência</th><th>Tipo</th><th>Ativo</th></tr></thead>
+          <tbody>
+            ${d.transferenciasFiltro.length ? d.transferenciasFiltro.map(r=>`
+              <tr>
+                <td>${escapeHtml(r.matric||'—')}</td>
+                <td><strong>${escapeHtml(r.nome||'—')}</strong></td>
+                <td>${fmtDateBR(r.dtTransf)}</td>
+                <td>${escapeHtml(r.tipo||'—')}</td>
+                <td>${r.ativo?'✅ Sim':'❌ Não'}</td>
+              </tr>`).join('') : `<tr><td colspan="5" style="text-align:center;color:#7a8798;padding:14px;">${TurnoverState.transfIni||TurnoverState.transfFim ? 'Nenhuma transferência no intervalo selecionado.' : 'Nenhum registro com DATA TRANSFERENCIA preenchida.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ======================== TABELA GERAL ======================== -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 Quadro Geral — Todos os Funcionários</h3>
-        <span class="panel-note">${tv.length} registros · ${d.quadroCadastrado} ativos</span>
+        <h3>📋 Quadro Geral — ${d.filtroAtivo?'Funcionários com Evento no Período':'Todos os Funcionários'}</h3>
+        <span class="panel-note">${d.tvFiltrado.length} registro(s)${d.filtroAtivo?' no período filtrado':''} · ${d.quadroCadastrado} ativos no total</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -6634,7 +7150,7 @@ function renderTurnover(){
             </tr>
           </thead>
           <tbody>
-            ${tv.map(r=>{
+            ${d.tvFiltrado.map(r=>{
               const prob = statusProb(r);
 
               // Data contratação
@@ -6700,9 +7216,34 @@ function renderTurnover(){
     </div>` : ''}
   `;
 
-  const selPeriodo = document.getElementById("tv-periodo-select");
-  if(selPeriodo) selPeriodo.addEventListener("change", e=>{
-    TurnoverState.periodoMeses = Number(e.target.value);
+  const tvFiltroAplicar = document.getElementById("tv-filtro-aplicar");
+  const tvFiltroLimpar = document.getElementById("tv-filtro-limpar");
+  if(tvFiltroAplicar) tvFiltroAplicar.addEventListener("click", ()=>{
+    const iniVal = document.getElementById("tv-filtro-ini").value;
+    const fimVal = document.getElementById("tv-filtro-fim").value;
+    TurnoverState.filtroIni = iniVal ? new Date(iniVal+"T00:00:00") : null;
+    TurnoverState.filtroFim = fimVal ? new Date(fimVal+"T00:00:00") : null;
+    TurnoverState.atalhoSel = null;
+    renderTurnover();
+  });
+  if(tvFiltroLimpar) tvFiltroLimpar.addEventListener("click", ()=>{
+    TurnoverState.filtroIni = null; TurnoverState.filtroFim = null; TurnoverState.atalhoSel = null;
+    renderTurnover();
+  });
+
+  const tvTransfIni = document.getElementById("tv-transf-ini");
+  const tvTransfFim = document.getElementById("tv-transf-fim");
+  const tvTransfClear = document.getElementById("tv-transf-clear");
+  if(tvTransfIni) tvTransfIni.addEventListener("change", e=>{
+    TurnoverState.transfIni = e.target.value ? new Date(e.target.value+"T00:00:00") : null;
+    renderTurnover();
+  });
+  if(tvTransfFim) tvTransfFim.addEventListener("change", e=>{
+    TurnoverState.transfFim = e.target.value ? new Date(e.target.value+"T00:00:00") : null;
+    renderTurnover();
+  });
+  if(tvTransfClear) tvTransfClear.addEventListener("click", ()=>{
+    TurnoverState.transfIni = null; TurnoverState.transfFim = null;
     renderTurnover();
   });
 }
@@ -6726,9 +7267,14 @@ function computeFerias(){
   const linhas = ativos.map(r=>{
     // primeira data de férias do ciclo: admissão + 13 meses
     let dataFerias = addMonths(r.dtAdm, 13);
-    // avança de 12 em 12 meses até achar o ciclo vigente (o mais próximo de hoje,
-    // sem "pular" um ciclo ainda não vencido)
-    while(addMonths(dataFerias, 12) <= hoje){ dataFerias = addMonths(dataFerias, 12); }
+    // Dedução de ciclos já tirados: se o ciclo está vencido há mais de 4 meses (120 dias),
+    // presume-se que o funcionário já tirou essas férias (mesmo sem registro), e avança
+    // pro próximo ciclo (+12 meses). Repete em cascata pra cada ano — assim alguém com
+    // vários anos de casa "pula" automaticamente todos os ciclos antigos presumidos como
+    // já tirados, e para exatamente no ciclo vigente a partir do ano atual.
+    // Ex.: admissão 11/09/2019 → ciclos 2020..2025 todos vencidos há mais de 4 meses →
+    // presume-se tirados → para no ciclo 2026 (11/10/2026), ainda não vencido.
+    while((hoje - dataFerias) / 86400000 > 120){ dataFerias = addMonths(dataFerias, 12); }
 
     const diffDias = Math.round((dataFerias - hoje) / 86400000);
 
@@ -6777,7 +7323,7 @@ function renderFerias(){
     <div class="panel">
       <div class="panel-header">
         <h3>🏖️ Férias — Painel de Controle</h3>
-        <span class="panel-note">Cálculo: Data de Contratação + 12 meses (fecha 1 ano) → férias programadas para o mês seguinte · ciclo se repete a cada 12 meses</span>
+        <span class="panel-note">Cálculo: Data de Contratação + 12 meses (fecha 1 ano) → férias programadas para o mês seguinte · ciclo se repete a cada 12 meses · ciclos vencidos há mais de 4 meses são presumidos como já tirados e avançam pro próximo ano</span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${mc('vencida','Vencidas', d.counts.vencida, '#d64545', FeriasState.filtro==='vencida')}
