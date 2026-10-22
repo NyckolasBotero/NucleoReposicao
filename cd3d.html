@@ -304,6 +304,7 @@ function layout(){
     if(!wing(I.r))return cfg.pred1==='W'?-I.len/2+b*bay:I.len/2-(b+1)*bay;
     return cfg.pred1==='W'?zTop+b*bay:zTop+I.len-(b+1)*bay};
   const sideSign=a=>((a.pred%2===1)===(cfg.oddSide==='N'))?-1:1;
+  S.ext=[];
   const groups=new Map();
   for(const a of S.list){const k=a.rua+'|'+a.pred+'|'+a.niv;let g=groups.get(k);if(!g){g=[];groups.set(k,g)}g.push(a)}
   const put=(a,I,al,cr,along,cross,y0,h)=>{
@@ -313,13 +314,29 @@ function layout(){
     g.sort((x,y)=>x.apto-y.apto);
     const a0=g[0],I=info[a0.rua],m=I.m,lh=m.levelH,b=Math.ceil(a0.pred/2)-1,bs=bayStart(I,b);
     const cr=sideSign(a0)*(m.aisle/2+m.depth/2),n=g.length,y0=(a0.niv-1)*lh+0.08,hF=lh*0.82;
-    if(FLOW_RUAS.includes(a0.rua)&&a0.niv===1&&a0.pred%2===1){
+    if(FLOW_RUAS.includes(a0.rua)&&a0.niv===1&&a0.pred%2===1&&!g.some(a=>effTipo(a)==='DRIVE')){
       /* flowrack: apto 1 frente / 2 fundo no nível mais baixo, 3-4 acima, 5-6 acima... (tudo é nível 1 no sistema) */
       const tiers=Math.ceil(Math.max(...g.map(a=>a.apto))/2),th=hF/tiers,sg=sideSign(a0);
       g.forEach(a=>{const t=Math.ceil(a.apto/2)-1,back=a.apto%2===0;
         put(a,I,bs+m.bay/2,cr+(back?1:-1)*sg*m.depth/4,m.bay*0.92,m.depth*0.46,y0+t*th,th*0.86)});
-    } else if(n<=8){const fr=g.map(a=>frac(effTipo(a))),sum=fr.reduce((x,y)=>x+y,0);let off=0;
-      g.forEach((a,i)=>{const w=fr[i]/sum*m.bay;put(a,I,bs+off+w/2,cr,w*0.92,m.depth*0.92,y0,hF);off+=w})}
+    } else if(n<=8){
+      /* colunas na largura do vão: Inteiro=1, par de Meios=1 (um sobre o outro: corte horizontal), Terço=1/3 */
+      const cols=[];
+      for(let i=0;i<g.length;i++){const a=g[i],t=effTipo(a);
+        if(t==='MEIO'){const nx=g[i+1];if(nx&&effTipo(nx)==='MEIO'){cols.push({w:1,it:[a,nx]});i++}else cols.push({w:1,it:[a]})}
+        else cols.push({w:t==='TERCO'?1/3:1,it:[a]})}
+      const sum=cols.reduce((x,c)=>x+c.w,0);let off=0;
+      cols.forEach(c=>{const w=c.w/sum*m.bay;
+        c.it.forEach((a,k)=>{
+          if(effTipo(a)==='MEIO')put(a,I,bs+off+w/2,cr,w*0.92,m.depth*0.92,y0+k*hF/2,hF/2*0.92);
+          else put(a,I,bs+off+w/2,cr,w*0.92,m.depth*0.92,y0,hF);
+          if(effTipo(a)==='DRIVE'){ /* drive-in: o endereço avança para trás (lado oposto ao corredor) */
+            const sg=sideSign(a),d=m.depth;
+            if(wing(I.r)){a.px+=sg*d/2;a.sx=d*1.92}else{a.pz+=sg*d/2;a.sz=d*1.92}
+            const far=(wing(I.r)?I.xc:I.zc)+sg*(m.aisle/2+d);
+            S.ext.push({wing:wing(I.r),al:[bs+off,bs+off+w],cr:[far,far+sg*d],H:I.maxN*lh+0.3,n:I.maxN,lh})}});
+        off+=w})
+    }
     else{const cols=n>20?10:Math.ceil(n/2),rows=Math.ceil(n/cols),cw=m.bay/cols,rh=hF/rows;
       g.forEach((a,i)=>put(a,I,bs+(i%cols)*cw+cw/2,cr,cw*0.9,m.depth*0.92,y0+Math.floor(i/cols)*rh,rh*0.86))}
   }
@@ -373,6 +390,11 @@ function buildStructure(){
       for(let n=1;n<=I.maxN;n++){const y=n*lh;for(const c of cr){
         if(S.wing(I.r))lines.push(c,y,along[0],c,y,along[1]);else lines.push(along[0],y,c,along[1],y,c)}}}
   }
+  for(const e of S.ext){ /* porta-palete atrás do drive-in */
+    for(const al of e.al)for(const c of e.cr)posts.push(e.wing?[c,e.H/2,al,e.H]:[al,e.H/2,c,e.H]);
+    for(let n=1;n<=e.n;n++){const y=n*e.lh;
+      for(const al of e.al)lines.push(...(e.wing?[e.cr[0],y,al,e.cr[1],y,al]:[al,y,e.cr[0],al,y,e.cr[1]]));
+      for(const c of e.cr)lines.push(...(e.wing?[c,y,e.al[0],c,y,e.al[1]]:[e.al[0],y,c,e.al[1],y,c]))}}
   const pg=new THREE.BoxGeometry(0.1,1,0.1),pm=new THREE.InstancedMesh(pg,yellow,Math.max(1,posts.length)),d=new THREE.Object3D();
   posts.forEach((p,i)=>{d.position.set(p[0],p[1],p[2]);d.scale.set(1,p[3],1);d.updateMatrix();pm.setMatrixAt(i,d.matrix)});
   pm.count=posts.length;pm.raycast=()=>{};pm.frustumCulled=false;rackGroup.add(pm);
