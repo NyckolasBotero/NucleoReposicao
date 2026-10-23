@@ -1,0 +1,15 @@
+{
+  "name": "Núcleo Reposição",
+  "short_name": "Núcleo Reposição",
+  "description": "Central de gestão da operação de reposição – Santa Therezinha",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#EEF3FA",
+  "theme_color": "#073A7C",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
