@@ -43,6 +43,7 @@ const LoginModule = {
         errorBox.classList.remove("show");
         document.body.classList.remove("locked");
         document.getElementById("login-screen").classList.add("hidden");
+        document.dispatchEvent(new Event("loginOk"));
       } else {
         errorBox.textContent = "Senha incorreta. Tente novamente.";
         errorBox.classList.add("show");
@@ -79,13 +80,15 @@ const REQUIRED_SHEETS = ["FEEDBACK REP","QUADRO REP","8271","8460"];
 // caso a planilha online não possa ser lida.
 const OPTIONAL_SHEETS = ["AUDITORIA REP", "MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo", "1707"]; // carregadas se existirem, não causam erro se faltarem
 
-// Planilha Google Sheets (compartilhada como "qualquer pessoa com o link") que substitui a aba
-// AUDITORIA REP do Excel. Mesmas colunas da aba antiga, uma linha por rua/dia.
-const AUDITORIA_REP_ONLINE_SHEET_ID = "1KCLXuzpf6j4yvd6e5ALcthyW483TOMk5rzJ7XJaLmhQ";
-const AUDITORIA_REP_ONLINE_GID = "0";
+// Planilha Google Sheets (compartilhada como "qualquer pessoa com o link") que concentra TODAS as abas do
+// painel (mesmos nomes de aba do NUCLEO REPOSIÇÃO.xlsx). O site busca tudo daqui ao abrir.
+const ONLINE_SHEET_ID = "1KCLXuzpf6j4yvd6e5ALcthyW483TOMk5rzJ7XJaLmhQ";
+// abas lidas por POSIÇÃO de coluna (sem linha de cabeçalho)
+const ONLINE_SEM_CABECALHO = ["1707"];
 const AUDITORIA_REP_COLUMNS = ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"];
 
 const REQUIRED_COLUMNS = {
+  "AUDITORIA REP": AUDITORIA_REP_COLUMNS, // só validada quando a aba existe (opcional)
   "FEEDBACK REP": ["Data","Cod","Nome","Resumo Assunto","Avaliação Pessoal","Avaliação Gestor","Desempenho","Classificação"],
   "QUADRO REP": ["DATA","CODIGO","NOME","STATUS"],
   "8271": ["DATA","RUA","TIPOOS","NUMOS"],
@@ -366,22 +369,17 @@ const ImportLog = {
   // efetivamente veio em raw
   buildLog(raw){
     const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
-    return allSheets.map(name=>{
-      const rows = raw[name];
-      // AUDITORIA REP vem da planilha Google Sheets online (não mais da aba do Excel)
-      if(name==="AUDITORIA REP" && AuditoriaRepOnline.info){
-        const inf = AuditoriaRepOnline.info;
-        const maxDate = rows && rows.length ? this.detectMaxDate(rows) : null;
-        if(inf.origem==="online"){
-          return { name:"AUDITORIA REP (Google Sheets)", status: rows.length?"ok":"vazia", statusLabel: rows.length?"✓ Carregada (online)":"Sem dados",
-            date:maxDate, msg:null, rowCount:rows.length };
-        }
-        if(inf.origem==="excel"){
-          return { name:"AUDITORIA REP (aba do Excel)", status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:maxDate,
-            msg:`Não foi possível ler a planilha online de Auditoria (${inf.erro}). Usando a aba AUDITORIA REP do Excel.`, rowCount:rows.length };
-        }
-        return { name:"AUDITORIA REP (Google Sheets)", status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:null,
-          msg:`Não foi possível ler a planilha online de Auditoria (${inf.erro}). Os indicadores de auditoria ficarão vazios.`, rowCount:0 };
+    const oi0 = OnlineSheets.info;
+    return allSheets.map(name0=>{
+      const rows = raw[name0];
+      const oi = oi0 && oi0.abas ? oi0.abas[name0] : null;
+      const name = oi && oi.status==="ok" ? name0+" (Google Sheets)" : name0;
+      if(oi && oi.status==="erro"){
+        return { name, status:"alerta", statusLabel:"⚠️ Falha ao ler (online)", date:null, msg:`Aba ${name0}: ${oi.motivo}`, rowCount:0 };
+      }
+      if(name0==="AUDITORIA REP" && oi0 && (rows===null || rows===undefined || (oi && oi.status!=="ok"))){
+        return { name, status:"alerta", statusLabel:"⚠️ Não encontrada", date:null,
+          msg:`A aba AUDITORIA REP não foi encontrada na planilha online${oi&&oi.motivo?" ("+oi.motivo+")":""}. Os indicadores de auditoria ficarão vazios.`, rowCount:0 };
       }
       if(rows===null || rows===undefined){
         return { name, status:"nao-encontrada", statusLabel:"— Não encontrada (opcional)", date:null, msg:null, rowCount:0 };
@@ -466,52 +464,126 @@ const ImportLog = {
   }
 };
 
-/* Fonte da aba AUDITORIA REP: planilha Google Sheets online (substitui a aba do Excel).
-   Devolve linhas no mesmo formato que o SheetJS entregava (objetos por nome de coluna, DATA como Date,
-   RUA numérica), então o DataProcessor segue igual. */
-const AuditoriaRepOnline = {
-  info: null, // { origem:"online"|"excel"|"nenhuma", linhas, erro }
+/* ---------------------------------------------------------------------- */
+/* MODULE: OnlineSheets (fonte principal: planilha Google Sheets)          */
+/* ---------------------------------------------------------------------- */
+/* Busca cada aba pelo endpoint gviz (CSV, com CORS liberado para planilhas públicas), converte o
+   texto das células em valores tipados (número / data como serial Excel) e monta um workbook do
+   SheetJS em memória. Assim o ExcelLoader.fromWorkbook() e todo o resto do painel funcionam
+   exatamente como se o Excel tivesse sido carregado.
+   Atenção: quando o nome da aba pedida não existe, o gviz devolve SILENCIOSAMENTE a primeira aba.
+   Por isso cada aba é validada (colunas obrigatórias e "impressão digital" do cabeçalho). */
+const OnlineSheets = {
+  info: null, // { modo:"online"|"arquivo", quando:Date, abas:{ [nome]: {status:"ok"|"ausente"|"erro", linhas, motivo} } }
+  _fp: null,
 
-  csvUrl(){
-    return `https://docs.google.com/spreadsheets/d/${AUDITORIA_REP_ONLINE_SHEET_ID}/gviz/tq?tqx=out:csv&gid=${AUDITORIA_REP_ONLINE_GID}&_ts=${Date.now()}`;
+  url(name, extra){
+    return `https://docs.google.com/spreadsheets/d/${ONLINE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}${extra||""}&_ts=${Date.now()}`;
   },
 
-  async fetchRows(){
+  async fetchText(name, extra){
     const ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(()=>ctrl.abort(), 20000) : null;
+    const timer = ctrl ? setTimeout(()=>ctrl.abort(), 90000) : null;
     try{
-      const res = await fetch(this.csvUrl(), { cache:"no-store", signal: ctrl ? ctrl.signal : undefined });
-      if(!res.ok) throw new Error("HTTP "+res.status+" ao buscar a planilha de Auditoria. Verifique se ela está compartilhada como 'Qualquer pessoa com o link pode visualizar'.");
-      return this.parseCSV(await res.text());
+      const res = await fetch(this.url(name, extra), { cache:"no-store", signal: ctrl ? ctrl.signal : undefined });
+      if(!res.ok) throw new Error("HTTP "+res.status+". Verifique se a planilha está compartilhada como 'Qualquer pessoa com o link pode visualizar'.");
+      const text = await res.text();
+      if(/^\s*</.test(text)) throw new Error("A planilha não devolveu dados (provavelmente não está compartilhada publicamente).");
+      return text;
     }catch(e){
-      if(e && e.name==="AbortError") throw new Error("Tempo esgotado ao buscar a planilha de Auditoria online.");
+      if(e && e.name==="AbortError") throw new Error("Tempo esgotado ao buscar a aba (conexão lenta ou aba muito grande).");
       throw e;
     }finally{
       if(timer) clearTimeout(timer);
     }
   },
 
-  parseCSV(text){
-    const lines = AuditOnline.splitCSV(text);
-    if(!lines.length) return [];
-    const headers = lines[0].map(h=>trimStr(h));
-    const idx = {};
-    AUDITORIA_REP_COLUMNS.forEach(c=>{ idx[c] = headers.findIndex(h=>normStr(h)===normStr(c)); });
-    const faltando = AUDITORIA_REP_COLUMNS.filter(c=>idx[c]===-1);
-    if(faltando.length) throw new Error("A planilha de Auditoria online não tem as colunas esperadas: "+faltando.join(", ")+".");
-    const out = [];
-    for(let i=1;i<lines.length;i++){
-      const cols = lines[i];
-      if(!cols || cols.every(c=>trimStr(c)==="")) continue;
-      const o = {};
-      AUDITORIA_REP_COLUMNS.forEach(c=>{ o[c] = trimStr(cols[idx[c]]); });
-      o["DATA"] = AuditOnline.parseDateFlexible(o["DATA"]);          // DD/MM/YYYY (locale BR)
-      const rua = o["RUA"];
-      o["RUA"] = /^\d+$/.test(rua) ? Number(rua) : rua;               // mesmo tipo que vinha do Excel
-      o["COD"] = o["COD"]==="" ? null : o["COD"];
-      out.push(o);
+  // 1ª linha devolvida quando se pede uma aba inexistente (= cabeçalho da 1ª aba da planilha)
+  fingerprint(){
+    if(!this._fp){
+      this._fp = this.fetchText("__aba_inexistente__", "&tq="+encodeURIComponent("select * limit 1"))
+        .then(t=>t.split("\n")[0].trim()).catch(()=>null);
     }
-    return out;
+    return this._fp;
+  },
+
+  // dia/mês/ano [hh:mm[:ss]] → serial do Excel (o painel já trata serial em toDate)
+  serial(y, mo, d, H, M, S){
+    return (Date.UTC(y, mo-1, d, H, M, S) - Date.UTC(1899, 11, 30)) / 86400000;
+  },
+
+  // texto da célula → valor tipado (o CSV do Google vem formatado no padrão pt-BR)
+  coerce(raw){
+    const s = raw==null ? "" : String(raw).trim();
+    if(s==="") return null;
+    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if(m) return this.serial(+m[3], +m[2], +m[1], +(m[4]||0), +(m[5]||0), +(m[6]||0));
+    if(/^-?\d+$/.test(s)){
+      if(/^-?0\d/.test(s) || s.replace("-","").length>15) return s; // zeros à esquerda / códigos longos (EAN) ficam texto
+      return Number(s);
+    }
+    if(/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s) || /^-?\d+,\d+$/.test(s)) return Number(s.replace(/\./g,"").replace(",","."));
+    if(/^-?\d+\.\d+$/.test(s)) return Number(s);
+    return s;
+  },
+
+  // CSV → matriz tipada; descarta a linha de rótulos genéricos (A, B, C...) que o gviz às vezes insere
+  parseAoa(text, semCabecalho){
+    let lines = AuditOnline.splitCSV(text);
+    if(lines.length && lines[0].every(c=>/^\s*[A-Z]{0,2}\s*$/.test(c)) && lines.length>1) lines = lines.slice(1);
+    const hdr = (c)=>{ const t=String(c==null?"":c).trim(); return t===""?null:t; };
+    return lines.map((cols,li)=> (li===0 && !semCabecalho) ? cols.map(hdr) : cols.map(c=>this.coerce(c)));
+  },
+
+  // linhas de dados (objetos por nome de coluna) a partir de uma matriz — mesmo formato do SheetJS
+  aoaToRows(aoa){
+    return XLSX.utils.sheet_to_json(XLSX.utils.aoa_to_sheet(aoa), { defval:null, raw:true });
+  },
+
+  // busca UMA aba. Devolve { aoa } ou { ausente:true } ou lança erro (rede/permissão)
+  async fetchTab(name){
+    const semCab = ONLINE_SEM_CABECALHO.includes(name);
+    const [text, fp] = await Promise.all([ this.fetchText(name, semCab ? "&headers=0" : ""), this.fingerprint() ]);
+    const first = text.split("\n")[0].trim();
+    const aoa = this.parseAoa(text, semCab);
+    if(!aoa.length) return { ausente:true, motivo:"aba vazia" };
+    const exigidas = REQUIRED_COLUMNS[name];
+    if(exigidas){
+      const cols = aoa[0].filter(c=>c!=null).map(c=>normStr(c));
+      const faltam = exigidas.filter(c=>!cols.includes(normStr(c)));
+      if(faltam.length) return { ausente:true, motivo:"cabeçalho não confere (faltam: "+faltam.join(", ")+") — a aba provavelmente não existe com esse nome" };
+    } else if(fp && first===fp && !semCab){
+      return { ausente:true, motivo:"aba não encontrada com esse nome" };
+    }
+    return { aoa };
+  },
+
+  // busca todas as abas conhecidas em paralelo e monta o workbook
+  async fetchWorkbook(onProgress){
+    this._fp = null;
+    const nomes = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
+    const info = { modo:"online", quando:new Date(), abas:{} };
+    const wb = XLSX.utils.book_new();
+    let feitas = 0;
+    const resultados = await Promise.all(nomes.map(async nome=>{
+      try{
+        const r = await this.fetchTab(nome);
+        info.abas[nome] = r.aoa ? { status:"ok", linhas:Math.max(0, r.aoa.length-1) } : { status:"ausente", linhas:0, motivo:r.motivo };
+        return { nome, aoa:r.aoa||null };
+      }catch(e){
+        info.abas[nome] = { status:"erro", linhas:0, motivo: e && e.message ? e.message : String(e) };
+        return { nome, aoa:null };
+      }finally{
+        feitas++; if(onProgress) onProgress(feitas, nomes.length);
+      }
+    }));
+    const erros = nomes.filter(n=>info.abas[n].status==="erro");
+    if(erros.length===nomes.length){
+      throw new Error("Não foi possível acessar a planilha online do Google Sheets.\n"+info.abas[nomes[0]].motivo);
+    }
+    resultados.forEach(r=>{ if(r.aoa) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(r.aoa), r.nome); });
+    this.info = info;
+    return wb;
   }
 };
 
@@ -582,6 +654,36 @@ const ExcelLoader = {
       throw new Error("O arquivo foi lido, mas não contém nenhuma aba/planilha.");
     }
 
+    OnlineSheets.info = { modo:"arquivo", quando:new Date(), abas:{} };
+    const raw = this.fromWorkbook(wb, "arquivo");
+
+    // AUDITORIA REP: se o Excel não trouxer a aba, busca na planilha online (Google Sheets)
+    if(!(raw["AUDITORIA REP"] && raw["AUDITORIA REP"].length)){
+      try{
+        const r = await OnlineSheets.fetchTab("AUDITORIA REP");
+        if(r.aoa){
+          raw["AUDITORIA REP"] = OnlineSheets.aoaToRows(r.aoa);
+          OnlineSheets.info.abas["AUDITORIA REP"] = { status:"ok", linhas:raw["AUDITORIA REP"].length };
+        } else {
+          OnlineSheets.info.abas["AUDITORIA REP"] = { status:"ausente", linhas:0, motivo:r.motivo };
+        }
+      }catch(e){
+        OnlineSheets.info.abas["AUDITORIA REP"] = { status:"erro", linhas:0, motivo: e && e.message ? e.message : String(e) };
+      }
+    }
+    return raw;
+  },
+
+  // Fonte principal: todas as abas vêm da planilha Google Sheets (sem arquivo)
+  async loadOnline(onProgress){
+    this.checkLibraries();
+    const wb = await OnlineSheets.fetchWorkbook(onProgress);
+    return this.fromWorkbook(wb, "online");
+  },
+
+  // Interpreta um workbook (lido do Excel OU montado a partir do Google Sheets) → raw por nome de aba
+  fromWorkbook(wb, origem){
+    const online = origem==="online";
     // resolve nomes reais das abas (tolerando espaços/maiúsculas diferentes)
     const sheetNameMap = {};
     const missingSheets = [];
@@ -592,6 +694,12 @@ const ExcelLoader = {
     });
 
     if(missingSheets.length){
+      if(online){
+        const det = missingSheets.map(n=>{ const a=OnlineSheets.info&&OnlineSheets.info.abas[n]; return n+(a&&a.motivo?" ("+a.motivo+")":""); });
+        throw new Error("A planilha online não tem as abas obrigatórias: " + det.join("; ") +
+          ". Abas encontradas: " + (wb.SheetNames.join(", ")||"(nenhuma)") + ". " +
+          "Confira se os nomes das abas no Google Sheets estão exatamente iguais aos do Excel. Você também pode carregar o arquivo manualmente.");
+      }
       throw new Error("As seguintes abas não foram encontradas no arquivo: " + missingSheets.join(", ") +
         ". Abas encontradas no arquivo: " + wb.SheetNames.join(", ") + ". " +
         "Verifique se o arquivo carregado é o NUCLEO REPOSIÇÃO.xlsx correto e se os nomes das abas não foram alterados.");
@@ -641,24 +749,7 @@ const ExcelLoader = {
     });
 
     if(colIssues.length){
-      throw new Error("Foram encontradas divergências de colunas no arquivo:\n" + colIssues.join("\n"));
-    }
-
-    // AUDITORIA REP: fonte principal = planilha Google Sheets online. Se falhar, usa a aba do
-    // Excel (quando ainda existir); se não houver nenhuma, segue com Auditoria vazia + aviso.
-    const excelAud = Array.isArray(raw["AUDITORIA REP"]) ? raw["AUDITORIA REP"] : null;
-    try{
-      raw["AUDITORIA REP"] = await AuditoriaRepOnline.fetchRows();
-      AuditoriaRepOnline.info = { origem:"online", linhas:raw["AUDITORIA REP"].length, erro:null };
-    }catch(e){
-      const erro = e && e.message ? e.message : String(e);
-      if(excelAud && excelAud.length){
-        raw["AUDITORIA REP"] = excelAud;
-        AuditoriaRepOnline.info = { origem:"excel", linhas:excelAud.length, erro };
-      } else {
-        raw["AUDITORIA REP"] = [];
-        AuditoriaRepOnline.info = { origem:"nenhuma", linhas:0, erro };
-      }
+      throw new Error("Foram encontradas divergências de colunas "+(online?"na planilha online":"no arquivo")+":\n" + colIssues.join("\n"));
     }
 
     return raw;
@@ -673,7 +764,7 @@ const DataProcessor = {
     const out = {};
 
     // ---- AUDITORIA REP ----
-    out.auditoria = raw["AUDITORIA REP"].map((r,idx)=>{
+    out.auditoria = (raw["AUDITORIA REP"]||[]).map((r,idx)=>{
       const data = toDate(r["DATA"]);
       const cod = r["COD"]!==null && r["COD"]!==undefined && r["COD"]!=="" ? String(r["COD"]).trim() : null;
       const nome = trimStr(r["NOME"]);
@@ -3472,6 +3563,8 @@ const UI = {
     });
     $("#btn-reload").addEventListener("click", ()=> $("#file-input").click());
     $("#btn-empty-upload").addEventListener("click", ()=> $("#file-input").click());
+    $("#btn-empty-online").addEventListener("click", ()=> this.carregarOnline());
+    $("#btn-refresh-online").addEventListener("click", ()=> this.carregarOnline());
     $("#btn-ir-avaria").addEventListener("click", ()=> abrirAvariaSemArquivo());
     $("#btn-ir-cd3d").addEventListener("click", ()=> abrirCD3DSemArquivo());
     $("#file-input").addEventListener("change", (e)=>{
@@ -3481,16 +3574,40 @@ const UI = {
     $("#btn-export-pdf").addEventListener("click", ()=>Export.toPDF());
     $("#modal-overlay").addEventListener("click", (e)=>{ if(e.target.id==="modal-overlay") this.closeModal(); });
     this.buildSubnav();
+
+    // ao abrir o site (já logado), busca tudo direto do Google Sheets
+    const iniciar = ()=> this.carregarOnline();
+    if(document.body.classList.contains("locked")) document.addEventListener("loginOk", iniciar, { once:true });
+    else iniciar();
   },
 
+  // carga manual (plano B): arquivo Excel escolhido pelo usuário
   async handleFile(file){
+    return this.importar({ name:file.name, online:false }, ()=> ExcelLoader.load(file));
+  },
+
+  // carga principal: todas as abas direto do Google Sheets, sem arquivo
+  async carregarOnline(){
+    if(this._carregandoOnline) return;
+    this._carregandoOnline = true;
+    try{
+      await this.importar({ name:"Google Sheets (online)", online:true }, ()=>{
+        return ExcelLoader.loadOnline((feitas,total)=>{
+          const bar = document.getElementById("flow-progress-bar");
+          if(bar) bar.style.width = (20 + Math.round(feitas/total*25)) + "%";
+        });
+      });
+    } finally { this._carregandoOnline = false; }
+  },
+
+  async importar(file, lerRaw){
     $("#empty-error").innerHTML = "";
     LoadingScreen.show(file.name);
-    let stage = "leitura do arquivo (Excel Loader)";
+    let stage = file.online ? "leitura da planilha online (Google Sheets)" : "leitura do arquivo (Excel Loader)";
     try{
       await LoadingScreen.step("recebido", 5);
       await LoadingScreen.step("lendo", 20);
-      const raw = await ExcelLoader.load(file);
+      const raw = await lerRaw();
 
       await LoadingScreen.step("validando", 45);
 
@@ -3537,8 +3654,7 @@ const UI = {
       // Só revela o dashboard quando o usuário clicar em "Acessar Dashboard" na
       // tela de log — até lá, a interface continua na tela de boas-vindas por trás
       // do overlay, então nunca aparece "meio carregada".
-      ImportLog.show(file, raw,
-        /* onAccessDashboard */ () => {
+      const abrirPainel = () => {
           $("#quadro-badge").textContent = badgeText;
           $("#empty-state").style.display = "none";
           $("#main-content").style.display = "block";
@@ -3550,15 +3666,22 @@ const UI = {
           const hint = document.getElementById('avaria-sem-arquivo-hint');
           if(hint) hint.remove();
 
-          toast("Arquivo carregado com sucesso.","success");
+          toast(file.online ? "Dados atualizados do Google Sheets." : "Arquivo carregado com sucesso.","success");
           this.switchView("indicadores", true);
           $("#file-input").value = "";
-        },
-        /* onLoadAnother */ () => {
-          $("#file-input").value = "";
-          $("#file-input").click();
-        }
-      );
+      };
+      // online sem nenhum alerta: entra direto no painel; com alertas, mostra o log antes
+      const temAlerta = file.online && ImportLog.buildLog(raw).some(s=>s.status==="alerta" && !/nenhuma coluna de data/.test(s.msg||""));
+      if(file.online && !temAlerta){
+        abrirPainel();
+      } else {
+        ImportLog.show(file, raw, abrirPainel,
+          /* onLoadAnother */ () => {
+            $("#file-input").value = "";
+            $("#file-input").click();
+          }
+        );
+      }
     }catch(err){
       console.error("[Central de Reposição] Erro na etapa:", stage, err);
       LoadingScreen.hide();
@@ -3567,7 +3690,7 @@ const UI = {
       $("#empty-error").innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;white-space:pre-line;">` +
         `<strong>Falha na etapa: ${escapeHtml(stage)}</strong>\n\n${escapeHtml(msg)}${escapeHtml(stackHint)}` +
         `</div>`;
-      toast("Erro ao carregar arquivo.","error");
+      toast(file.online ? "Erro ao buscar dados do Google Sheets." : "Erro ao carregar arquivo.","error");
       // garante que a interface não fica "meio carregada"
       window.APP_STATE.ready = false;
       $("#file-input").value = "";
