@@ -703,10 +703,11 @@ body.locked #app-body{ display:none !important; }
 <header id="app-header">
   <h1><img id="header-logo" class="header-logo" alt="Logo"> NÚCLEO REPOSIÇÃO</h1>
   <div class="header-right">
-    <span class="quadro-badge" id="quadro-badge">Nenhum arquivo carregado</span>
+    <span class="quadro-badge" id="quadro-badge">Nenhum dado carregado</span>
     <button class="btn btn-outline btn-sm" id="btn-export-png" disabled>⤓ PNG</button>
     <button class="btn btn-outline btn-sm" id="btn-export-pdf" disabled>⤓ PDF</button>
-    <button class="btn btn-ghost" id="btn-reload">📂 Carregar Núcleo Reposição</button>
+    <button class="btn btn-ghost" id="btn-refresh-online" title="Buscar novamente os dados do Google Sheets">🔄 Atualizar dados</button>
+    <button class="btn btn-ghost" id="btn-reload" title="Plano B: carregar o Excel manualmente">📂 Carregar arquivo</button>
     <input type="file" id="file-input" accept=".xlsx,.xls">
   </div>
 </header>
@@ -723,9 +724,10 @@ body.locked #app-body{ display:none !important; }
   <div id="empty-state">
     <img id="empty-logo" class="empty-logo" alt="Logo">
     <h2>Bem-vindo ao Núcleo Reposição</h2>
-    <p>Carregue o arquivo <strong>NUCLEO REPOSIÇÃO.xlsx</strong> para visualizar produção, projeção, quadro, presença, feedbacks, auditorias e comissão da equipe.</p>
-    <p class="small-muted">O arquivo deve conter as abas: FEEDBACK REP, QUADRO REP, 8271 e 8460. A Auditoria é lida automaticamente da planilha online (Google Sheets).</p>
-    <button class="btn btn-primary big-upload" id="btn-empty-upload">📂 CARREGAR NUCLEO REPOSIÇÃO</button>
+    <p>O painel busca os dados automaticamente da planilha online (Google Sheets) para mostrar produção, projeção, quadro, presença, feedbacks, auditorias e comissão da equipe.</p>
+    <p class="small-muted">Se a busca falhar, tente novamente ou carregue o arquivo <strong>NUCLEO REPOSIÇÃO.xlsx</strong> manualmente.</p>
+    <button class="btn btn-primary big-upload" id="btn-empty-online">🔄 BUSCAR DADOS ONLINE</button>
+    <button class="btn btn-outline" id="btn-empty-upload" style="margin-left:8px;">📂 Carregar arquivo manualmente</button>
     <div id="empty-error"></div>
     <div style="margin-top:24px;padding-top:20px;border-top:1px solid #dde3ea;">
       <p class="small-muted" style="margin-bottom:10px;">Ou acesse diretamente sem carregar o arquivo:</p>
