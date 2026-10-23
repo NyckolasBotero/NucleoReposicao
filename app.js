@@ -7,7 +7,7 @@ const LOGIN_PASSWORD = "STO@2027";
 const AVALIADOR_FIXO = { codigo: "10003993", nome: "FABIO NYCKOLAS FIGUEIREDO BOTERO" };
 // URL do Apps Script (termina em /exec) — veja apps_script_nucleo.gs. Com ela preenchida o login passa a ser
 // matrícula + senha, lido da planilha "Logins e Permissões", e as abas liberadas dependem da matrícula.
-const NUCLEO_API_URL = "";
+const NUCLEO_API_URL = "https://script.google.com/macros/s/AKfycbxN4AKCD3t0yre9iwiXPrEGa_kfLiH4VopEbtglv2Wsb6AKbEabjG2CsZTdLCClXpZc9A/exec";
 const AUTH_KEY = "nucleo_auth_v1";
 
 function normPerm(s){ return String(s==null?"":s).normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]/g,""); }
