@@ -73,11 +73,19 @@ if(document.readyState === "loading"){
 /* ---------------------------------------------------------------------- */
 /* CONFIG                                                                  */
 /* ---------------------------------------------------------------------- */
-const REQUIRED_SHEETS = ["AUDITORIA REP","FEEDBACK REP","QUADRO REP","8271","8460"];
-const OPTIONAL_SHEETS = ["MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo", "1707"]; // carregadas se existirem, não causam erro se faltarem
+const REQUIRED_SHEETS = ["FEEDBACK REP","QUADRO REP","8271","8460"];
+// "AUDITORIA REP" deixou de ser aba obrigatória do Excel: a fonte agora é a planilha Google Sheets
+// online (AUDITORIA_REP_ONLINE_SHEET_ID). Se a aba ainda existir no Excel, serve só de reserva
+// caso a planilha online não possa ser lida.
+const OPTIONAL_SHEETS = ["AUDITORIA REP", "MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo", "1707"]; // carregadas se existirem, não causam erro se faltarem
+
+// Planilha Google Sheets (compartilhada como "qualquer pessoa com o link") que substitui a aba
+// AUDITORIA REP do Excel. Mesmas colunas da aba antiga, uma linha por rua/dia.
+const AUDITORIA_REP_ONLINE_SHEET_ID = "1KCLXuzpf6j4yvd6e5ALcthyW483TOMk5rzJ7XJaLmhQ";
+const AUDITORIA_REP_ONLINE_GID = "0";
+const AUDITORIA_REP_COLUMNS = ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"];
 
 const REQUIRED_COLUMNS = {
-  "AUDITORIA REP": ["DATA","RUA","COD","NOME","PROD END ERRADO?","MULTIPLO SEPARADO?","AVARIA RECOLHIDA?","PROD SEM SALDO?","RUA LIMPA?","PROD VENCIDO?","PROD PROX AO VENC"],
   "FEEDBACK REP": ["Data","Cod","Nome","Resumo Assunto","Avaliação Pessoal","Avaliação Gestor","Desempenho","Classificação"],
   "QUADRO REP": ["DATA","CODIGO","NOME","STATUS"],
   "8271": ["DATA","RUA","TIPOOS","NUMOS"],
@@ -360,6 +368,21 @@ const ImportLog = {
     const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
     return allSheets.map(name=>{
       const rows = raw[name];
+      // AUDITORIA REP vem da planilha Google Sheets online (não mais da aba do Excel)
+      if(name==="AUDITORIA REP" && AuditoriaRepOnline.info){
+        const inf = AuditoriaRepOnline.info;
+        const maxDate = rows && rows.length ? this.detectMaxDate(rows) : null;
+        if(inf.origem==="online"){
+          return { name:"AUDITORIA REP (Google Sheets)", status: rows.length?"ok":"vazia", statusLabel: rows.length?"✓ Carregada (online)":"Sem dados",
+            date:maxDate, msg:null, rowCount:rows.length };
+        }
+        if(inf.origem==="excel"){
+          return { name:"AUDITORIA REP (aba do Excel)", status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:maxDate,
+            msg:`Não foi possível ler a planilha online de Auditoria (${inf.erro}). Usando a aba AUDITORIA REP do Excel.`, rowCount:rows.length };
+        }
+        return { name:"AUDITORIA REP (Google Sheets)", status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:null,
+          msg:`Não foi possível ler a planilha online de Auditoria (${inf.erro}). Os indicadores de auditoria ficarão vazios.`, rowCount:0 };
+      }
       if(rows===null || rows===undefined){
         return { name, status:"nao-encontrada", statusLabel:"— Não encontrada (opcional)", date:null, msg:null, rowCount:0 };
       }
@@ -440,6 +463,55 @@ const ImportLog = {
     const root = this.root();
     root.classList.remove("show");
     root.innerHTML = "";
+  }
+};
+
+/* Fonte da aba AUDITORIA REP: planilha Google Sheets online (substitui a aba do Excel).
+   Devolve linhas no mesmo formato que o SheetJS entregava (objetos por nome de coluna, DATA como Date,
+   RUA numérica), então o DataProcessor segue igual. */
+const AuditoriaRepOnline = {
+  info: null, // { origem:"online"|"excel"|"nenhuma", linhas, erro }
+
+  csvUrl(){
+    return `https://docs.google.com/spreadsheets/d/${AUDITORIA_REP_ONLINE_SHEET_ID}/gviz/tq?tqx=out:csv&gid=${AUDITORIA_REP_ONLINE_GID}&_ts=${Date.now()}`;
+  },
+
+  async fetchRows(){
+    const ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(()=>ctrl.abort(), 20000) : null;
+    try{
+      const res = await fetch(this.csvUrl(), { cache:"no-store", signal: ctrl ? ctrl.signal : undefined });
+      if(!res.ok) throw new Error("HTTP "+res.status+" ao buscar a planilha de Auditoria. Verifique se ela está compartilhada como 'Qualquer pessoa com o link pode visualizar'.");
+      return this.parseCSV(await res.text());
+    }catch(e){
+      if(e && e.name==="AbortError") throw new Error("Tempo esgotado ao buscar a planilha de Auditoria online.");
+      throw e;
+    }finally{
+      if(timer) clearTimeout(timer);
+    }
+  },
+
+  parseCSV(text){
+    const lines = AuditOnline.splitCSV(text);
+    if(!lines.length) return [];
+    const headers = lines[0].map(h=>trimStr(h));
+    const idx = {};
+    AUDITORIA_REP_COLUMNS.forEach(c=>{ idx[c] = headers.findIndex(h=>normStr(h)===normStr(c)); });
+    const faltando = AUDITORIA_REP_COLUMNS.filter(c=>idx[c]===-1);
+    if(faltando.length) throw new Error("A planilha de Auditoria online não tem as colunas esperadas: "+faltando.join(", ")+".");
+    const out = [];
+    for(let i=1;i<lines.length;i++){
+      const cols = lines[i];
+      if(!cols || cols.every(c=>trimStr(c)==="")) continue;
+      const o = {};
+      AUDITORIA_REP_COLUMNS.forEach(c=>{ o[c] = trimStr(cols[idx[c]]); });
+      o["DATA"] = AuditOnline.parseDateFlexible(o["DATA"]);          // DD/MM/YYYY (locale BR)
+      const rua = o["RUA"];
+      o["RUA"] = /^\d+$/.test(rua) ? Number(rua) : rua;               // mesmo tipo que vinha do Excel
+      o["COD"] = o["COD"]==="" ? null : o["COD"];
+      out.push(o);
+    }
+    return out;
   }
 };
 
@@ -570,6 +642,23 @@ const ExcelLoader = {
 
     if(colIssues.length){
       throw new Error("Foram encontradas divergências de colunas no arquivo:\n" + colIssues.join("\n"));
+    }
+
+    // AUDITORIA REP: fonte principal = planilha Google Sheets online. Se falhar, usa a aba do
+    // Excel (quando ainda existir); se não houver nenhuma, segue com Auditoria vazia + aviso.
+    const excelAud = Array.isArray(raw["AUDITORIA REP"]) ? raw["AUDITORIA REP"] : null;
+    try{
+      raw["AUDITORIA REP"] = await AuditoriaRepOnline.fetchRows();
+      AuditoriaRepOnline.info = { origem:"online", linhas:raw["AUDITORIA REP"].length, erro:null };
+    }catch(e){
+      const erro = e && e.message ? e.message : String(e);
+      if(excelAud && excelAud.length){
+        raw["AUDITORIA REP"] = excelAud;
+        AuditoriaRepOnline.info = { origem:"excel", linhas:excelAud.length, erro };
+      } else {
+        raw["AUDITORIA REP"] = [];
+        AuditoriaRepOnline.info = { origem:"nenhuma", linhas:0, erro };
+      }
     }
 
     return raw;
