@@ -2338,7 +2338,7 @@ const AUDITORIA_ONLINE_SHEET_ID = "1Srs2JdL1WEGsaa-SaLec2TaYQYX_eUmNsU2zE1M4CAA"
 // Peso de cada critério na qualidade "por critério" (usada quando a rua da auditoria
 // não tem itens cadastrados na 8022 — nesse caso não dá pra calcular por volume, então
 // cai nessa fórmula ponderada). Critério OK (valor 0) soma o peso; senão soma 0.
-const AUDITORIA_PESOS_CRITERIOS = { avariado:6, pickErrado:2, proxVenc:2, semSaldo:2 };
+const AUDITORIA_PESOS_CRITERIOS = { avariado:4, pickErrado:6, proxVenc:3, semSaldo:2 };
 const AUDITORIA_ONLINE_GID = "0";
 // status de qualidade por faixa (usado em toda a Auditoria): Excelente/Boa/Atenção/Crítica
 function auditoriaStatusQual(v){
@@ -2530,16 +2530,16 @@ const AuditOnline = {
   },
 
   // "penalidade" de uma linha, em item-equivalentes: cada ocorrência de um critério
-  // "consome" o peso daquele critério em itens da rua. Ex.: 1 avaria (peso 6) tira
-  // 6 dos itens da rua; 3 avarias tiram 18.
+  // "consome" o peso daquele critério em itens da rua. Ex.: 1 avaria (peso 4) tira
+  // 4 dos itens da rua; 3 avarias tiram 12.
   penalidadeLinha(row){
     const p = AUDITORIA_PESOS_CRITERIOS;
     return row.pickErrado*p.pickErrado + row.avariado*p.avariado + row.proxVenc*p.proxVenc + row.semSaldo*p.semSaldo;
   },
 
   // qualidade de UMA linha = (itens cadastrados na 8022 da rua - penalidade ponderada
-  // daquela auditoria) / itens da rua. Ex.: rua com 100 itens e 1 avaria (peso 6) →
-  // (100-6)/100 = 94%. Quando a rua não tem itens conhecidos na 8022, cai para a nota
+  // daquela auditoria) / itens da rua. Ex.: rua com 100 itens e 1 avaria (peso 4) →
+  // (100-4)/100 = 96%. Quando a rua não tem itens conhecidos na 8022, cai para a nota
   // por critério em percentual (peso OK / peso total × 100).
   qualidadeLinha(row){
     const itens = this.ruaItensMap().get(String(row.rua)) || 0;
@@ -6119,7 +6119,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua − penalidade) / Itens, onde penalidade = Avariados×6 + Prox.Vencimento×2 + Picking Errado×2 + Sem Saldo×2. Ex.: rua com 100 itens e 1 avaria = (100−6)/100 = 94%. Sem itens conhecidos na 8022, usa a nota por critério (peso OK / 12 × 100). Qualidade do grupo = media das auditorias.</div>
+    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua − penalidade) / Itens, onde penalidade = Avariados×4 + Prox.Vencimento×3 + Picking Errado×6 + Sem Saldo×2. Ex.: rua com 100 itens e 1 avaria = (100−4)/100 = 96%. Sem itens conhecidos na 8022, usa a nota por critério (peso OK / 15 × 100). Qualidade do grupo = media das auditorias.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
@@ -6183,7 +6183,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Repositor e Rua</h3>
-        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×6 + Prox.Venc×2 + Picking×2 + SemSaldo×2</span>
+        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×4 + Prox.Venc×3 + Picking×6 + SemSaldo×2</span>
       </div>
       <div class="table-wrap" style="max-height:400px;overflow-y:auto;"><table class="data-table">
         <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
@@ -6194,7 +6194,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header">
         <h3>Qualidade por Rua - Resumo</h3>
-        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×6 + Prox.Venc×2 + Picking×2 + SemSaldo×2</span>
+        <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×4 + Prox.Venc×3 + Picking×6 + SemSaldo×2</span>
       </div>
       <div class="table-wrap"><table class="data-table">
         <thead><tr><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Problemas</th><th>Qualidade Media</th><th>Status</th></tr></thead>
