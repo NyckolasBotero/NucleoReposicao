@@ -24,6 +24,11 @@ const ABA_LOG_BASES = 'Bases_Log';
 const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
+const ABA_LANC = 'Lançamentos';
+const SUBS_LANC = ['Lançar Feedback', 'Lançar REP.AVARIA', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade'];
+const ABA_CONFIG = 'Config_Lancamentos';
+const ABA_LOG_LANC = 'Lancamentos_Log';
+const PASTA_FEEDBACK = 'Núcleo Reposição - Feedbacks';
 
 /**
  * Bases que podem ser carregadas pelo site (o nome é o da aba na planilha de dados).
@@ -74,6 +79,7 @@ function doPost(e) {
       if (d.acao === 'bases_status') { exigir(s, PERM_BASES); return resposta(basesStatus()); }
       if (d.acao === 'bases_enviar') { exigir(s, PERM_BASES); return resposta(basesEnviar(d)); }
       if (d.acao === 'bases_concluir') { exigir(s, PERM_BASES); return resposta(basesConcluir(d, s)); }
+      if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
     } finally { lk.releaseLock(); }
     return resposta({ ok: false, erro: 'Ação desconhecida.' });
   } catch (err) {
@@ -125,6 +131,16 @@ function lerUsuarios() {
       const k = normalizar(aba) + '|' + normalizar(sub);
       if (!u._vistos[k]) { u._vistos[k] = true; u.perms.push({ aba: aba, sub: sub }); }
     }
+  });
+  // Quem administra "Acessos" recebe automaticamente as telas de Lançamentos (sem precisar digitar na planilha).
+  Object.keys(mapa).forEach(function (m) {
+    const u = mapa[m];
+    const admin = u.perms.some(function (p) { return normalizar(p.aba) + '|' + normalizar(p.sub) === normalizar(PERM_ACESSOS[0]) + '|' + normalizar(PERM_ACESSOS[1]); });
+    if (!admin) return;
+    SUBS_LANC.forEach(function (sub) {
+      const k = normalizar(ABA_LANC) + '|' + normalizar(sub);
+      if (!u._vistos[k]) { u._vistos[k] = true; u.perms.push({ aba: ABA_LANC, sub: sub }); }
+    });
   });
   return { T: T, usuarios: mapa };
 }
@@ -388,4 +404,510 @@ function autorizar() {
   Logger.log('Dados: ' + dadosSS().getName());
   Logger.log('Matrículas: ' + Object.keys(lerUsuarios().usuarios).join(', '));
   segredo();
+  DriveApp.getRootFolder().getName(); // pede a permissão do Drive (fotos/PDF de feedback)
+}
+
+
+/* ===================== Lançamentos (categoria "Lançamentos") ===================== */
+
+const CONFIG_PADRAO = {
+  STATUS_CHAMADA: ['PRESENTE', 'FALTA', 'SEG TURNO', 'FOLGA', 'FÉRIAS', 'ATESTADO', 'SUSPENSÃO'],
+  TIPO_REP_AVARIA: ['Recuperado Repositor', 'Relação Repositor'],
+  MOTIVO_DESLIGAMENTO: ['BAIXO DESEMPENHO', 'BAIXA QUALIDADE', 'TRABALHO INFORMAL', 'OUTRA OPORTUNIDADE',
+    'SOLICITAÇÃO RECEBIMENTO', 'SOLICITAÇÃO ARMAZENAGEM', 'SOLICITAÇÃO EXPEDIÇÃO'],
+  TIPO_DESLIGAMENTO: ['DESLIGAMENTO S. JUSTA', 'PEDIU DESLIGAMENTO', 'TRANSFERENCIA'],
+  TIPO_MISSAO: []
+};
+const LISTAS_EDITAVEIS = ['STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAMENTO', 'TIPO_DESLIGAMENTO', 'TIPO_MISSAO'];
+const SUB_DA_ACAO = {
+  lanc_init: null, lanc_config_add: null,
+  lanc_feedback_salvar: 'Lançar Feedback',
+  lanc_avaria_verificar: 'Lançar REP.AVARIA', lanc_avaria_salvar: 'Lançar REP.AVARIA',
+  lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
+  lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro',
+  lanc_missao_salvar: 'Lançar Missões', lanc_capacidade_salvar: 'Lançar Capacidade'
+};
+const LISTA_DA_SUB = { STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar REP.AVARIA', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
+
+function lancamento(d, s) {
+  if (!(d.acao in SUB_DA_ACAO)) throw new Error('Ação desconhecida.');
+  const sub = SUB_DA_ACAO[d.acao];
+  if (sub) exigir(s, [ABA_LANC, sub]);
+  switch (d.acao) {
+    case 'lanc_init': return lancInit(s);
+    case 'lanc_config_add': return lancConfigAdd(d, s);
+    case 'lanc_feedback_salvar': return feedbackSalvar(d, s);
+    case 'lanc_avaria_verificar': return avariaVerificar(d);
+    case 'lanc_avaria_salvar': return avariaSalvar(d, s);
+    case 'lanc_chamada_dia': return chamadaDia(d);
+    case 'lanc_chamada_salvar': return chamadaSalvar(d, s);
+    case 'lanc_chamada_lote': return chamadaLote(d, s);
+    case 'lanc_quadro_listar': return quadroListar();
+    case 'lanc_quadro_salvar': return quadroSalvar(d, s);
+    case 'lanc_missao_salvar': return missaoSalvar(d, s);
+    case 'lanc_capacidade_salvar': return capacidadeSalvar(d, s);
+  }
+}
+
+/* ---------- utilidades ---------- */
+
+function tzDados() { return dadosSS().getSpreadsheetTimeZone(); }
+function abaDados(nome) {
+  const sh = dadosSS().getSheetByName(nome);
+  if (!sh) throw new Error('A aba "' + nome + '" não existe na planilha de dados.');
+  return sh;
+}
+/** Cabeçalho da aba: { sh, cab:[texto], n:[normalizado], ult } */
+function infoAba(nome) {
+  const sh = abaDados(nome);
+  const ult = Math.max(sh.getLastColumn(), 1);
+  const cab = sh.getRange(1, 1, 1, ult).getDisplayValues()[0].map(function (c) { return String(c).trim(); });
+  return { sh: sh, cab: cab, n: cab.map(normalizar), ult: ult };
+}
+function acharCol(info, aliases) {
+  for (let i = 0; i < aliases.length; i++) { const k = info.n.indexOf(normalizar(aliases[i])); if (k >= 0) return k; }
+  return -1;
+}
+/** Acha a coluna; se não existir, cria no fim com o título dado. */
+function garantirCol(info, aliases, titulo) {
+  let k = acharCol(info, aliases);
+  if (k >= 0) return k;
+  k = info.cab.length;
+  while (k > 0 && !info.cab[k - 1]) k--;          // primeira coluna livre depois do último título
+  if (info.sh.getMaxColumns() < k + 1) info.sh.insertColumnsAfter(info.sh.getMaxColumns(), k + 1 - info.sh.getMaxColumns());
+  info.sh.getRange(1, k + 1).setValue(titulo).setFontWeight('bold');
+  while (info.cab.length <= k) { info.cab.push(''); info.n.push(''); }
+  info.cab[k] = titulo; info.n[k] = normalizar(titulo); info.ult = Math.max(info.ult, k + 1);
+  return k;
+}
+function lerLinhas(info) {
+  const ult = info.sh.getLastRow();
+  if (ult < 2) return [];
+  return info.sh.getRange(2, 1, ult - 1, info.ult).getValues();
+}
+function isoParaData(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) throw new Error('Data inválida.');
+  return Utilities.parseDate(iso, tzDados(), 'yyyy-MM-dd');
+}
+/** Qualquer valor de célula de data → 'yyyy-MM-dd' ('' se não for data). */
+function chaveData(v) {
+  const tz = tzDados();
+  if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+  if (typeof v === 'number' && v > 20000 && v < 80000) return Utilities.formatDate(new Date(Math.round((v - 25569) * 864e5)), 'UTC', 'yyyy-MM-dd');
+  const t = String(v == null ? '' : v).trim();
+  let m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? m[0] : '';
+}
+function soDigitos(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
+function texto(v) { return String(v == null ? '' : v).trim(); }
+function hoje() { return Utilities.formatDate(new Date(), tzDados(), 'yyyy-MM-dd'); }
+function formatarDatas(sh, col, ini, qtd) { if (qtd > 0) sh.getRange(ini, col + 1, qtd, 1).setNumberFormat('dd/MM/yyyy'); }
+
+function registrarLog(s, tipo, detalhe) {
+  try {
+    const ss = dadosSS();
+    let sh = ss.getSheetByName(ABA_LOG_LANC);
+    if (!sh) {
+      sh = ss.insertSheet(ABA_LOG_LANC);
+      sh.getRange(1, 1, 1, 5).setValues([['DataHora', 'Matricula', 'Usuario', 'Tipo', 'Detalhe']]).setFontWeight('bold');
+      sh.setFrozenRows(1);
+    }
+    const q = Utilities.formatDate(new Date(), tzDados(), 'dd/MM/yyyy HH:mm:ss');
+    sh.getRange(sh.getLastRow() + 1, 1, 1, 5).setNumberFormat('@').setValues([[q, s.matricula, s.nome || s.matricula, tipo, detalhe]]);
+  } catch (e) { /* o log nunca pode impedir um lançamento */ }
+}
+
+/* ---------- listas configuráveis (aba Config_Lancamentos) ---------- */
+
+function lerConfig() {
+  const ss = dadosSS();
+  let sh = ss.getSheetByName(ABA_CONFIG);
+  if (!sh) {
+    sh = ss.insertSheet(ABA_CONFIG);
+    const linhas = [['Lista', 'Valor']];
+    Object.keys(CONFIG_PADRAO).forEach(function (k) { CONFIG_PADRAO[k].forEach(function (v) { linhas.push([k, v]); }); });
+    sh.getRange(1, 1, linhas.length, 2).setValues(linhas);
+    sh.getRange(1, 1, 1, 2).setFontWeight('bold'); sh.setFrozenRows(1);
+  }
+  const cfg = {};
+  LISTAS_EDITAVEIS.forEach(function (k) { cfg[k] = []; });
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 2).getDisplayValues().forEach(function (l) {
+    const k = texto(l[0]), v = texto(l[1]);
+    if (cfg[k] && v && cfg[k].map(normalizar).indexOf(normalizar(v)) < 0) cfg[k].push(v);
+  });
+  return cfg;
+}
+
+function lancConfigAdd(d, s) {
+  const lista = texto(d.lista), valor = texto(d.valor);
+  if (LISTAS_EDITAVEIS.indexOf(lista) < 0) throw new Error('Lista desconhecida.');
+  exigir(s, [ABA_LANC, LISTA_DA_SUB[lista]]);
+  if (!valor) throw new Error('Digite o nome do novo item.');
+  const cfg = lerConfig();
+  if (cfg[lista].map(normalizar).indexOf(normalizar(valor)) >= 0) throw new Error('"' + valor + '" já existe nessa lista.');
+  const sh = dadosSS().getSheetByName(ABA_CONFIG);
+  sh.getRange(sh.getLastRow() + 1, 1, 1, 2).setNumberFormat('@').setValues([[lista, valor]]);
+  registrarLog(s, 'Nova opção', lista + ': ' + valor);
+  return { ok: true, listas: lerConfig() };
+}
+
+/* ---------- funcionários (quadro = aba TURNOVER) ---------- */
+
+const ALIAS_TURN = {
+  mat: ['MATRIC', 'MATRICULA', 'CODIGO', 'COD'], nome: ['NOME'], ativo: ['ATIVO'], tipo: ['TIPO'], motivo: ['MOTIVO'],
+  obs: ['OBS', 'OUTRAS OBS', 'OBSERVACAO'], adm: ['DATA CONTRATACAO', 'DATA CONTRATA', 'DATA ADMISSAO', 'DT ADMISSAO', 'ADMISSAO'],
+  desl: ['DATA DESLIGAMENTO', 'DT DESLIGAMENTO', 'DESLIGAMENTO', 'DEMISSAO'],
+  transf: ['DATA TRANSFERENCIA', 'DT TRANSFERENCIA']
+};
+
+function lerTurnover() {
+  const info = infoAba('TURNOVER');
+  const idx = {}; Object.keys(ALIAS_TURN).forEach(function (k) { idx[k] = acharCol(info, ALIAS_TURN[k]); });
+  if (idx.mat < 0 || idx.nome < 0) throw new Error('A aba TURNOVER precisa das colunas Matrícula (MATRIC/CODIGO) e NOME.');
+  const linhas = lerLinhas(info), out = [];
+  linhas.forEach(function (l, i) {
+    const mat = texto(l[idx.mat]);
+    if (!mat && !texto(l[idx.nome])) return;
+    out.push({
+      linha: i + 2, mat: mat, nome: texto(l[idx.nome]),
+      ativo: idx.ativo >= 0 && ['SIM', 'S', 'TRUE', '1'].indexOf(normalizar(l[idx.ativo])) >= 0,
+      tipo: idx.tipo >= 0 ? texto(l[idx.tipo]) : '', motivo: idx.motivo >= 0 ? texto(l[idx.motivo]) : '', obs: idx.obs >= 0 ? texto(l[idx.obs]) : '',
+      adm: idx.adm >= 0 ? chaveData(l[idx.adm]) : '', desl: idx.desl >= 0 ? chaveData(l[idx.desl]) : '', transf: idx.transf >= 0 ? chaveData(l[idx.transf]) : ''
+    });
+  });
+  return { info: info, idx: idx, pessoas: out };
+}
+
+function lancInit(s) {
+  const cfg = lerConfig();
+  // tipos de missão já usados na aba MISSÕES entram na lista
+  try {
+    const m = infoAba('MISSÕES'), iT = acharCol(m, ['TIPO', 'REGRA']);
+    if (iT >= 0) lerLinhas(m).forEach(function (l) {
+      const v = texto(l[iT]); if (v && cfg.TIPO_MISSAO.map(normalizar).indexOf(normalizar(v)) < 0) cfg.TIPO_MISSAO.push(v);
+    });
+  } catch (e) { /* aba MISSÕES ainda não existe */ }
+  let pessoas = [], aviso = '';
+  try { pessoas = lerTurnover().pessoas; } catch (e) { aviso = String(e.message || e); }
+  const nomes = {};
+  pessoas.forEach(function (p) { if (p.mat && p.nome) nomes[p.mat] = p.nome; });
+  return { ok: true, listas: cfg, pessoas: pessoas.map(function (p) { return { mat: p.mat, nome: p.nome, ativo: p.ativo }; }),
+    aviso: aviso, usuario: { matricula: s.matricula, nome: s.nome || nomes[s.matricula] || '' }, classificacao: mapaClassificacao(), hoje: hoje() };
+}
+
+/* ---------- Feedback ---------- */
+
+function faixaNota(n) { return n <= 3 ? 0 : (n <= 6 ? 1 : 2); }
+function desempenhoDaNota(n) { return ['Desempenho Insatisfatório', 'Regular, com margem p/ melhoria', 'Bom Desempenho'][faixaNota(n)]; }
+
+/** Classificação automática: aprende com o que já está na aba (mais usada em cada faixa de nota do gestor). */
+function mapaClassificacao() {
+  const padrao = ['Negativo', 'Neutro', 'Positivo'];
+  try {
+    const info = infoAba('FEEDBACK REP');
+    const iN = acharCol(info, ['AVALIACAO GESTOR']), iC = acharCol(info, ['CLASSIFICACAO']);
+    if (iN < 0 || iC < 0) return padrao;
+    const cont = [{}, {}, {}];
+    lerLinhas(info).forEach(function (l) {
+      const n = Number(String(l[iN]).replace(',', '.')), c = texto(l[iC]);
+      if (!c || isNaN(n) || String(l[iN]) === '') return;
+      const f = faixaNota(n); cont[f][c] = (cont[f][c] || 0) + 1;
+    });
+    return cont.map(function (o, i) {
+      const k = Object.keys(o).sort(function (a, b) { return o[b] - o[a]; })[0];
+      return k || padrao[i];
+    });
+  } catch (e) { return padrao; }
+}
+
+function nomePorMatricula(mat) {
+  try { const p = lerTurnover().pessoas.filter(function (x) { return x.mat === mat; })[0]; if (p && p.nome) return p.nome; } catch (e) {}
+  return nomeDaMatricula(mat);
+}
+
+function feedbackSalvar(d, s) {
+  const mat = soDigitos(d.mat), matApl = soDigitos(d.matAplicador) || s.matricula;
+  if (!mat) throw new Error('Informe a matrícula do colaborador.');
+  const nome = nomePorMatricula(mat) || texto(d.nome);
+  if (!nome) throw new Error('Matrícula não encontrada. Confira o número.');
+  const nomeApl = texto(d.nomeAplicador) || nomePorMatricula(matApl) || s.nome || '';
+  const resumo = texto(d.resumo);
+  if (!resumo) throw new Error('Escreva o resumo do assunto.');
+  const nP = Number(d.avPessoal), nG = Number(d.avGestor);
+  if (isNaN(nP) || nP < 0 || nP > 10) throw new Error('Avaliação pessoal deve ser de 0 a 10.');
+  if (isNaN(nG) || nG < 0 || nG > 10) throw new Error('Avaliação do gestor deve ser de 0 a 10.');
+  const data = isoParaData(d.data);
+
+  let link = '';
+  if (d.anexo && d.anexo.base64) {
+    const a = d.anexo, ext = /pdf/i.test(a.mime) ? 'pdf' : (/png/i.test(a.mime) ? 'png' : 'jpg');
+    const it = DriveApp.getFoldersByName(PASTA_FEEDBACK);
+    const pasta = it.hasNext() ? it.next() : DriveApp.createFolder(PASTA_FEEDBACK);
+    const nomeArq = 'Feedback_' + mat + '_' + d.data + '_' + Utilities.formatDate(new Date(), tzDados(), 'HHmmss') + '.' + ext;
+    const blob = Utilities.newBlob(Utilities.base64Decode(a.base64), a.mime || 'application/octet-stream', nomeArq);
+    link = pasta.createFile(blob).getUrl();
+  }
+
+  const info = infoAba('FEEDBACK REP');
+  const c = {
+    data: garantirCol(info, ['DATA'], 'Data'), mat: garantirCol(info, ['COD', 'MATRICULA', 'CODIGO'], 'Cod'), nome: garantirCol(info, ['NOME'], 'Nome'),
+    matApl: garantirCol(info, ['COD APLICADOR', 'MATRICULA APLICADOR'], 'Cod Aplicador'), nomeApl: garantirCol(info, ['NOME APLICADOR'], 'Nome Aplicador'),
+    resumo: garantirCol(info, ['RESUMO ASSUNTO'], 'Resumo Assunto'), avP: garantirCol(info, ['AVALIACAO PESSOAL'], 'Avaliação Pessoal'),
+    avG: garantirCol(info, ['AVALIACAO GESTOR'], 'Avaliação Gestor'), desemp: garantirCol(info, ['DESEMPENHO'], 'Desempenho'),
+    classif: garantirCol(info, ['CLASSIFICACAO'], 'Classificação'), anexo: garantirCol(info, ['ANEXO', 'LINK ANEXO'], 'Anexo')
+  };
+  const linha = new Array(info.ult).fill('');
+  linha[c.data] = data; linha[c.mat] = mat; linha[c.nome] = nome; linha[c.matApl] = matApl; linha[c.nomeApl] = nomeApl;
+  linha[c.resumo] = resumo; linha[c.avP] = nP; linha[c.avG] = nG;
+  linha[c.desemp] = desempenhoDaNota(nG); linha[c.classif] = mapaClassificacao()[faixaNota(nG)]; linha[c.anexo] = link;
+  const n = Math.max(info.sh.getLastRow(), 1) + 1;
+  garantirTamanho(info.sh, n, info.ult);
+  info.sh.getRange(n, 1, 1, info.ult).setValues([linha]);
+  formatarDatas(info.sh, c.data, n, 1);
+  registrarLog(s, 'Feedback', mat + ' ' + nome + ' · nota ' + nG + (link ? ' · com anexo' : ''));
+  return { ok: true, nome: nome, desempenho: linha[c.desemp], classificacao: linha[c.classif], anexo: link };
+}
+
+/* ---------- REP.AVARIA ---------- */
+
+function numerosAvaria(sh) {
+  const set = {};
+  if (sh.getLastRow() < 1) return set;
+  sh.getRange(1, 1, sh.getLastRow(), Math.max(sh.getLastColumn(), 1)).getValues().forEach(function (l) {
+    l.forEach(function (v) { const t = texto(v); if (/^\d{5,}$/.test(t)) set[t] = true; });
+  });
+  return set;
+}
+function existeNa9712(num) {
+  const sh = dadosSS().getSheetByName('9712');
+  if (!sh) return { aba: false, existe: false };
+  const ult = sh.getLastRow();
+  if (ult < 2) return { aba: true, existe: false };
+  const cab = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(normalizar);
+  let col = cab.indexOf('NUMLANCAMENTO');
+  if (col < 0) col = 10; // coluna K
+  const v = sh.getRange(2, col + 1, ult - 1, 1).getValues();
+  for (let i = 0; i < v.length; i++) if (soDigitos(v[i][0]) === num) return { aba: true, existe: true };
+  return { aba: true, existe: false };
+}
+function avariaVerificar(d) {
+  const num = soDigitos(d.num);
+  if (!num) throw new Error('Informe o número do lançamento.');
+  const sh = abaDados('REP.AVARIA');
+  return { ok: true, num: num, jaLancado: !!numerosAvaria(sh)[num], na9712: existeNa9712(num) };
+}
+function avariaSalvar(d, s) {
+  const num = soDigitos(d.num), tipo = texto(d.tipo);
+  if (!num) throw new Error('Informe o número do lançamento.');
+  if (!tipo) throw new Error('Escolha o tipo do lançamento.');
+  const sh = abaDados('REP.AVARIA');
+  if (numerosAvaria(sh)[num]) throw new Error('O lançamento ' + num + ' já existe na REP.AVARIA. Nada foi gravado.');
+  const na = existeNa9712(num);
+  if (na.aba && !na.existe && d.confirmarSem9712 !== true) return { ok: false, precisaConfirmar: true, erro: 'O número ' + num + ' não foi encontrado na 9712 (coluna K). Confirme para lançar mesmo assim.' };
+  const info = infoAba('REP.AVARIA');
+  const iN = acharCol(info, ['NUM LANCAMENTO', 'NUMLANCAMENTO', 'LANCAMENTO']), iT = acharCol(info, ['TIPO', 'TIPO LANCAMENTO', 'TIPO DE LANCAMENTO', 'RELACAO']);
+  const n = Math.max(sh.getLastRow(), 1) + 1;
+  if (iN >= 0 && iT >= 0) {
+    const l = new Array(info.ult).fill(''); l[iN] = Number(num); l[iT] = tipo;
+    garantirTamanho(sh, n, info.ult); sh.getRange(n, 1, 1, info.ult).setValues([l]);
+  } else {  // aba sem títulos reconhecíveis: grava número e tipo nas duas primeiras colunas
+    garantirTamanho(sh, n, 2); sh.getRange(n, 1, 1, 2).setValues([[Number(num), tipo]]);
+  }
+  registrarLog(s, 'REP.AVARIA', num + ' · ' + tipo);
+  return { ok: true, num: num, na9712: na };
+}
+
+/* ---------- Chamada (aba QUADRO REP) ---------- */
+
+const ALIAS_Q = { data: ['DATA'], cod: ['CODIGO', 'COD', 'MATRICULA'], nome: ['NOME'], status: ['STATUS'], cargo: ['CARGO'] };
+function infoQuadro() {
+  const info = infoAba('QUADRO REP'), c = {};
+  Object.keys(ALIAS_Q).forEach(function (k) { c[k] = acharCol(info, ALIAS_Q[k]); });
+  if (c.data < 0 || c.cod < 0 || c.status < 0) throw new Error('A aba QUADRO REP precisa das colunas DATA, CODIGO e STATUS.');
+  return { info: info, c: c };
+}
+function funcionariosAtivos() { return lerTurnover().pessoas.filter(function (p) { return p.ativo && p.mat; }); }
+
+function chamadaDia(d) {
+  const iso = texto(d.data); isoParaData(iso);
+  const q = infoQuadro(), dia = {};
+  lerLinhas(q.info).forEach(function (l) { if (chaveData(l[q.c.data]) === iso) dia[soDigitos(l[q.c.cod])] = texto(l[q.c.status]); });
+  const ativos = funcionariosAtivos();
+  const itens = ativos.map(function (p) { return { mat: p.mat, nome: p.nome, status: dia[p.mat] || '' }; });
+  const foraDoQuadro = Object.keys(dia).filter(function (m) { return !ativos.some(function (p) { return p.mat === m; }); }).length;
+  return { ok: true, data: iso, jaExiste: Object.keys(dia).length > 0, itens: itens, foraDoQuadro: foraDoQuadro };
+}
+
+/** Grava (cria ou atualiza) o status de cada matrícula em cada dia. itens = [{data, mat, nome, status}] */
+function gravarChamada(itens) {
+  const q = infoQuadro(), c = q.c, sh = q.info.sh;
+  const linhas = lerLinhas(q.info), indice = {}, cargo = {};
+  linhas.forEach(function (l, i) {
+    const k = chaveData(l[c.data]) + '|' + soDigitos(l[c.cod]);
+    indice[k] = i + 2;
+    if (c.cargo >= 0 && texto(l[c.cargo])) cargo[soDigitos(l[c.cod])] = texto(l[c.cargo]);
+  });
+  let criadas = 0, atualizadas = 0; const novas = [];
+  itens.forEach(function (it) {
+    const st = texto(it.status), mat = soDigitos(it.mat);
+    if (!st || !mat) return;
+    const k = it.data + '|' + mat;
+    if (indice[k]) {
+      const cel = sh.getRange(indice[k], c.status + 1);
+      if (texto(cel.getValue()) !== st) { cel.setValue(st); atualizadas++; }
+    } else {
+      const l = new Array(q.info.ult).fill('');
+      l[c.data] = isoParaData(it.data); l[c.cod] = mat; if (c.nome >= 0) l[c.nome] = texto(it.nome); l[c.status] = st;
+      if (c.cargo >= 0 && cargo[mat]) l[c.cargo] = cargo[mat];
+      novas.push(l); indice[k] = -1; criadas++;
+    }
+  });
+  if (novas.length) {
+    const n = Math.max(sh.getLastRow(), 1) + 1;
+    garantirTamanho(sh, n + novas.length - 1, q.info.ult);
+    sh.getRange(n, 1, novas.length, q.info.ult).setValues(novas);
+    formatarDatas(sh, c.data, n, novas.length);
+  }
+  return { criadas: criadas, atualizadas: atualizadas };
+}
+
+function chamadaSalvar(d, s) {
+  const iso = texto(d.data); isoParaData(iso);
+  const itens = (Array.isArray(d.itens) ? d.itens : []).map(function (x) { return { data: iso, mat: x.mat, nome: x.nome, status: x.status }; });
+  if (!itens.some(function (x) { return texto(x.status); })) throw new Error('Marque o status de ao menos um colaborador.');
+  const r = gravarChamada(itens);
+  registrarLog(s, 'Chamada', iso + ' · ' + r.criadas + ' novas, ' + r.atualizadas + ' atualizadas');
+  return { ok: true, criadas: r.criadas, atualizadas: r.atualizadas };
+}
+
+function chamadaLote(d, s) {
+  const mats = (Array.isArray(d.mats) ? d.mats : []).map(soDigitos).filter(String), status = texto(d.status);
+  if (!mats.length) throw new Error('Selecione ao menos um colaborador.');
+  if (!status) throw new Error('Escolha o status.');
+  const ini = isoParaData(d.ini), fim = isoParaData(d.fim);
+  if (fim < ini) throw new Error('A data final é anterior à inicial.');
+  const dias = Math.round((fim - ini) / 864e5) + 1;
+  if (dias > 62) throw new Error('Período muito longo (máximo 62 dias por vez).');
+  const nomes = {}; lerTurnover().pessoas.forEach(function (p) { nomes[p.mat] = p.nome; });
+  const itens = [], tz = tzDados();
+  for (let i = 0; i < dias; i++) {
+    const dt = new Date(ini.getTime() + i * 864e5), iso = Utilities.formatDate(dt, tz, 'yyyy-MM-dd');
+    const dow = Number(Utilities.formatDate(dt, tz, 'u')); // 7 = domingo
+    if (d.pularDomingo !== false && dow === 7) continue;
+    mats.forEach(function (m) { itens.push({ data: iso, mat: m, nome: nomes[m] || nomeDaMatricula(m), status: status }); });
+  }
+  const r = gravarChamada(itens);
+  registrarLog(s, 'Chamada em lote', status + ' · ' + d.ini + ' a ' + d.fim + ' · ' + mats.length + ' colaborador(es)');
+  return { ok: true, criadas: r.criadas, atualizadas: r.atualizadas, dias: dias };
+}
+
+/* ---------- Quadro (aba TURNOVER) ---------- */
+
+function quadroListar() { const t = lerTurnover(); return { ok: true, pessoas: t.pessoas }; }
+
+function quadroSalvar(d, s) {
+  const t = lerTurnover(), info = t.info, sh = info.sh;
+  const mat = soDigitos(d.matric), nome = texto(d.nome), linhaEd = Number(d.linha) || 0;
+  if (!mat) throw new Error('Informe a matrícula.');
+  if (!nome) throw new Error('Informe o nome.');
+  const tipo = texto(d.tipo), motivo = texto(d.motivo), obs = texto(d.obs);
+  const dtAdm = texto(d.dtAdm), dtDesl = texto(d.dtDesl), dtTransf = texto(d.dtTransf);
+  [dtAdm, dtDesl, dtTransf].forEach(function (x) { if (x) isoParaData(x); });
+  const saiu = !!(dtDesl || dtTransf || /TRANSFER/.test(normalizar(tipo)));
+  if (saiu && !tipo) throw new Error('Informe o tipo (desligamento, pediu desligamento ou transferência).');
+  if (/TRANSFER/.test(normalizar(tipo)) && !dtTransf) throw new Error('Informe a data da transferência.');
+  if (saiu && !/TRANSFER/.test(normalizar(tipo)) && !motivo) throw new Error('Informe o motivo do desligamento.');
+  const ativo = !saiu;
+  if (!linhaEd && t.pessoas.some(function (p) { return p.mat === mat && p.ativo; }))
+    throw new Error('A matrícula ' + mat + ' já está ATIVA no quadro. Edite o registro existente.');
+  if (linhaEd && !t.pessoas.some(function (p) { return p.linha === linhaEd; })) throw new Error('Registro não encontrado (a aba mudou). Recarregue.');
+
+  const c = {
+    mat: t.idx.mat, nome: t.idx.nome,
+    ativo: garantirCol(info, ALIAS_TURN.ativo, 'ATIVO'), tipo: garantirCol(info, ALIAS_TURN.tipo, 'TIPO'),
+    motivo: garantirCol(info, ALIAS_TURN.motivo, 'MOTIVO'), obs: garantirCol(info, ALIAS_TURN.obs, 'OBS'),
+    adm: garantirCol(info, ALIAS_TURN.adm, 'DATA CONTRATAÇÃO'), desl: garantirCol(info, ALIAS_TURN.desl, 'DATA DESLIGAMENTO'),
+    transf: garantirCol(info, ALIAS_TURN.transf, 'DATA TRANSFERÊNCIA')
+  };
+  const l = new Array(info.ult).fill('');
+  if (linhaEd) { const atual = sh.getRange(linhaEd, 1, 1, info.ult).getValues()[0]; for (let i = 0; i < atual.length; i++) l[i] = atual[i]; }
+  l[c.mat] = mat; l[c.nome] = nome; l[c.ativo] = ativo ? 'Sim' : 'Não'; l[c.tipo] = tipo; l[c.motivo] = motivo; l[c.obs] = obs;
+  l[c.adm] = dtAdm ? isoParaData(dtAdm) : ''; l[c.desl] = dtDesl ? isoParaData(dtDesl) : ''; l[c.transf] = dtTransf ? isoParaData(dtTransf) : '';
+  const n = linhaEd || (Math.max(sh.getLastRow(), 1) + 1);
+  garantirTamanho(sh, n, info.ult);
+  sh.getRange(n, 1, 1, info.ult).setValues([l]);
+  [c.adm, c.desl, c.transf].forEach(function (k) { formatarDatas(sh, k, n, 1); });
+  CacheService.getScriptCache().remove('nome_' + mat);
+  registrarLog(s, linhaEd ? 'Quadro (edição)' : 'Quadro (novo)', mat + ' ' + nome + ' · ' + (ativo ? 'ATIVO' : 'NÃO ativo' + (tipo ? ' (' + tipo + ')' : '')));
+  return { ok: true, ativo: ativo, linha: n };
+}
+
+/* ---------- Missões ---------- */
+
+function horaParaMin(t) {
+  const m = String(t || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!m || +m[1] > 23 || +m[2] > 59) throw new Error('Hora inválida (use HH:MM).');
+  return +m[1] * 60 + +m[2];
+}
+function missaoSalvar(d, s) {
+  const iso = texto(d.data), cod = soDigitos(d.cod), tipo = texto(d.tipo);
+  isoParaData(iso);
+  if (!cod) throw new Error('Informe o código do colaborador.');
+  const nome = nomePorMatricula(cod) || texto(d.nome);
+  if (!nome) throw new Error('Código não encontrado no quadro.');
+  if (!tipo) throw new Error('Escolha o tipo da missão.');
+  const ini = horaParaMin(d.ini), fim = horaParaMin(d.fim);
+  let tot = fim - ini; if (tot < 0) tot += 1440;
+  if (tot === 0) throw new Error('Hora início e fim iguais.');
+  const info = infoAba('MISSÕES');
+  const c = {
+    data: garantirCol(info, ['DATA'], 'DATA'), ini: garantirCol(info, ['HORA INICIO'], 'HORA INICIO'), fim: garantirCol(info, ['HORA FIM'], 'HORA FIM'),
+    cod: garantirCol(info, ['CODIGO', 'COD'], 'CODIGO'), nome: garantirCol(info, ['NOME'], 'NOME'), tipo: garantirCol(info, ['TIPO', 'REGRA'], 'TIPO'),
+    tot: acharCol(info, ['TEMPO TOTAL'])
+  };
+  const dup = lerLinhas(info).some(function (l) {
+    return chaveData(l[c.data]) === iso && soDigitos(l[c.cod]) === cod && texto(l[c.tipo]) === tipo && minDaCelula(l[c.ini]) === ini && minDaCelula(l[c.fim]) === fim;
+  });
+  if (dup) throw new Error('Essa missão já foi lançada (mesma data, colaborador, horário e tipo).');
+  const l = new Array(info.ult).fill('');
+  l[c.data] = isoParaData(iso); l[c.ini] = ini / 1440; l[c.fim] = fim / 1440; l[c.cod] = cod; l[c.nome] = nome; l[c.tipo] = tipo;
+  if (c.tot >= 0) l[c.tot] = tot / 1440;
+  const n = Math.max(info.sh.getLastRow(), 1) + 1;
+  garantirTamanho(info.sh, n, info.ult);
+  info.sh.getRange(n, 1, 1, info.ult).setValues([l]);
+  formatarDatas(info.sh, c.data, n, 1);
+  info.sh.getRange(n, c.ini + 1).setNumberFormat('HH:mm:ss'); info.sh.getRange(n, c.fim + 1).setNumberFormat('HH:mm:ss');
+  if (c.tot >= 0) info.sh.getRange(n, c.tot + 1).setNumberFormat('[h]:mm:ss');
+  registrarLog(s, 'Missão', cod + ' ' + nome + ' · ' + iso + ' · ' + tipo + ' · ' + Math.floor(tot / 60) + 'h' + ('0' + (tot % 60)).slice(-2));
+  return { ok: true, nome: nome, totalMin: tot };
+}
+function minDaCelula(v) {
+  if (v instanceof Date) return v.getHours() * 60 + v.getMinutes();
+  if (typeof v === 'number') return Math.round((v % 1) * 1440);
+  const m = String(v || '').match(/^(\d{1,2}):(\d{2})/);
+  return m ? +m[1] * 60 + +m[2] : -1;
+}
+
+/* ---------- Capacidade Realizada ---------- */
+
+function capacidadeSalvar(d, s) {
+  const iso = texto(d.data), cod = texto(d.cod), tipo = texto(d.tipo).toUpperCase();
+  isoParaData(iso);
+  if (!cod) throw new Error('Informe o código do produto.');
+  if (['CORRETIVO', 'PREVENTIVO'].indexOf(tipo) < 0) throw new Error('O tipo deve ser CORRETIVO ou PREVENTIVO.');
+  const info = infoAba('Capacidade Realizada');
+  const c = { cod: garantirCol(info, ['CODIGO', 'COD', 'CODPROD'], 'CODIGO'), data: garantirCol(info, ['DATA'], 'DATA'), tipo: garantirCol(info, ['TIPO'], 'TIPO') };
+  const dup = lerLinhas(info).some(function (l) { return texto(l[c.cod]) === cod && chaveData(l[c.data]) === iso && texto(l[c.tipo]).toUpperCase() === tipo; });
+  if (dup) throw new Error('O produto ' + cod + ' já tem lançamento ' + tipo + ' em ' + iso.split('-').reverse().join('/') + '.');
+  const l = new Array(info.ult).fill('');
+  l[c.cod] = /^\d+$/.test(cod) ? Number(cod) : cod; l[c.data] = isoParaData(iso); l[c.tipo] = tipo;
+  const n = Math.max(info.sh.getLastRow(), 1) + 1;
+  garantirTamanho(info.sh, n, info.ult);
+  info.sh.getRange(n, 1, 1, info.ult).setValues([l]);
+  formatarDatas(info.sh, c.data, n, 1);
+  registrarLog(s, 'Capacidade Realizada', cod + ' · ' + tipo + ' · ' + iso);
+  return { ok: true };
 }
