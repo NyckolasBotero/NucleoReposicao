@@ -801,6 +801,8 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
 .adm-actions{ display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; margin-top:16px; }
 .adm-prog{ height:8px; background:var(--gray-100); border-radius:6px; overflow:hidden; margin:12px 0 6px; }
 .adm-prog > div{ height:100%; background:var(--blue-med); transition:width .2s ease; }
+.lanc-novo{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:-4px 0 10px; }
+.lanc-novo > span{ display:none; gap:6px; align-items:center; }
 .adm-form{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:12px; }
 .adm-form label{ display:flex; flex-direction:column; gap:4px; font-size:11.5px; font-weight:700; color:var(--gray-500); text-transform:uppercase; letter-spacing:.3px; }
 .adm-form input, .adm-form select, .adm-head-r input{ padding:9px 10px; border:1.5px solid var(--gray-200); border-radius:8px; font-size:14px; color:var(--ink); text-transform:none; letter-spacing:0; font-weight:500; }
@@ -933,6 +935,16 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
       <div class="pane" id="pane-organograma"></div>
     </section>
 
+    <!-- LANÇAMENTOS -->
+    <section class="view" id="view-lancamentos">
+      <div class="pane active" id="pane-lfeedback"></div>
+      <div class="pane" id="pane-lavaria"></div>
+      <div class="pane" id="pane-lchamada"></div>
+      <div class="pane" id="pane-lquadro"></div>
+      <div class="pane" id="pane-lmissoes"></div>
+      <div class="pane" id="pane-lcapacidade"></div>
+    </section>
+
     <!-- ADMINISTRAÇÃO -->
     <section class="view" id="view-admin">
       <div class="pane active" id="pane-bases"></div>
@@ -960,6 +972,8 @@ if("serviceWorker" in navigator && /^https?:$/.test(location.protocol)){
 <script>window.APP_STATE = { raw:null, processed:null, currentTeam:null, ready:false, commissionConfig:null };</script>
 <script src="app.js"></script>
 <script src="admin.js"></script>
+<script src="scanner.js"></script>
+<script src="lancamentos.js"></script>
 <script>
 // Aguarda as bibliotecas CDN carregarem antes de inicializar a UI
 (window.__libsReady || Promise.resolve()).then(function(){

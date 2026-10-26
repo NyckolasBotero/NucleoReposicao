@@ -16,6 +16,7 @@ function normPerm(s){ return String(s==null?"":s).normalize("NFD").replace(/[̀-
 const NAV_VIEWS = [
   { id:"indicadores", aba:"Indicadores",   icon:"📊" },
   { id:"gestao",      aba:"Gestão",        icon:"🧭" },
+  { id:"lancamentos", aba:"Lançamentos",   icon:"✍️" },
   { id:"admin",       aba:"Administração", icon:"⚙️" }
 ];
 
@@ -36,7 +37,7 @@ const Auth = {
   // tem acesso a esta sub aba? (view = "indicadores" | "gestao" | "admin"; paneId = id do painel)
   can(view, paneId){
     if(!this.user) return false;
-    if(this.user.legacy) return view!=="admin" || paneId==="links"; // sem servidor: tudo, exceto o que grava (Bases/Acessos)
+    if(this.user.legacy) return (view!=="admin" && view!=="lancamentos") || paneId==="links"; // sem servidor: tudo, exceto o que grava (Bases/Acessos)
     const v = NAV_VIEWS.find(x=>x.id===view);
     const it = ((typeof UI!=="undefined" && UI.subnavConfig[view])||[]).find(i=>i.id===paneId);
     if(!v || !it) return false;
@@ -990,6 +991,8 @@ const DataProcessor = {
         avGestor: isNaN(avGestor)?null:avGestor,
         desempenho: trimStr(r["Desempenho"]),
         classificacao: trimStr(r["Classificação"]),
+        anexo: trimStr(getFieldFlexible(r, ["Anexo","ANEXO","Link Anexo"])),
+        aplicador: trimStr(getFieldFlexible(r, ["Nome Aplicador","NOME APLICADOR"])),
         isAdvertencia: /ADVERT/i.test(trimStr(r["Resumo Assunto"])+" "+trimStr(r["Classificação"])+" "+trimStr(r["Desempenho"]))
       };
     }).filter(r=>r.data || r.nome);
@@ -1013,6 +1016,7 @@ const DataProcessor = {
       else if(statusNorm==="FOLGA") bucket = "FOLGA";
       else if(statusNorm==="FERIAS") bucket = "FERIAS";
       else if(statusNorm==="ATESTADO") bucket = "ATESTADO";
+      else if(statusNorm==="SUSPENSAO") bucket = "SUSPENSAO"; // fora da presença e do absenteísmo (como folga)
       else if(statusRaw!=="") bucket = "SEGUNDO_TURNO"; // ex: 10HRS, SEG TURNO etc — variações tratadas como turno extra
 
       const cargoRaw = trimStr(getFieldFlexible(r, ["CARGO","Cargo"]));
@@ -1389,7 +1393,23 @@ const CurrentTeam = {
     const rowsAtMax = quadro.filter(r=>r.data.getTime()===maxTime);
     const map = new Map();
     rowsAtMax.forEach(r=>{ map.set(r.codKey, r); });
-    const members = Array.from(map.values());
+    let members = Array.from(map.values());
+
+    // O quadro atual é quem está ATIVO = Sim na aba TURNOVER (a chamada só registra presença/falta).
+    // Só vale quando a aba existe e tem ao menos um ativo — senão mantém o comportamento antigo.
+    const ativosT = (processed.turnover||[]).filter(t=>t.ativo && t.codKey);
+    if(processed.turnoverDispo && ativosT.length){
+      const ativoKeys = new Set(ativosT.map(t=>t.codKey));
+      members = members.filter(m=>ativoKeys.has(m.codKey));
+      const ultimoPorCod = new Map();
+      quadro.forEach(r=>{ const a = ultimoPorCod.get(r.codKey); if(!a || r.data>=a.data) ultimoPorCod.set(r.codKey, r); });
+      ativosT.forEach(t=>{
+        if(members.some(m=>m.codKey===t.codKey)) return;
+        const ult = ultimoPorCod.get(t.codKey);
+        members.push({ _row:-1, data:maxDate, codigo:t.matric, nome:t.nome, codKey:t.codKey, statusRaw:"", bucket:"OUTRO",
+                       cargo: ult?ult.cargo:null, cargoRaw: ult?ult.cargoRaw:"", semChamada:true });
+      });
+    }
 
     const cargoDisponivel = !!processed.cargoDisponivel;
     const cargoCounts = { LIDER:0, AUXILIAR:0, REPOSITOR:0, OUTRO:0, NAO_INFORMADO:0 };
@@ -1407,7 +1427,7 @@ const CurrentTeam = {
 
     return {
       date: maxDate,
-      codes: new Set(map.keys()),
+      codes: new Set(members.map(m=>m.codKey)),
       members,
       cargoDisponivel, cargoCounts, repositorCodes
     };
@@ -2094,8 +2114,8 @@ const Projection = {
 const Feedback = {
   classify(nota){
     if(nota===null||nota===undefined) return null;
-    if(nota<=4) return { label:"Desempenho insatisfatório", cls:"neg" };
-    if(nota<=7) return { label:"Regular — margem para melhoria", cls:"warn" };
+    if(nota<=3) return { label:"Desempenho insatisfatório", cls:"neg" };
+    if(nota<=6) return { label:"Regular — margem para melhoria", cls:"warn" };
     return { label:"Bom desempenho", cls:"pos" };
   },
   byEmployee(){
@@ -3739,6 +3759,14 @@ const UI = {
       { id:"ferias", label:"Férias" },
       { id:"organograma", label:"Organograma" }
     ],
+    lancamentos: [
+      { id:"lfeedback", label:"Lançar Feedback" },
+      { id:"lavaria", label:"Lançar REP.AVARIA" },
+      { id:"lchamada", label:"Lançar Chamada" },
+      { id:"lquadro", label:"Lançar Quadro" },
+      { id:"lmissoes", label:"Lançar Missões" },
+      { id:"lcapacidade", label:"Lançar Capacidade" }
+    ],
     admin: [
       { id:"bases", label:"Bases" },
       { id:"acessos", label:"Acessos" },
@@ -3976,7 +4004,7 @@ const UI = {
 
   renderPane(pane){
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
-    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links'].includes(pane)){
+    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','lfeedback','lavaria','lchamada','lquadro','lmissoes','lcapacidade'].includes(pane)){
       const el = $("#pane-"+pane);
       if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">🔄 Buscar dados online</button></div>`;
       return;
@@ -3985,7 +4013,9 @@ const UI = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
-      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks()
+      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(),
+      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
+      lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };
     if(fns[pane]) fns[pane]();
   },
@@ -5654,8 +5684,8 @@ function buildQuadroAtualReportContainer(quadroAtualRows, scounts, maxDate, regi
   const total = quadroAtualRows.length;
   const presentesTotal = (scounts.PRESENTE||0) + (scounts.SEGUNDO_TURNO||0);
 
-  const statusLabelMap = { PRESENTE:"PRESENTE", SEGUNDO_TURNO:"SEG. TURNO", FALTA:"FALTA", FOLGA:"FOLGA", FERIAS:"FÉRIAS", ATESTADO:"ATESTADO" };
-  const pillColorMap = { PRESENTE:"#1a9c62", SEGUNDO_TURNO:"#2f6fce", FALTA:"#d64545", FOLGA:"#7a8798", FERIAS:"#9c6ade", ATESTADO:"#e08a1f" };
+  const statusLabelMap = { PRESENTE:"PRESENTE", SEGUNDO_TURNO:"SEG. TURNO", FALTA:"FALTA", FOLGA:"FOLGA", FERIAS:"FÉRIAS", ATESTADO:"ATESTADO", SUSPENSAO:"SUSPENSÃO" };
+  const pillColorMap = { PRESENTE:"#1a9c62", SEGUNDO_TURNO:"#2f6fce", FALTA:"#d64545", FOLGA:"#7a8798", FERIAS:"#9c6ade", ATESTADO:"#e08a1f", SUSPENSAO:"#8a2be2" };
 
   const nomesPorBucket = (bucket) => quadroAtualRows.filter(r=>r.bucket===bucket)
     .map(r=>escapeHtml(registry.get(r.codKey)||r.nome))
@@ -5812,8 +5842,8 @@ function renderChamada(){
     });
   })();
 
-  const statusColor = { PRESENTE:"var(--green)", FALTA:"var(--red)", FOLGA:"var(--gray-500)", FERIAS:"#9c6ade", ATESTADO:"var(--orange)", SEGUNDO_TURNO:"#5b9bd5" };
-  const statusLabel = { PRESENTE:"Presente", FALTA:"Falta", FOLGA:"Folga", FERIAS:"Férias", ATESTADO:"Atestado", SEGUNDO_TURNO:"Seg. Turno" };
+  const statusColor = { PRESENTE:"var(--green)", FALTA:"var(--red)", FOLGA:"var(--gray-500)", FERIAS:"#9c6ade", ATESTADO:"var(--orange)", SEGUNDO_TURNO:"#5b9bd5", SUSPENSAO:"#8a2be2" };
+  const statusLabel = { PRESENTE:"Presente", FALTA:"Falta", FOLGA:"Folga", FERIAS:"Férias", ATESTADO:"Atestado", SEGUNDO_TURNO:"Seg. Turno", SUSPENSAO:"Suspensão" };
 
   pane.innerHTML = `
     <!-- ===== BLOCO 1: RESUMO ESTÁTICO DO QUADRO ATUAL ===== -->
