@@ -315,7 +315,7 @@ function basesEnviar(d) {
   const nome = String(d.base || ''), cfg = BASES[nome];
   if (!cfg) throw new Error('Base desconhecida: ' + nome);
   const simular = d.simular === true, parte = Number(d.parte) || 1;
-  const tz = Session.getScriptTimeZone();
+  const tz = tzPadrao();
   const cab = cfg.semCabecalho ? null : (Array.isArray(d.cabecalho) ? d.cabecalho.map(function (s) { return String(s == null ? '' : s).trim(); }) : []);
   if (!cfg.semCabecalho && !cab.filter(String).length) throw new Error('O arquivo não tem linha de títulos.');
   const entrada = (Array.isArray(d.linhas) ? d.linhas : []).map(function (l) { return l.map(converter); });
@@ -390,7 +390,7 @@ function basesConcluir(d, sessao) {
     sh.getRange(1, 1, 1, 9).setValues([['Base', 'DataHora', 'Usuario', 'Matricula', 'Arquivo', 'Modo', 'Linhas_Enviadas', 'Linhas_Novas', 'Linhas_Duplicadas']]).setFontWeight('bold');
     sh.setFrozenRows(1);
   }
-  const agora = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm:ss');
+  const agora = Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm:ss');
   const n = sh.getLastRow() + 1;
   sh.getRange(n, 1, 1, 9).setNumberFormat('@').setValues([[nome, agora, sessao.nome || sessao.matricula, sessao.matricula, String(d.arquivo || ''), BASES[nome].modo,
     Number(d.enviadas) || 0, Number(d.novas) || 0, Number(d.duplicadas) || 0]]);
@@ -451,7 +451,13 @@ function lancamento(d, s) {
 
 /* ---------- utilidades ---------- */
 
-function tzDados() { return dadosSS().getSpreadsheetTimeZone(); }
+/** Fuso horário em texto. Se a planilha ou o projeto estiverem sem fuso definido, usa o de São Paulo. */
+function tzPadrao() { return String(Session.getScriptTimeZone() || '') || 'America/Sao_Paulo'; }
+function tzDados() {
+  let tz = '';
+  try { tz = String(dadosSS().getSpreadsheetTimeZone() || ''); } catch (e) {}
+  return tz || tzPadrao();
+}
 function abaDados(nome) {
   const sh = dadosSS().getSheetByName(nome);
   if (!sh) throw new Error('A aba "' + nome + '" não existe na planilha de dados.');
