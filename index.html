@@ -801,6 +801,7 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
 .adm-actions{ display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; margin-top:16px; }
 .adm-prog{ height:8px; background:var(--gray-100); border-radius:6px; overflow:hidden; margin:12px 0 6px; }
 .adm-prog > div{ height:100%; background:var(--blue-med); transition:width .2s ease; }
+.alert-badge{ background:#d64545; color:#fff; border-radius:10px; font-size:11px; font-weight:800; padding:1px 7px; margin-left:4px; }
 .lanc-novo{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:-4px 0 10px; }
 .lanc-novo > span{ display:none; gap:6px; align-items:center; }
 .adm-form{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:12px; }
@@ -862,6 +863,7 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
   </div>
   <nav id="sb-groups"></nav>
   <div class="sb-foot">
+    <button type="button" class="sb-foot-btn" id="sb-alertas">🔔 Alertas <span class="alert-badge" id="sb-alertas-n" style="display:none">0</span></button>
     <button type="button" class="sb-foot-btn" id="sb-refresh">🔄 Atualizar dados</button>
     <button type="button" class="sb-foot-btn" id="sb-arquivo" title="Plano B: carregar o Excel manualmente">📂 Carregar arquivo</button>
     <div class="sb-user">
@@ -878,6 +880,7 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
     <span class="quadro-badge" id="quadro-badge">Nenhum dado carregado</span>
     <button class="btn btn-outline btn-sm" id="btn-export-png" disabled>⤓ PNG</button>
     <button class="btn btn-outline btn-sm" id="btn-export-pdf" disabled>⤓ PDF</button>
+    <button class="btn btn-ghost" id="btn-alertas" title="Alertas: probatório, advertências, feedbacks e férias">🔔 <span class="btn-tx">Alertas</span> <span class="alert-badge" id="hdr-alertas-n" style="display:none">0</span></button>
     <button class="btn btn-ghost" id="btn-refresh-online" title="Buscar novamente os dados do Google Sheets">🔄 <span class="btn-tx">Atualizar dados</span></button>
     <button class="btn btn-ghost hide-sm" id="btn-reload" title="Plano B: carregar o Excel manualmente">📂 Carregar arquivo</button>
     <button class="btn btn-ghost hide-lg" id="hdr-logout" title="Sair">⏻</button>
@@ -938,11 +941,13 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
     <!-- LANÇAMENTOS -->
     <section class="view" id="view-lancamentos">
       <div class="pane active" id="pane-lfeedback"></div>
+      <div class="pane" id="pane-ladvertencia"></div>
       <div class="pane" id="pane-lavaria"></div>
       <div class="pane" id="pane-lchamada"></div>
       <div class="pane" id="pane-lquadro"></div>
       <div class="pane" id="pane-lmissoes"></div>
       <div class="pane" id="pane-lcapacidade"></div>
+      <div class="pane" id="pane-lferias"></div>
     </section>
 
     <!-- ADMINISTRAÇÃO -->
@@ -973,6 +978,7 @@ if("serviceWorker" in navigator && /^https?:$/.test(location.protocol)){
 <script src="app.js"></script>
 <script src="admin.js"></script>
 <script src="scanner.js"></script>
+<script src="feedbacks.js"></script>
 <script src="lancamentos.js"></script>
 <script>
 // Aguarda as bibliotecas CDN carregarem antes de inicializar a UI

@@ -41,7 +41,8 @@ const Auth = {
     const v = NAV_VIEWS.find(x=>x.id===view);
     const it = ((typeof UI!=="undefined" && UI.subnavConfig[view])||[]).find(i=>i.id===paneId);
     if(!v || !it) return false;
-    return this._set.has(normPerm(v.aba)+"|"+normPerm(it.label));
+    // nomes antigos das abas (aliases) continuam valendo para quem já tinha acesso
+    return [it.label].concat(it.aliases||[]).some(n=> this._set.has(normPerm(v.aba)+"|"+normPerm(n)));
   }
 };
 
@@ -269,7 +270,7 @@ const REQUIRED_SHEETS = ["FEEDBACK REP","QUADRO REP","8271","8460"];
 // "AUDITORIA REP" deixou de ser aba obrigatória do Excel: a fonte agora é a planilha Google Sheets
 // online (AUDITORIA_REP_ONLINE_SHEET_ID). Se a aba ainda existir no Excel, serve só de reserva
 // caso a planilha online não possa ser lida.
-const OPTIONAL_SHEETS = ["AUDITORIA REP", "MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo", "1707"]; // carregadas se existirem, não causam erro se faltarem
+const OPTIONAL_SHEETS = ["AUDITORIA REP", "MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo", "1707", "ADVERTÊNCIAS", "FÉRIAS AGENDADAS"]; // carregadas se existirem, não causam erro se faltarem
 
 // Planilha Google Sheets (compartilhada como "qualquer pessoa com o link") que concentra TODAS as abas do
 // painel (mesmos nomes de aba do NUCLEO REPOSIÇÃO.xlsx). O site busca tudo daqui ao abrir.
@@ -284,7 +285,9 @@ const REQUIRED_COLUMNS = {
   "QUADRO REP": ["DATA","CODIGO","NOME","STATUS"],
   "8271": ["DATA","RUA","TIPOOS","NUMOS"],
   "8460": ["CODFUNCOS","NOME","NUMOS","TIPOOS","DTFIMSEPARACAO"],
-  "MISSÕES": ["DATA","HORA INICIO","HORA FIM","CODIGO","NOME","TIPO"]
+  "MISSÕES": ["DATA","HORA INICIO","HORA FIM","CODIGO","NOME","TIPO"],
+  "ADVERTÊNCIAS": ["Data","Cod","Nome","Motivo"],
+  "FÉRIAS AGENDADAS": ["Cod","Nome","Data Inicio","Data Fim"]
 };
 
 const AUDIT_CRITERIA = [
@@ -400,6 +403,7 @@ function ymKey(d){ return d.getFullYear()*100 + (d.getMonth()+1); }
 function ymdKey(d){ return d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate(); }
 function addDays(d, n){ const r = new Date(d); r.setDate(r.getDate()+n); return r; }
 function addMonths(d, n){ const r = new Date(d); r.setMonth(r.getMonth()+n); return r; }
+const MESES_CAP = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 function daysBetween(a,b){ return Math.round((dateOnly(b) - dateOnly(a)) / 86400000); }
 function fmtNum(n, dec){ 
   if(n===null||n===undefined||isNaN(n)) return "-";
@@ -991,11 +995,35 @@ const DataProcessor = {
         avGestor: isNaN(avGestor)?null:avGestor,
         desempenho: trimStr(r["Desempenho"]),
         classificacao: trimStr(r["Classificação"]),
+        motivo: trimStr(getFieldFlexible(r, ["Motivo","MOTIVO"])),
         anexo: trimStr(getFieldFlexible(r, ["Anexo","ANEXO","Link Anexo"])),
         aplicador: trimStr(getFieldFlexible(r, ["Nome Aplicador","NOME APLICADOR"])),
         isAdvertencia: /ADVERT/i.test(trimStr(r["Resumo Assunto"])+" "+trimStr(r["Classificação"])+" "+trimStr(r["Desempenho"]))
       };
     }).filter(r=>r.data || r.nome);
+
+    // ---- ADVERTÊNCIAS (aba opcional, criada pelo lançamento) ----
+    out.advertencias = (raw["ADVERTÊNCIAS"]||[]).map((r,idx)=>{
+      const data = toDate(r["Data"]);
+      const cod = r["Cod"]!==null && r["Cod"]!==undefined && r["Cod"]!=="" ? String(r["Cod"]).trim() : null;
+      const nome = trimStr(r["Nome"]);
+      return {
+        _row: idx, data, cod, nome, codKey: cod ? normStr(cod) : (nome ? "NOME::"+normStr(nome) : null),
+        motivo: trimStr(getFieldFlexible(r, ["Motivo","MOTIVO"])),
+        resumo: trimStr(getFieldFlexible(r, ["Resumo Assunto","Resumo"])),
+        anexo: trimStr(getFieldFlexible(r, ["Anexo","ANEXO"])),
+        aplicador: trimStr(getFieldFlexible(r, ["Nome Aplicador"]))
+      };
+    }).filter(r=>r.data && r.codKey);
+    out.advertenciasDispo = raw["ADVERTÊNCIAS"]!==null && raw["ADVERTÊNCIAS"]!==undefined;
+
+    // ---- FÉRIAS AGENDADAS (aba opcional, criada pelo lançamento) ----
+    out.feriasAgendadas = (raw["FÉRIAS AGENDADAS"]||[]).map((r,idx)=>{
+      const cod = r["Cod"]!==null && r["Cod"]!==undefined && r["Cod"]!=="" ? String(r["Cod"]).trim() : null;
+      const ini = toDate(r["Data Inicio"]), fim = toDate(r["Data Fim"]);
+      const st = normStr(trimStr(getFieldFlexible(r, ["Status","STATUS"])));
+      return { _row: idx, cod, nome: trimStr(r["Nome"]), codKey: cod ? normStr(cod) : null, ini, fim, dias: Number(r["Dias"])||0, cancelada: st==="CANCELADA" };
+    }).filter(r=>r.codKey && r.ini && r.fim);
 
     // ---- QUADRO REP ----
     // CARGO é opcional (coluna nova): LIDER / AUXILIAR / REPOSITOR. Se a coluna não
@@ -3123,6 +3151,10 @@ const FeedbackDoc = {
           (employee.qualidade!==null && employee.qualidade!==undefined) ? fmtNum(employee.qualidade,1)+'%' : 'Sem auditoria no período',
           'Fonte: Gestão > Auditoria',
           (employee.qualidade===null||employee.qualidade===undefined) ? '#7a8798' : employee.qualidade>=90 ? '#1a9c62' : employee.qualidade>=70 ? '#e08a1f' : '#d64545')}
+        ${(employee.qualMeses||[]).map(q=>cardHtml("% Qualidade "+q.rot, q.qualidade!==null?fmtNum(q.qualidade,1)+'%':'Sem auditoria', q.auditorias+' auditoria(s)',
+          q.qualidade===null ? '#7a8798' : q.qualidade>=90 ? '#1a9c62' : q.qualidade>=70 ? '#e08a1f' : '#d64545')).join("")}
+        ${cardHtml("% Qualidade Retornos (3m)", employee.retornoQual!==null&&employee.retornoQual!==undefined?fmtNum(employee.retornoQual,1)+'%':'Sem auditoria', (employee.retornoAud||0)+' auditoria(s) de retorno',
+          (employee.retornoQual===null||employee.retornoQual===undefined) ? '#7a8798' : employee.retornoQual>=90 ? '#1a9c62' : employee.retornoQual>=70 ? '#e08a1f' : '#d64545')}
       </div>
 
       <div style="font-size:12px;font-weight:800;color:#123a6b;margin-bottom:5px;">📈 Indicadores de Desempenho — Comparação Modo Mês</div>
@@ -3749,7 +3781,7 @@ const UI = {
       { id:"cd3d", label:"NVL 3D" }
     ],
     gestao: [
-      { id:"feedbacks", label:"Feedbacks" },
+      { id:"feedbacks", label:"Feedbacks e Advertências", aliases:["Feedbacks"] },
       { id:"quadro", label:"Quadro" },
       { id:"chamada", label:"Chamada" },
       { id:"auditoria", label:"Auditoria" },
@@ -3761,11 +3793,13 @@ const UI = {
     ],
     lancamentos: [
       { id:"lfeedback", label:"Lançar Feedback" },
-      { id:"lavaria", label:"Lançar REP.AVARIA" },
+      { id:"ladvertencia", label:"Lançar Advertência" },
+      { id:"lavaria", label:"Lançar Avaria 9712", aliases:["Lançar REP.AVARIA"] },
       { id:"lchamada", label:"Lançar Chamada" },
       { id:"lquadro", label:"Lançar Quadro" },
       { id:"lmissoes", label:"Lançar Missões" },
-      { id:"lcapacidade", label:"Lançar Capacidade" }
+      { id:"lcapacidade", label:"Lançar Capacidade" },
+      { id:"lferias", label:"Lançar Férias" }
     ],
     admin: [
       { id:"bases", label:"Bases" },
@@ -3884,6 +3918,7 @@ const UI = {
       window.APP_STATE.nameRegistry = nameRegistry;
       window.APP_STATE.commissionConfig = JSON.parse(JSON.stringify(DEFAULT_COMMISSION_CONFIG));
       window.APP_STATE.ready = true;
+      if(window.FeedbackAdv) FeedbackAdv.atualizarAlertas();
 
       // inicializa o Cronograma a partir da sheet CRONOGRAMA (se existir) — continua 100% editável na tela depois
       CronogramaState.activities = processed.cronogramaSheet.map(r=>({
@@ -4004,7 +4039,7 @@ const UI = {
 
   renderPane(pane){
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
-    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','lfeedback','lavaria','lchamada','lquadro','lmissoes','lcapacidade'].includes(pane)){
+    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','lfeedback','ladvertencia','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias'].includes(pane)){
       const el = $("#pane-"+pane);
       if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">🔄 Buscar dados online</button></div>`;
       return;
@@ -4014,7 +4049,7 @@ const UI = {
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
       bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(),
-      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
+      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };
     if(fns[pane]) fns[pane]();
@@ -5049,6 +5084,13 @@ function getFeedbackRankingData(){
   const qIni = maxDate ? addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2) : null;
   const qFim = maxDate ? dateOnly(maxDate) : null;
   const auditByEmp = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
+  // qualidade mês a mês (3 últimos meses até a data máxima dos dados) + auditoria de retornos (3m)
+  const mesesQ = maxDate ? [-2,-1,0].map(k=>{
+    const ini = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), k);
+    const fim = k===0 ? dateOnly(maxDate) : new Date(ini.getFullYear(), ini.getMonth()+1, 0);
+    return { ini, fim, rot: MESES_CAP[ini.getMonth()]+"/"+String(ini.getFullYear()).slice(2), mapa: AuditOnline.qualidadePorRepositorNoIntervalo(ini, fim) };
+  }) : [];
+  const retornoByEmp = (qIni && qFim && window.RetornoOnline) ? RetornoOnline.porRepositor(qIni, qFim) : new Map();
   const rows58 = processed.p8460.filter(r=>r.tipoos===58);
 
   // base de funcionários: quadro atual ou todo o histórico, conforme o toggle
@@ -5082,7 +5124,10 @@ function getFeedbackRankingData(){
     const osSemana = (startWeek && maxDate) ? empRows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=startWeek && d<=dateOnly(maxDate); }).length : 0;
     const osDia = dayRef ? empRows.filter(r=>dateOnly(r.dtinicio).getTime()===dayRef.getTime()).length : 0;
     const aud = auditByEmp.get(m.codKey);
+    const ret = retornoByEmp.get(m.codKey);
+    const qualMeses = mesesQ.map(x=>{ const a = x.mapa.get(m.codKey); return { rot:x.rot, auditorias:a?a.auditorias:0, qualidade:a&&a.qualidadeMedia!==null?a.qualidadeMedia:null }; });
     return {
+      qualMeses, retornoQual: ret && ret.qualidade!==null ? ret.qualidade : null, retornoAud: ret ? ret.auditorias : 0,
       codKey: m.codKey, cod: m.codigo, nome: registry.get(m.codKey)||m.nome,
       os3m, osUltimoMes, osSemana, osDia,
       auditorias: aud ? aud.auditorias : 0,
@@ -5135,7 +5180,7 @@ function renderFeedbackRankingPanel(){
           <thead><tr>
             <th style="width:30px;"><input type="checkbox" id="feedback-select-all" ${allSelected?'checked':''}></th>
             <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
-            <th>O.S. Último Dia</th><th>Auditorias (3m)</th><th>Qualidade % (3m)</th>
+            <th>O.S. Último Dia</th><th>Auditorias (3m)</th>${(data[0]?data[0].qualMeses:[]).map(q=>`<th>Qualidade % ${q.rot}</th>`).join("")}<th>Qualidade % (média 3m)</th><th>Retornos % (3m)</th>
           </tr></thead>
           <tbody>
             ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployees.has(e.codKey)?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="toggleFeedbackEmployee('${escapeHtml(e.codKey)}')">
@@ -5147,8 +5192,10 @@ function renderFeedbackRankingPanel(){
               <td>${fmtNum(e.osSemana)}</td>
               <td>${fmtNum(e.osDia)}</td>
               <td>${fmtNum(e.auditorias)}</td>
-              <td>${e.qualidade!==null?fmtNum(e.qualidade,1)+'%':'-'}</td>
-            </tr>`).join("") || '<tr><td colspan="9" class="small-muted">Nenhum repositor encontrado para os filtros selecionados.</td></tr>'}
+              ${e.qualMeses.map(q=>`<td>${q.qualidade!==null?fmtNum(q.qualidade,1)+'%':'-'}</td>`).join("")}
+              <td><strong>${e.qualidade!==null?fmtNum(e.qualidade,1)+'%':'-'}</strong></td>
+              <td title="${e.retornoAud} auditoria(s) de retorno">${e.retornoQual!==null?fmtNum(e.retornoQual,1)+'%':'-'}</td>
+            </tr>`).join("") || '<tr><td colspan="13" class="small-muted">Nenhum repositor encontrado para os filtros selecionados.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -5201,6 +5248,9 @@ function renderFeedbacks(){
   if(AuditOnline.rows===null && !AuditOnline.loading){
     AuditOnline.load().then(()=> renderFeedbacksContent());
   }
+  if(window.RetornoOnline && RetornoOnline.rows===null && !RetornoOnline.loading){
+    RetornoOnline.load().then(()=> renderFeedbacksContent());
+  }
   pane.innerHTML = `
     <div class="toolbar">
       <div class="filter-group"><label>Data Inicial</label><input type="date" id="fb-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
@@ -5217,85 +5267,7 @@ function renderFeedbacks(){
 }
 
 function renderFeedbacksContent(){
-  const filtRows = getFeedbackFiltered();
-  const registry = window.APP_STATE.nameRegistry;
-
-  // calcular cards e byEmp sobre os rows filtrados
-  const pessoal = filtRows.filter(r=>r.avPessoal!==null).map(r=>r.avPessoal);
-  const gestor  = filtRows.filter(r=>r.avGestor!==null).map(r=>r.avGestor);
-  const cards = {
-    mediaGestor: avg(gestor), mediaPessoal: avg(pessoal),
-    totalFeedbacks: filtRows.length,
-    totalAdvertencias: filtRows.filter(r=>r.isAdvertencia).length,
-    funcionariosAvaliados: uniq(filtRows.map(r=>r.codKey||r.nome)).length
-  };
-
-  const empMap = new Map();
-  filtRows.forEach(r=>{
-    const key = r.codKey||"SEMCOD::"+r.nome;
-    if(!empMap.has(key)) empMap.set(key, { codKey:key, nome: registry.get(r.codKey)||r.nome, feedbacks:0, advertencias:0, somaPessoal:0, nPessoal:0, somaGestor:0, nGestor:0, registros:[] });
-    const e = empMap.get(key);
-    e.feedbacks++;
-    if(r.isAdvertencia) e.advertencias++;
-    if(r.avPessoal!==null){ e.somaPessoal+=r.avPessoal; e.nPessoal++; }
-    if(r.avGestor!==null){ e.somaGestor+=r.avGestor; e.nGestor++; }
-    e.registros.push(r);
-  });
-  const byEmp = Array.from(empMap.values()).map(e=>{
-    const mp = e.nPessoal ? e.somaPessoal/e.nPessoal : null;
-    const mg = e.nGestor  ? e.somaGestor/e.nGestor   : null;
-    const mg2 = mp!==null && mg!==null ? (mp+mg)/2 : (mg!==null?mg:mp);
-    return { ...e, mediaPessoal:mp, mediaGestor:mg, mediaGeral:mg2, classificacao: Feedback.classify(mg) };
-  }).sort((a,b)=>b.feedbacks-a.feedbacks);
-
-  const fbDates = filtRows.map(r=>r.data).filter(Boolean);
-  const fbMin = fbDates.length ? new Date(Math.min(...fbDates.map(d=>d.getTime()))) : null;
-  const fbMax = fbDates.length ? new Date(Math.max(...fbDates.map(d=>d.getTime()))) : null;
-  const badge = fbMin ? `<div class="hint-box">📅 Exibindo: <strong>${fmtDateBR(fbMin)}</strong> até <strong>${fmtDateBR(fbMax)}</strong> — ${filtRows.length} feedback(s)</div>` : "";
-
-  $("#fb-content").innerHTML = badge + `
-    <div class="cards-grid">
-      <div class="card"><div class="card-label">Média Av. Gestor</div><div class="card-value">${fmtNum(cards.mediaGestor,1)}</div></div>
-      <div class="card"><div class="card-label">Média Av. Pessoal</div><div class="card-value">${fmtNum(cards.mediaPessoal,1)}</div></div>
-      <div class="card"><div class="card-label">Total de Feedbacks</div><div class="card-value">${fmtNum(cards.totalFeedbacks)}</div></div>
-      <div class="card ${cards.totalAdvertencias>0?'neg':''}"><div class="card-label">Total de Advertências</div><div class="card-value ${cards.totalAdvertencias>0?'neg':''}">${fmtNum(cards.totalAdvertencias)}</div></div>
-      <div class="card"><div class="card-label">Funcionários Avaliados</div><div class="card-value">${fmtNum(cards.funcionariosAvaliados)}</div></div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header"><h3>Feedbacks / Advertências por Funcionário</h3></div>
-      <div class="chart-wrap tall"><canvas id="chart-feedback-emp"></canvas></div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header"><h3>Tabela de Feedback</h3><span class="panel-note">Passe o mouse sobre a linha para ver o resumo</span></div>
-      <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Data</th><th>Funcionário</th><th>Feedbacks</th><th>Advertências</th><th>Média Geral</th><th>Av. Pessoal</th><th>Av. Gestor</th><th>Classificação</th></tr></thead>
-        <tbody>
-          ${byEmp.length ? byEmp.map(e=>`<tr title="${escapeHtml(e.registros.map(r=>r.resumo).filter(Boolean).join(' | '))}">
-            <td>${e.registros.map(r=>fmtDateBR(r.data)).join(", ")}</td>
-            <td>${escapeHtml(e.nome)}</td><td>${e.feedbacks}</td>
-            <td class="${e.advertencias>0?'cell-neg':''}">${e.advertencias}</td>
-            <td>${e.mediaGeral!==null?fmtNum(e.mediaGeral,1):'-'}</td>
-            <td>${e.mediaPessoal!==null?fmtNum(e.mediaPessoal,1):'-'}</td>
-            <td>${e.mediaGestor!==null?fmtNum(e.mediaGestor,1):'-'}</td>
-            <td>${e.classificacao?`<span class="tag-${e.classificacao.cls==='pos'?'pos':e.classificacao.cls==='neg'?'neg':'warn'}">${e.classificacao.label}</span>`:'-'}</td>
-          </tr>`).join("") : '<tr><td colspan="8" class="small-muted">Nenhum feedback no período selecionado.</td></tr>'}
-        </tbody>
-      </table></div>
-    </div>
-
-    ${renderFeedbackRankingPanel()}
-  `;
-
-  Charts.make("chart-feedback-emp", {
-    type:"bar",
-    data:{ labels: byEmp.map(e=>e.nome), datasets:[
-      { label:"Feedbacks", data: byEmp.map(e=>e.feedbacks), backgroundColor:Charts.colors.blue, borderRadius:4 },
-      { label:"Advertências", data: byEmp.map(e=>e.advertencias), backgroundColor:Charts.colors.red, borderRadius:4 }
-    ]},
-    options: Charts.baseOptions({ indexAxis:"y" })
-  });
+  FeedbackAdv.render();
 
   const dlBtn = $("#btn-download-feedback");
   if(dlBtn) dlBtn.addEventListener("click", ()=>{
@@ -7836,6 +7808,19 @@ function renderFerias(){
 
   const linhasFiltradas = FeriasState.filtro ? d.linhas.filter(l=>l.bucket===FeriasState.filtro) : d.linhas;
 
+  // férias lançadas em Lançamentos > Lançar Férias (aba FÉRIAS AGENDADAS)
+  const hojeF = dateOnly(new Date());
+  const agend = (processed.feriasAgendadas||[]).filter(f=>!f.cancelada);
+  const feriasDe = (l)=>{
+    const k = l.matric ? normStr(String(l.matric)) : null;
+    const mine = k ? agend.filter(f=>f.codKey===k) : [];
+    const prox = mine.filter(f=>dateOnly(f.fim)>=hojeF).sort((a,b)=>a.ini-b.ini)[0] || null;
+    const tiradas = mine.filter(f=>dateOnly(f.fim)<hojeF).reduce((n,f)=>n+(f.dias||0),0);
+    return { prox, tiradas };
+  };
+  const conflitosF = window.FeedbackAdv ? FeedbackAdv.feriasConflitos() : [];
+  const avisoConflito = conflitosF.length ? `<div class="warn-box" style="margin-top:10px;">⚠️ <strong>Férias no mesmo período:</strong><ul style="margin:6px 0 0 18px;padding:0">${conflitosF.map(g=>`<li>${escapeHtml(g.a.nome)} (${fmtDateBR(g.a.ini)} a ${fmtDateBR(g.a.fim)}) × ${escapeHtml(g.b.nome)} (${fmtDateBR(g.b.ini)} a ${fmtDateBR(g.b.fim)})</li>`).join("")}</ul></div>` : "";
+
   pane.innerHTML = `
     <div class="panel">
       <div class="panel-header">
@@ -7849,6 +7834,7 @@ function renderFerias(){
         ${mc('ate9','Até 9 meses', d.counts.ate9, '#2f6fce', FeriasState.filtro==='ate9')}
         ${mc('mais9','+9 meses', d.counts.mais9, '#1a9c62', FeriasState.filtro==='mais9')}
       </div>
+      ${avisoConflito}
       ${d.semData.length ? `<div class="warn-box" style="margin-top:10px;">⚠️ ${d.semData.length} funcionário(s) ativo(s) sem <strong>Data de Contratação</strong> válida no TURNOVER — não entram no cálculo. Revise a planilha.</div>` : ''}
     </div>
 
@@ -7863,10 +7849,10 @@ function renderFerias(){
           <thead><tr>
             <th>Matríc.</th><th>Nome</th><th>Tipo</th>
             <th>Data Contratação</th><th>Férias Previstas</th>
-            <th>Status</th><th>Dias</th>
+            <th>Status</th><th>Dias</th><th>Férias agendadas</th><th>Dias já tirados (lançados)</th>
           </tr></thead>
           <tbody>
-            ${linhasFiltradas.length ? linhasFiltradas.map(l=>`
+            ${linhasFiltradas.length ? linhasFiltradas.map(l=>{ const fx = feriasDe(l); return `
               <tr>
                 <td style="font-size:10px;color:#7a8798;">${escapeHtml(l.matric||'—')}</td>
                 <td><strong>${escapeHtml(l.nome||'—')}</strong></td>
@@ -7875,7 +7861,9 @@ function renderFerias(){
                 <td style="font-weight:700;color:${l.cor};">${fmtDateBR(l.dataFerias)}</td>
                 <td>${pill(l.bucketLabel, l.cor)}</td>
                 <td style="text-align:right;color:${l.cor};font-weight:700;">${l.diffDias<0? (Math.abs(l.diffDias)+'d vencida') : (l.diffDias+'d')}</td>
-              </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;color:#7a8798;padding:16px;">Nenhum funcionário neste filtro.</td></tr>`}
+                <td>${fx.prox ? `<strong style="color:#7a3fc4">${fmtDateBR(fx.prox.ini)} a ${fmtDateBR(fx.prox.fim)}</strong> <span class="small-muted">(${fx.prox.dias}d)</span>` : '<span class="small-muted">não agendada</span>'}</td>
+                <td style="text-align:right">${fx.tiradas||'—'}</td>
+              </tr>`; }).join('') : `<tr><td colspan="9" style="text-align:center;color:#7a8798;padding:16px;">Nenhum funcionário neste filtro.</td></tr>`}
           </tbody>
         </table>
       </div>
