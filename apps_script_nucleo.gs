@@ -25,7 +25,13 @@ const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
-const SUBS_LANC = ['Lançar Feedback', 'Lançar REP.AVARIA', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade'];
+const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias'];
+/** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
+const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
+const ABA_ADVERTENCIAS = 'ADVERTÊNCIAS';
+const ABA_FERIAS = 'FÉRIAS AGENDADAS';
+const DIAS_FERIAS = [5, 10, 15, 20, 25, 30, 31];
+const DIAS_SEM_FEEDBACK = 30;
 const ABA_CONFIG = 'Config_Lancamentos';
 const ABA_LOG_LANC = 'Lancamentos_Log';
 const PASTA_FEEDBACK = 'Núcleo Reposição - Feedbacks';
@@ -139,7 +145,8 @@ function lerUsuarios() {
     if (!admin) return;
     SUBS_LANC.forEach(function (sub) {
       const k = normalizar(ABA_LANC) + '|' + normalizar(sub);
-      if (!u._vistos[k]) { u._vistos[k] = true; u.perms.push({ aba: ABA_LANC, sub: sub }); }
+      const velho = normalizar(ABA_LANC) + '|' + (NOMES_ANTIGOS[normalizar(sub)] || '#');
+      if (!u._vistos[k] && !u._vistos[velho]) { u._vistos[k] = true; u.perms.push({ aba: ABA_LANC, sub: sub }); }
     });
   });
   return { T: T, usuarios: mapa };
@@ -181,8 +188,8 @@ function validarToken(token) {
 }
 
 function exigir(sessao, par) {
-  const alvo = normalizar(par[0]) + '|' + normalizar(par[1]);
-  const ok = sessao.perms.some(function (p) { return normalizar(p.aba) + '|' + normalizar(p.sub) === alvo; });
+  const sub = normalizar(par[1]), alvo = normalizar(par[0]) + '|' + sub, antigo = normalizar(par[0]) + '|' + (NOMES_ANTIGOS[sub] || '');
+  const ok = sessao.perms.some(function (p) { const k = normalizar(p.aba) + '|' + normalizar(p.sub); return k === alvo || k === antigo; });
   if (!ok) throw new Error('Sem permissão para ' + par[0] + ' > ' + par[1] + '.');
 }
 
@@ -416,18 +423,22 @@ const CONFIG_PADRAO = {
   MOTIVO_DESLIGAMENTO: ['BAIXO DESEMPENHO', 'BAIXA QUALIDADE', 'TRABALHO INFORMAL', 'OUTRA OPORTUNIDADE',
     'SOLICITAÇÃO RECEBIMENTO', 'SOLICITAÇÃO ARMAZENAGEM', 'SOLICITAÇÃO EXPEDIÇÃO'],
   TIPO_DESLIGAMENTO: ['DESLIGAMENTO S. JUSTA', 'PEDIU DESLIGAMENTO', 'TRANSFERENCIA'],
-  TIPO_MISSAO: []
+  TIPO_MISSAO: [],
+  MOTIVO_FEEDBACK: ['Má Conduta', 'Insubordinação', 'Ausência Injustificada', 'Atrasos Frequentes', 'Desrespeito às Regras',
+    'Violação Política Moral da Empresa', 'Baixa Produção', 'Desempenho Geral', 'Desídia']
 };
-const LISTAS_EDITAVEIS = ['STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAMENTO', 'TIPO_DESLIGAMENTO', 'TIPO_MISSAO'];
+const LISTAS_EDITAVEIS = ['STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAMENTO', 'TIPO_DESLIGAMENTO', 'TIPO_MISSAO', 'MOTIVO_FEEDBACK'];
 const SUB_DA_ACAO = {
   lanc_init: null, lanc_config_add: null,
-  lanc_feedback_salvar: 'Lançar Feedback',
-  lanc_avaria_verificar: 'Lançar REP.AVARIA', lanc_avaria_salvar: 'Lançar REP.AVARIA',
+  lanc_feedback_salvar: 'Lançar Feedback', lanc_advertencia_salvar: 'Lançar Advertência',
+  lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712',
+  lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
+  lanc_anexo_ler: null,
   lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
   lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro',
   lanc_missao_salvar: 'Lançar Missões', lanc_capacidade_salvar: 'Lançar Capacidade'
 };
-const LISTA_DA_SUB = { STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar REP.AVARIA', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
+const LISTA_DA_SUB = { STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar Avaria 9712', MOTIVO_FEEDBACK: 'Lançar Feedback', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
 
 function lancamento(d, s) {
   if (!(d.acao in SUB_DA_ACAO)) throw new Error('Ação desconhecida.');
@@ -437,6 +448,11 @@ function lancamento(d, s) {
     case 'lanc_init': return lancInit(s);
     case 'lanc_config_add': return lancConfigAdd(d, s);
     case 'lanc_feedback_salvar': return feedbackSalvar(d, s);
+    case 'lanc_advertencia_salvar': return advertenciaSalvar(d, s);
+    case 'lanc_ferias_listar': return feriasListar();
+    case 'lanc_ferias_salvar': return feriasSalvar(d, s);
+    case 'lanc_ferias_cancelar': return feriasCancelar(d, s);
+    case 'lanc_anexo_ler': return anexoLer(d, s);
     case 'lanc_avaria_verificar': return avariaVerificar(d);
     case 'lanc_avaria_salvar': return avariaSalvar(d, s);
     case 'lanc_chamada_dia': return chamadaDia(d);
@@ -601,7 +617,7 @@ function lancInit(s) {
   const nomes = {};
   pessoas.forEach(function (p) { if (p.mat && p.nome) nomes[p.mat] = p.nome; });
   return { ok: true, listas: cfg, pessoas: pessoas.map(function (p) { return { mat: p.mat, nome: p.nome, ativo: p.ativo }; }),
-    aviso: aviso, usuario: { matricula: s.matricula, nome: s.nome || nomes[s.matricula] || '' }, classificacao: mapaClassificacao(), hoje: hoje() };
+    aviso: aviso, usuario: { matricula: s.matricula, nome: s.nome || nomes[s.matricula] || '' }, classificacao: mapaClassificacao(), hoje: hoje(), semFeedback: semFeedbackLista(), diasSemFeedback: DIAS_SEM_FEEDBACK, diasFerias: DIAS_FERIAS };
 }
 
 /* ---------- Feedback ---------- */
@@ -634,47 +650,144 @@ function nomePorMatricula(mat) {
   return nomeDaMatricula(mat);
 }
 
+/** Grava o documento (PDF/imagem) na pasta do Drive e devolve o link. */
+function salvarAnexo(a, prefixo, mat, iso) {
+  if (!a || !a.base64) return '';
+  const ext = /pdf/i.test(a.mime) ? 'pdf' : (/png/i.test(a.mime) ? 'png' : 'jpg');
+  const it = DriveApp.getFoldersByName(PASTA_FEEDBACK);
+  const pasta = it.hasNext() ? it.next() : DriveApp.createFolder(PASTA_FEEDBACK);
+  const nomeArq = prefixo + '_' + mat + '_' + iso + '_' + Utilities.formatDate(new Date(), tzDados(), 'HHmmss') + '.' + ext;
+  const blob = Utilities.newBlob(Utilities.base64Decode(a.base64), a.mime || 'application/octet-stream', nomeArq);
+  return pasta.createFile(blob).getUrl();
+}
+
+function idDoLink(ref) {
+  const t = String(ref || '');
+  let m = t.match(/\/d\/([A-Za-z0-9_-]{10,})/) || t.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{20,}$/.test(t) ? t : '';
+}
+
+/** Devolve o arquivo (base64) para o site mostrar sem baixar. Só arquivos da pasta de documentos do Núcleo. */
+function anexoLer(d, s) {
+  const ok = [['Gestão', 'Feedbacks e Advertências'], ['Lançamentos', 'Lançar Feedback'], ['Lançamentos', 'Lançar Advertência']].some(function (par) {
+    try { exigir(s, par); return true; } catch (e) { return false; }
+  });
+  if (!ok) throw new Error('Sem permissão para ver documentos.');
+  const id = idDoLink(d.ref);
+  if (!id) throw new Error('Link do documento inválido.');
+  const f = DriveApp.getFileById(id);
+  let dentro = false;
+  const pais = f.getParents();
+  while (pais.hasNext()) if (pais.next().getName() === PASTA_FEEDBACK) dentro = true;
+  if (!dentro) throw new Error('Este arquivo não está na pasta de documentos do Núcleo Reposição.');
+  const blob = f.getBlob();
+  if (blob.getBytes().length > 20 * 1024 * 1024) throw new Error('Arquivo grande demais para visualizar aqui. Abra pelo Drive.');
+  return { ok: true, nome: f.getName(), mime: blob.getContentType(), base64: Utilities.base64Encode(blob.getBytes()) };
+}
+
+/** Colaboradores ativos sem feedback há mais de DIAS_SEM_FEEDBACK dias (ou nunca). Líderes ficam de fora (se houver CARGO). */
+function semFeedbackLista(ignorarMat) {
+  try {
+    const hojeIso = hoje(), ultimo = {};
+    const info = infoAba('FEEDBACK REP'), iD = acharCol(info, ['DATA']), iC = acharCol(info, ['COD', 'MATRICULA', 'CODIGO']);
+    if (iD >= 0 && iC >= 0) lerLinhas(info).forEach(function (l) {
+      const m = soDigitos(l[iC]), dt = chaveData(l[iD]);
+      if (m && dt && (!ultimo[m] || dt > ultimo[m])) ultimo[m] = dt;
+    });
+    const lideres = {};
+    try {
+      const q = infoQuadro();
+      if (q.c.cargo >= 0) lerLinhas(q.info).forEach(function (l) { lideres[soDigitos(l[q.c.cod])] = /LIDER/.test(normalizar(l[q.c.cargo])); });
+    } catch (e) {}
+    const ms = function (iso) { return isoParaData(iso).getTime(); };
+    const out = [];
+    funcionariosAtivos().forEach(function (p) {
+      if (lideres[p.mat] || p.mat === ignorarMat) return;
+      const u = ultimo[p.mat];
+      const dias = u ? Math.round((ms(hojeIso) - ms(u)) / 864e5) : null;
+      if (dias === null || dias > DIAS_SEM_FEEDBACK) out.push({ mat: p.mat, nome: p.nome, dias: dias, ultimo: u || '' });
+    });
+    out.sort(function (a, b) { return (b.dias === null ? 1e9 : b.dias) - (a.dias === null ? 1e9 : a.dias); });
+    return out.slice(0, 200);
+  } catch (e) { return []; }
+}
+
 function feedbackSalvar(d, s) {
   const mat = soDigitos(d.mat), matApl = soDigitos(d.matAplicador) || s.matricula;
   if (!mat) throw new Error('Informe a matrícula do colaborador.');
   const nome = nomePorMatricula(mat) || texto(d.nome);
   if (!nome) throw new Error('Matrícula não encontrada. Confira o número.');
   const nomeApl = texto(d.nomeAplicador) || nomePorMatricula(matApl) || s.nome || '';
+  const motivo = texto(d.motivo);
+  if (!motivo) throw new Error('Escolha o motivo do feedback.');
   const resumo = texto(d.resumo);
   if (!resumo) throw new Error('Escreva o resumo do assunto.');
   const nP = Number(d.avPessoal), nG = Number(d.avGestor);
   if (isNaN(nP) || nP < 0 || nP > 10) throw new Error('Avaliação pessoal deve ser de 0 a 10.');
   if (isNaN(nG) || nG < 0 || nG > 10) throw new Error('Avaliação do gestor deve ser de 0 a 10.');
   const data = isoParaData(d.data);
-
-  let link = '';
-  if (d.anexo && d.anexo.base64) {
-    const a = d.anexo, ext = /pdf/i.test(a.mime) ? 'pdf' : (/png/i.test(a.mime) ? 'png' : 'jpg');
-    const it = DriveApp.getFoldersByName(PASTA_FEEDBACK);
-    const pasta = it.hasNext() ? it.next() : DriveApp.createFolder(PASTA_FEEDBACK);
-    const nomeArq = 'Feedback_' + mat + '_' + d.data + '_' + Utilities.formatDate(new Date(), tzDados(), 'HHmmss') + '.' + ext;
-    const blob = Utilities.newBlob(Utilities.base64Decode(a.base64), a.mime || 'application/octet-stream', nomeArq);
-    link = pasta.createFile(blob).getUrl();
-  }
+  const link = salvarAnexo(d.anexo, 'Feedback', mat, d.data);
 
   const info = infoAba('FEEDBACK REP');
   const c = {
     data: garantirCol(info, ['DATA'], 'Data'), mat: garantirCol(info, ['COD', 'MATRICULA', 'CODIGO'], 'Cod'), nome: garantirCol(info, ['NOME'], 'Nome'),
     matApl: garantirCol(info, ['COD APLICADOR', 'MATRICULA APLICADOR'], 'Cod Aplicador'), nomeApl: garantirCol(info, ['NOME APLICADOR'], 'Nome Aplicador'),
+    motivo: garantirCol(info, ['MOTIVO'], 'Motivo'),
     resumo: garantirCol(info, ['RESUMO ASSUNTO'], 'Resumo Assunto'), avP: garantirCol(info, ['AVALIACAO PESSOAL'], 'Avaliação Pessoal'),
     avG: garantirCol(info, ['AVALIACAO GESTOR'], 'Avaliação Gestor'), desemp: garantirCol(info, ['DESEMPENHO'], 'Desempenho'),
     classif: garantirCol(info, ['CLASSIFICACAO'], 'Classificação'), anexo: garantirCol(info, ['ANEXO', 'LINK ANEXO'], 'Anexo')
   };
   const linha = new Array(info.ult).fill('');
-  linha[c.data] = data; linha[c.mat] = mat; linha[c.nome] = nome; linha[c.matApl] = matApl; linha[c.nomeApl] = nomeApl;
+  linha[c.data] = data; linha[c.mat] = mat; linha[c.nome] = nome; linha[c.matApl] = matApl; linha[c.nomeApl] = nomeApl; linha[c.motivo] = motivo;
   linha[c.resumo] = resumo; linha[c.avP] = nP; linha[c.avG] = nG;
   linha[c.desemp] = desempenhoDaNota(nG); linha[c.classif] = mapaClassificacao()[faixaNota(nG)]; linha[c.anexo] = link;
   const n = Math.max(info.sh.getLastRow(), 1) + 1;
   garantirTamanho(info.sh, n, info.ult);
   info.sh.getRange(n, 1, 1, info.ult).setValues([linha]);
   formatarDatas(info.sh, c.data, n, 1);
-  registrarLog(s, 'Feedback', mat + ' ' + nome + ' · nota ' + nG + (link ? ' · com anexo' : ''));
-  return { ok: true, nome: nome, desempenho: linha[c.desemp], classificacao: linha[c.classif], anexo: link };
+  registrarLog(s, 'Feedback', mat + ' ' + nome + ' · ' + motivo + ' · nota ' + nG + (link ? ' · com anexo' : ''));
+  return { ok: true, nome: nome, desempenho: linha[c.desemp], classificacao: linha[c.classif], anexo: link, semFeedback: semFeedbackLista(mat) };
+}
+
+/* ---------- Advertências (aba ADVERTÊNCIAS) ---------- */
+
+function abaComCabecalho(nome, cab) {
+  const ss = dadosSS();
+  let sh = ss.getSheetByName(nome);
+  if (!sh) {
+    sh = ss.insertSheet(nome);
+    sh.getRange(1, 1, 1, cab.length).setValues([cab]).setFontWeight('bold'); sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function advertenciaSalvar(d, s) {
+  const mat = soDigitos(d.mat), matApl = soDigitos(d.matAplicador) || s.matricula;
+  if (!mat) throw new Error('Informe a matrícula do colaborador.');
+  const nome = nomePorMatricula(mat) || texto(d.nome);
+  if (!nome) throw new Error('Matrícula não encontrada. Confira o número.');
+  const motivo = texto(d.motivo), resumo = texto(d.resumo);
+  if (!motivo) throw new Error('Escolha o motivo da advertência.');
+  if (!resumo) throw new Error('Escreva o resumo da advertência.');
+  const data = isoParaData(d.data);
+  const link = salvarAnexo(d.anexo, 'Advertencia', mat, d.data);
+  abaComCabecalho(ABA_ADVERTENCIAS, ['Data', 'Cod', 'Nome', 'Motivo', 'Resumo Assunto', 'Cod Aplicador', 'Nome Aplicador', 'Anexo']);
+  const info = infoAba(ABA_ADVERTENCIAS);
+  const c = {
+    data: garantirCol(info, ['DATA'], 'Data'), mat: garantirCol(info, ['COD', 'MATRICULA'], 'Cod'), nome: garantirCol(info, ['NOME'], 'Nome'),
+    motivo: garantirCol(info, ['MOTIVO'], 'Motivo'), resumo: garantirCol(info, ['RESUMO ASSUNTO', 'RESUMO'], 'Resumo Assunto'),
+    matApl: garantirCol(info, ['COD APLICADOR'], 'Cod Aplicador'), nomeApl: garantirCol(info, ['NOME APLICADOR'], 'Nome Aplicador'), anexo: garantirCol(info, ['ANEXO'], 'Anexo')
+  };
+  const l = new Array(info.ult).fill('');
+  l[c.data] = data; l[c.mat] = mat; l[c.nome] = nome; l[c.motivo] = motivo; l[c.resumo] = resumo;
+  l[c.matApl] = matApl; l[c.nomeApl] = texto(d.nomeAplicador) || nomePorMatricula(matApl) || s.nome || ''; l[c.anexo] = link;
+  const n = Math.max(info.sh.getLastRow(), 1) + 1;
+  garantirTamanho(info.sh, n, info.ult);
+  info.sh.getRange(n, 1, 1, info.ult).setValues([l]);
+  formatarDatas(info.sh, c.data, n, 1);
+  registrarLog(s, 'Advertência', mat + ' ' + nome + ' · ' + motivo + (link ? ' · com anexo' : ''));
+  return { ok: true, nome: nome, anexo: link };
 }
 
 /* ---------- REP.AVARIA ---------- */
@@ -737,12 +850,22 @@ function infoQuadro() {
 }
 function funcionariosAtivos() { return lerTurnover().pessoas.filter(function (p) { return p.ativo && p.mat; }); }
 
+function diaDaSemana(iso) { return Number(Utilities.formatDate(isoParaData(iso), tzDados(), 'u')); } // 1 = segunda … 7 = domingo
+function somaDiasIso(iso, n) { return Utilities.formatDate(new Date(isoParaData(iso).getTime() + n * 864e5), tzDados(), 'yyyy-MM-dd'); }
+function exigirDiaUtil(iso) { if (diaDaSemana(iso) >= 6) throw new Error('A chamada é de segunda a sexta. ' + iso.split('-').reverse().join('/') + ' cai no fim de semana.'); }
+
 function chamadaDia(d) {
   const iso = texto(d.data); isoParaData(iso);
+  exigirDiaUtil(iso);
   const q = infoQuadro(), dia = {};
   lerLinhas(q.info).forEach(function (l) { if (chaveData(l[q.c.data]) === iso) dia[soDigitos(l[q.c.cod])] = texto(l[q.c.status]); });
   const ativos = funcionariosAtivos();
-  const itens = ativos.map(function (p) { return { mat: p.mat, nome: p.nome, status: dia[p.mat] || '' }; });
+  const emFerias = {};
+  feriasLer(false).forEach(function (f) { if (f.status !== 'CANCELADA' && f.ini <= iso && iso <= f.fim) emFerias[f.mat] = true; });
+  const itens = ativos.map(function (p) {
+    if (dia[p.mat]) return { mat: p.mat, nome: p.nome, status: dia[p.mat] };
+    return { mat: p.mat, nome: p.nome, status: emFerias[p.mat] ? 'FÉRIAS' : '', sugerido: !!emFerias[p.mat] };   // férias agendadas já vêm marcadas
+  });
   const foraDoQuadro = Object.keys(dia).filter(function (m) { return !ativos.some(function (p) { return p.mat === m; }); }).length;
   return { ok: true, data: iso, jaExiste: Object.keys(dia).length > 0, itens: itens, foraDoQuadro: foraDoQuadro };
 }
@@ -782,6 +905,7 @@ function gravarChamada(itens) {
 
 function chamadaSalvar(d, s) {
   const iso = texto(d.data); isoParaData(iso);
+  exigirDiaUtil(iso);
   const itens = (Array.isArray(d.itens) ? d.itens : []).map(function (x) { return { data: iso, mat: x.mat, nome: x.nome, status: x.status }; });
   if (!itens.some(function (x) { return texto(x.status); })) throw new Error('Marque o status de ao menos um colaborador.');
   const r = gravarChamada(itens);
@@ -801,8 +925,8 @@ function chamadaLote(d, s) {
   const itens = [], tz = tzDados();
   for (let i = 0; i < dias; i++) {
     const dt = new Date(ini.getTime() + i * 864e5), iso = Utilities.formatDate(dt, tz, 'yyyy-MM-dd');
-    const dow = Number(Utilities.formatDate(dt, tz, 'u')); // 7 = domingo
-    if (d.pularDomingo !== false && dow === 7) continue;
+    const dow = Number(Utilities.formatDate(dt, tz, 'u')); // 6 = sábado, 7 = domingo
+    if (dow >= 6) continue;                                 // chamada é de segunda a sexta
     mats.forEach(function (m) { itens.push({ data: iso, mat: m, nome: nomes[m] || nomeDaMatricula(m), status: status }); });
   }
   const r = gravarChamada(itens);
@@ -915,5 +1039,64 @@ function capacidadeSalvar(d, s) {
   info.sh.getRange(n, 1, 1, info.ult).setValues([l]);
   formatarDatas(info.sh, c.data, n, 1);
   registrarLog(s, 'Capacidade Realizada', cod + ' · ' + tipo + ' · ' + iso);
+  return { ok: true };
+}
+
+
+/* ---------- Férias (aba FÉRIAS AGENDADAS) ---------- */
+
+const CAB_FERIAS = ['Cod', 'Nome', 'Data Inicio', 'Data Fim', 'Dias', 'Status', 'Lancado Em', 'Lancado Por'];
+
+function feriasLer(criar) {
+  const ss = dadosSS();
+  if (!criar && !ss.getSheetByName(ABA_FERIAS)) return [];
+  abaComCabecalho(ABA_FERIAS, CAB_FERIAS);
+  const info = infoAba(ABA_FERIAS);
+  const c = { mat: acharCol(info, ['COD', 'MATRICULA']), nome: acharCol(info, ['NOME']), ini: acharCol(info, ['DATA INICIO']), fim: acharCol(info, ['DATA FIM']),
+    dias: acharCol(info, ['DIAS']), st: acharCol(info, ['STATUS']) };
+  const out = [];
+  lerLinhas(info).forEach(function (l, i) {
+    const mat = soDigitos(l[c.mat]); if (!mat) return;
+    out.push({ linha: i + 2, mat: mat, nome: texto(l[c.nome]), ini: chaveData(l[c.ini]), fim: chaveData(l[c.fim]), dias: Number(l[c.dias]) || 0,
+      status: normalizar(l[c.st]) === 'CANCELADA' ? 'CANCELADA' : 'AGENDADA' });
+  });
+  return out;
+}
+function feriasListar() { return { ok: true, ferias: feriasLer(true), dias: DIAS_FERIAS }; }
+
+function feriasSalvar(d, s) {
+  const mat = soDigitos(d.mat), dias = Number(d.dias), ini = texto(d.ini);
+  if (!mat) throw new Error('Informe a matrícula.');
+  const nome = nomePorMatricula(mat);
+  if (!nome) throw new Error('Matrícula não encontrada no quadro (aba TURNOVER).');
+  if (DIAS_FERIAS.indexOf(dias) < 0) throw new Error('Escolha 5, 10, 15, 20, 25, 30 ou 31 dias.');
+  isoParaData(ini);
+  const fim = somaDiasIso(ini, dias - 1);
+  const todas = feriasLer(true).filter(function (f) { return f.status !== 'CANCELADA'; });
+  const meus = todas.filter(function (f) { return f.mat === mat && f.ini <= fim && ini <= f.fim; });
+  if (meus.length) throw new Error(nome + ' já tem férias agendadas de ' + meus[0].ini.split('-').reverse().join('/') + ' a ' + meus[0].fim.split('-').reverse().join('/') + ' (período sobreposto).');
+  const conflitos = todas.filter(function (f) { return f.mat !== mat && f.ini <= fim && ini <= f.fim; })
+    .map(function (f) { return { mat: f.mat, nome: f.nome, ini: f.ini, fim: f.fim }; });
+  const info = infoAba(ABA_FERIAS);
+  const l = new Array(info.ult).fill('');
+  const c = { mat: acharCol(info, ['COD', 'MATRICULA']), nome: acharCol(info, ['NOME']), ini: acharCol(info, ['DATA INICIO']), fim: acharCol(info, ['DATA FIM']),
+    dias: acharCol(info, ['DIAS']), st: acharCol(info, ['STATUS']), em: acharCol(info, ['LANCADO EM']), por: acharCol(info, ['LANCADO POR']) };
+  l[c.mat] = mat; l[c.nome] = nome; l[c.ini] = isoParaData(ini); l[c.fim] = isoParaData(fim); l[c.dias] = dias; l[c.st] = 'Agendada';
+  l[c.em] = Utilities.formatDate(new Date(), tzDados(), 'dd/MM/yyyy HH:mm:ss'); l[c.por] = s.nome || s.matricula;
+  const n = Math.max(info.sh.getLastRow(), 1) + 1;
+  garantirTamanho(info.sh, n, info.ult);
+  info.sh.getRange(n, 1, 1, info.ult).setValues([l]);
+  formatarDatas(info.sh, c.ini, n, 1); formatarDatas(info.sh, c.fim, n, 1);
+  info.sh.getRange(n, c.em + 1).setNumberFormat('@');
+  registrarLog(s, 'Férias', mat + ' ' + nome + ' · ' + ini + ' a ' + fim + ' (' + dias + ' dias)');
+  return { ok: true, nome: nome, ini: ini, fim: fim, dias: dias, conflitos: conflitos };
+}
+
+function feriasCancelar(d, s) {
+  const linha = Number(d.linha) || 0;
+  const info = infoAba(ABA_FERIAS), cSt = acharCol(info, ['STATUS']), cM = acharCol(info, ['COD', 'MATRICULA']), cN = acharCol(info, ['NOME']);
+  if (linha < 2 || linha > info.sh.getLastRow()) throw new Error('Registro não encontrado. Recarregue a lista.');
+  info.sh.getRange(linha, cSt + 1).setValue('Cancelada');
+  registrarLog(s, 'Férias (cancelamento)', soDigitos(info.sh.getRange(linha, cM + 1).getValue()) + ' ' + texto(info.sh.getRange(linha, cN + 1).getValue()));
   return { ok: true };
 }

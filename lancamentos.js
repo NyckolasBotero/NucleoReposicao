@@ -1,5 +1,5 @@
 /* =========================================================================
-   Núcleo Reposição — Lançamentos (Feedback, REP.AVARIA, Chamada, Quadro, Missões, Capacidade)
+   Núcleo Reposição — Lançamentos (Feedback, Advertência, Avaria 9712, Chamada, Quadro, Missões, Capacidade, Férias)
    Depende de app.js (Api, Auth, UI, toast, escapeHtml, $) e scanner.js (DocScanner).
    Cada formulário grava direto nas abas do Google Sheets pelo Apps Script.
    ========================================================================= */
@@ -102,6 +102,62 @@ const LancUI = {
     return `<p class="small-muted" style="margin-top:14px">Depois de lançar, use <strong>Atualizar dados</strong> (menu) para os indicadores enxergarem o que foi gravado.</p>`;
   },
 
+
+  /* ------------------------------------------------------------------ */
+  /* documento (foto digitalizada / PDF) — usado por Feedback e Advertência */
+  /* ------------------------------------------------------------------ */
+  anexos: {},
+  anexoHtml(p, titulo){
+    return `<fieldset class="adm-fs"><legend>${titulo}</legend>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button type="button" class="btn btn-primary" id="${p}-foto">📷 Tirar foto (digitalizar como scanner)</button>
+        <button type="button" class="btn btn-outline" id="${p}-arq">📄 Já tenho o arquivo (PDF ou imagem)</button>
+        <input type="file" id="${p}-foto-in" accept="image/*" capture="environment" style="display:none">
+        <input type="file" id="${p}-arq-in" accept="application/pdf,image/*" style="display:none">
+      </div>
+      <div id="${p}-anexo" class="small-muted" style="margin-top:10px">Nenhum documento anexado.</div>
+    </fieldset>`;
+  },
+  /** Liga os botões do widget; devolve a função que redesenha o resumo do anexo. */
+  ligarAnexo(p){
+    const $$ = (id)=> document.getElementById(id);
+    this.anexos[p] = null;
+    const mostrar = ()=>{
+      const a = this.anexos[p], el = $$(p + "-anexo");
+      if(!el) return;
+      if(!a){ el.innerHTML = "Nenhum documento anexado."; return; }
+      el.innerHTML = `<div style="display:flex;gap:12px;align-items:center">${a.preview ? `<img src="${a.preview}" alt="" style="height:90px;border:1px solid var(--gray-200);border-radius:6px">` : ""}
+        <div><strong>${this.h(a.nome)}</strong><div>${a.paginas ? a.paginas + " página(s) · " : ""}${Math.round(a.base64.length*0.75/1024)} KB</div>
+        <button type="button" class="btn btn-outline btn-sm" id="${p}-rm" style="margin-top:6px">Remover</button></div></div>`;
+      $$(p + "-rm").addEventListener("click", ()=>{ this.anexos[p] = null; mostrar(); });
+    };
+    $$(p + "-foto").addEventListener("click", ()=> $$(p + "-foto-in").click());
+    $$(p + "-foto-in").addEventListener("change", async (e)=>{
+      const f = e.target.files[0]; e.target.value = ""; if(!f) return;
+      const a = await DocScanner.iniciar(f);
+      if(a){ this.anexos[p] = a; mostrar(); }
+    });
+    $$(p + "-arq").addEventListener("click", ()=> $$(p + "-arq-in").click());
+    $$(p + "-arq-in").addEventListener("change", async (e)=>{
+      const f = e.target.files[0]; e.target.value = ""; if(!f) return;
+      if(f.size > 12*1024*1024){ toast("Arquivo muito grande (máximo 12 MB).", "error"); return; }
+      const b64 = await new Promise((res, rej)=>{ const r = new FileReader(); r.onload = ()=> res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(f); });
+      this.anexos[p] = { nome:f.name, mime:f.type || "application/octet-stream", base64:b64, paginas:0, preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : "" };
+      mostrar();
+    });
+    return mostrar;
+  },
+  /** Preenche a matrícula vinda de outra tela (ex.: botão "Lançar advertência" no detalhe do funcionário). */
+  aplicarPrefill(idMat){
+    const pf = this.prefill; this.prefill = null;
+    const el = document.getElementById(idMat);
+    if(pf && pf.mat && el){ el.value = this.soDigitos(pf.mat); el.dispatchEvent(new Event("input")); el.dispatchEvent(new Event("change")); }
+  },
+  /** Chamadas são de segunda a sexta: recua até o último dia útil. */
+  diaUtilAte(iso){ let d = iso; for(let i=0;i<3 && [0,6].includes(this.isoParaData(d).getDay()); i++) d = this.somaDias(d, -1); return d; },
+  ehFimDeSemana(iso){ return [0,6].includes(this.isoParaData(iso).getDay()); },
+  motivoSelect(id, sel){ return `<label>Motivo<select id="${id}" data-vazio="Selecione">${this.options(this.ctx.listas.MOTIVO_FEEDBACK, sel, "Selecione")}</select></label>`; },
+
   /* ================================================================== */
   /* FEEDBACK                                                            */
   /* ================================================================== */
@@ -111,7 +167,6 @@ const LancUI = {
   renderFeedback(){ this.abrir("lfeedback", this._feedback); },
   _feedback(pane){
     const u = this.ctx.usuario || {}, notas = Array.from({length:11}, (_, i)=>i);
-    this.fbAnexo = null;
     pane.innerHTML = `<div class="panel">
       ${this.cabecalho("Lançar Feedback", "Registra o feedback na aba FEEDBACK REP. O nome do colaborador vem da matrícula; Desempenho e Classificação saem da nota do gestor.")}
       <div class="adm-form">
@@ -120,6 +175,11 @@ const LancUI = {
         <label>Nome (automático)<input type="text" id="fb-nome" readonly placeholder="—"></label>
       </div>
       ${this.datalistPessoas("dl-fb", false)}
+      <div class="adm-form">
+        ${this.motivoSelect("fb-motivo")}
+      </div>
+      ${this.novoItem("MOTIVO_FEEDBACK", "fb-motivo", "novo motivo")}
+      <div id="fb-sem"></div>
       <div class="adm-form">
         <label>Matrícula do aplicador<input type="text" id="fb-mat-apl" inputmode="numeric" list="dl-fb" value="${this.h(u.matricula||"")}"></label>
         <label>Nome do aplicador<input type="text" id="fb-nome-apl" value="${this.h(u.nome || this.nomeDe(u.matricula) || "")}"></label>
@@ -131,15 +191,7 @@ const LancUI = {
         <label>Desempenho (automático)<input type="text" id="fb-desemp" readonly placeholder="—"></label>
         <label>Classificação (automática)<input type="text" id="fb-classif" readonly placeholder="—"></label>
       </div>
-      <fieldset class="adm-fs"><legend>Documento do feedback (opcional)</legend>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button type="button" class="btn btn-primary" id="fb-foto">📷 Tirar foto (digitalizar como scanner)</button>
-          <button type="button" class="btn btn-outline" id="fb-arq">📄 Já tenho o arquivo (PDF ou imagem)</button>
-          <input type="file" id="fb-foto-in" accept="image/*" capture="environment" style="display:none">
-          <input type="file" id="fb-arq-in" accept="application/pdf,image/*" style="display:none">
-        </div>
-        <div id="fb-anexo" class="small-muted" style="margin-top:10px">Nenhum documento anexado.</div>
-      </fieldset>
+      ${this.anexoHtml("fb", "Documento do feedback (opcional)")}
       <div id="fb-msg"></div>
       <div class="adm-actions"><button type="button" class="btn btn-primary" id="fb-salvar">Salvar feedback</button></div>
       ${this.rodapeAtualizar()}
@@ -161,57 +213,205 @@ const LancUI = {
     $$("fb-mat-apl").addEventListener("change", atualizarApl);
     $$("fb-ag").addEventListener("change", atualizarNota);
 
-    const mostrarAnexo = ()=>{
-      const a = this.fbAnexo, el = $$("fb-anexo");
-      if(!a){ el.innerHTML = "Nenhum documento anexado."; return; }
-      el.innerHTML = `<div style="display:flex;gap:12px;align-items:center">${a.preview ? `<img src="${a.preview}" alt="" style="height:90px;border:1px solid var(--gray-200);border-radius:6px">` : ""}
-        <div><strong>${this.h(a.nome)}</strong><div>${a.paginas ? a.paginas + " página(s) · " : ""}${Math.round(a.base64.length*0.75/1024)} KB</div>
-        <button type="button" class="btn btn-outline btn-sm" id="fb-rm" style="margin-top:6px">Remover</button></div></div>`;
-      $$("fb-rm").addEventListener("click", ()=>{ this.fbAnexo = null; mostrarAnexo(); });
+    const mostrarAnexo = this.ligarAnexo("fb");
+    this.ligarNovoItem(pane);
+    const semFb = (lista)=>{
+      const el = $$("fb-sem"); if(!el) return;
+      lista = lista || []; if(!lista.length){ el.innerHTML = ""; return; }
+      el.innerHTML = `<details class="warn-box" style="margin:8px 0"><summary style="cursor:pointer;font-weight:700">📝 ${lista.length} colaborador(es) sem feedback há mais de ${this.ctx.diasSemFeedback||30} dias</summary>
+        <div style="margin-top:6px;font-size:13px">${lista.slice(0,25).map(x=>`${this.h(x.nome)} — ${x.dias===null ? "nunca recebeu" : x.dias + " dias"}`).join("<br>")}${lista.length>25 ? `<br>+ ${lista.length-25} outros` : ""}</div></details>`;
     };
-    $$("fb-foto").addEventListener("click", ()=> $$("fb-foto-in").click());
-    $$("fb-foto-in").addEventListener("change", async (e)=>{
-      const f = e.target.files[0]; e.target.value = ""; if(!f) return;
-      const a = await DocScanner.iniciar(f);
-      if(a){ this.fbAnexo = a; mostrarAnexo(); }
-    });
-    $$("fb-arq").addEventListener("click", ()=> $$("fb-arq-in").click());
-    $$("fb-arq-in").addEventListener("change", async (e)=>{
-      const f = e.target.files[0]; e.target.value = ""; if(!f) return;
-      if(f.size > 12*1024*1024){ toast("Arquivo muito grande (máximo 12 MB).", "error"); return; }
-      const b64 = await new Promise((res, rej)=>{ const r = new FileReader(); r.onload = ()=> res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(f); });
-      this.fbAnexo = { nome:f.name, mime:f.type || "application/octet-stream", base64:b64, paginas:0, preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : "" };
-      mostrarAnexo();
-    });
+    semFb(this.ctx.semFeedback);
+    this.aplicarPrefill("fb-mat");
 
     $$("fb-salvar").addEventListener("click", async ()=>{
       this.aviso("fb-msg", "", "");
       const mat = this.soDigitos($$("fb-mat").value);
       if(!mat) return this.aviso("fb-msg", "erro", "Informe a matrícula do colaborador.");
       if(!this.nomeDe(mat)) return this.aviso("fb-msg", "erro", "Matrícula não encontrada no quadro (aba TURNOVER).");
+      if(!$$("fb-motivo").value) return this.aviso("fb-msg", "erro", "Escolha o motivo do feedback.");
       if(!$$("fb-resumo").value.trim()) return this.aviso("fb-msg", "erro", "Escreva o resumo do assunto.");
       if($$("fb-ap").value === "" || $$("fb-ag").value === "") return this.aviso("fb-msg", "erro", "Informe as duas avaliações (0 a 10).");
-      const a = this.fbAnexo;
-      const r = await this.enviar($$("fb-salvar"), { acao:"lanc_feedback_salvar", data:$$("fb-data").value, mat,
+      const a = this.anexos.fb;
+      const r = await this.enviar($$("fb-salvar"), { acao:"lanc_feedback_salvar", data:$$("fb-data").value, mat, motivo:$$("fb-motivo").value,
         matAplicador:$$("fb-mat-apl").value, nomeAplicador:$$("fb-nome-apl").value, resumo:$$("fb-resumo").value,
         avPessoal:Number($$("fb-ap").value), avGestor:Number($$("fb-ag").value),
         anexo: a ? { nome:a.nome, mime:a.mime, base64:a.base64 } : null });
       if(!r || !r.ok) return this.aviso("fb-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
       this.aviso("fb-msg", "ok", `Feedback de <strong>${this.h(r.nome)}</strong> salvo — ${this.h(r.desempenho)} (${this.h(r.classificacao)})${r.anexo ? " · documento anexado" : ""}.`);
       toast("Feedback salvo.");
-      $$("fb-mat").value = ""; $$("fb-nome").value = ""; $$("fb-resumo").value = ""; $$("fb-ap").value = ""; $$("fb-ag").value = "";
-      atualizarNota(); this.fbAnexo = null; mostrarAnexo();
+      this.ctx.semFeedback = r.semFeedback || []; semFb(this.ctx.semFeedback);
+      if((r.semFeedback||[]).length) this.aviso("fb-msg", "ok", $$("fb-msg").firstElementChild.innerHTML + `<br>⚠️ Ainda há <strong>${r.semFeedback.length}</strong> colaborador(es) sem feedback há mais de ${this.ctx.diasSemFeedback||30} dias (veja a lista acima).`);
+      $$("fb-mat").value = ""; $$("fb-nome").value = ""; $$("fb-resumo").value = ""; $$("fb-ap").value = ""; $$("fb-ag").value = ""; $$("fb-motivo").value = "";
+      atualizarNota(); this.anexos.fb = null; mostrarAnexo();
+    });
+  },
+
+
+  /* ================================================================== */
+  /* ADVERTÊNCIA                                                         */
+  /* ================================================================== */
+  renderAdvertencia(){ this.abrir("ladvertencia", this._advertencia); },
+  _advertencia(pane){
+    const u = this.ctx.usuario || {};
+    pane.innerHTML = `<div class="panel">
+      ${this.cabecalho("Lançar Advertência", "Registra a advertência na aba ADVERTÊNCIAS, com o documento (foto digitalizada ou PDF). Ao escolher o colaborador e o motivo você vê o histórico de feedbacks e advertências dele.")}
+      <div class="adm-form">
+        <label>Data<input type="date" id="ad-data" value="${this.hojeISO()}"></label>
+        <label>Matrícula do colaborador<input type="text" id="ad-mat" inputmode="numeric" list="dl-ad" placeholder="Ex.: 10002871" autocomplete="off"></label>
+        <label>Nome (automático)<input type="text" id="ad-nome" readonly placeholder="—"></label>
+      </div>
+      ${this.datalistPessoas("dl-ad", false)}
+      <div class="adm-form">${this.motivoSelect("ad-motivo")}</div>
+      ${this.novoItem("MOTIVO_FEEDBACK", "ad-motivo", "novo motivo")}
+      <div id="ad-hist" style="margin:10px 0"></div>
+      <div class="adm-form">
+        <label>Matrícula do aplicador<input type="text" id="ad-mat-apl" inputmode="numeric" list="dl-ad" value="${this.h(u.matricula||"")}"></label>
+        <label>Nome do aplicador<input type="text" id="ad-nome-apl" value="${this.h(u.nome || this.nomeDe(u.matricula) || "")}"></label>
+      </div>
+      <div class="adm-form"><label style="grid-column:1/-1">Resumo da advertência<textarea id="ad-resumo" rows="3" style="padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:inherit;text-transform:none;letter-spacing:0;font-weight:500;" placeholder="Descreva o motivo e o que ocorreu"></textarea></label></div>
+      ${this.anexoHtml("ad", "Documento da advertência (opcional)")}
+      <div id="ad-msg"></div>
+      <div class="adm-actions"><button type="button" class="btn btn-primary" id="ad-salvar">Salvar advertência</button></div>
+      ${this.rodapeAtualizar()}
+    </div>`;
+    const $$ = (id)=> document.getElementById(id);
+    const mostrarAnexo = this.ligarAnexo("ad");
+    this.ligarNovoItem(pane);
+    const historico = ()=>{
+      const mat = this.soDigitos($$("ad-mat").value), box = $$("ad-hist");
+      $$("ad-nome").value = this.nomeDe(mat); $$("ad-nome").placeholder = mat ? "matrícula não encontrada" : "—";
+      if(!mat){ box.innerHTML = ""; return; }
+      if(!(window.APP_STATE && APP_STATE.ready && window.FeedbackAdv)){
+        box.innerHTML = `<div class="hint-box">Para ver o histórico do colaborador, carregue os dados (<strong>Atualizar dados</strong>).</div>`; return;
+      }
+      const e = FeedbackAdv.statsPorMatricula(mat);
+      const motivo = $$("ad-motivo").value, fab = motivo ? e.motivos.find(m=>m.chave === FeedbackAdv.mk(motivo)) : null;
+      const linhas = (e.motivos||[]).map(m=>`<tr${motivo && m.chave === FeedbackAdv.mk(motivo) ? ' style="background:#fff8e1"' : ""}><td>${this.h(m.motivo)}</td><td>${m.fb}</td><td>${m.adv}</td><td>${m.pend ? `<strong style="color:#d64545">${m.pend} a emitir</strong>` : "—"}</td></tr>`).join("");
+      let rec = "";
+      if(motivo){
+        rec = fab && fab.pend > 0 ? `<div class="warn-box" style="margin:8px 0 0">🔴 Indicada: ${fab.fb} feedback(s) em "${this.h(motivo)}" e ${fab.adv} advertência(s) — faltam ${fab.pend} advertência(s) pela regra (a cada ${FB_A_CADA} feedbacks).</div>`
+          : `<div class="hint-box" style="margin:8px 0 0">Em "${this.h(motivo)}": ${fab ? fab.fb : 0} feedback(s) e ${fab ? fab.adv : 0} advertência(s). Pela regra de ${FB_A_CADA} feedbacks, ainda <strong>não</strong> há advertência pendente neste motivo.</div>`;
+      }
+      box.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <div class="card" style="min-width:120px"><div class="card-label">Feedbacks</div><div class="card-value">${e.feedbacks.length}</div></div>
+          <div class="card" style="min-width:120px"><div class="card-label">Advertências</div><div class="card-value">${e.adv.length}</div></div>
+          <div class="card" style="min-width:150px"><div class="card-label">Último feedback</div><div class="card-value" style="font-size:18px">${e.feedbacks[0] ? fmtDateBR(e.feedbacks[0].data) : "—"}</div></div></div>
+        ${linhas ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Motivo</th><th>Feedbacks</th><th>Advertências</th><th>Situação</th></tr></thead><tbody>${linhas}</tbody></table></div>` : `<div class="small-muted">Sem feedbacks nem advertências anteriores.</div>`}${rec}`;
+    };
+    $$("ad-mat").addEventListener("input", historico); $$("ad-mat").addEventListener("change", historico);
+    $$("ad-motivo").addEventListener("change", historico);
+    $$("ad-mat-apl").addEventListener("change", ()=>{ const n = this.nomeDe($$("ad-mat-apl").value); if(n) $$("ad-nome-apl").value = n; });
+    this.aplicarPrefill("ad-mat"); historico();
+    $$("ad-salvar").addEventListener("click", async ()=>{
+      this.aviso("ad-msg", "", "");
+      const mat = this.soDigitos($$("ad-mat").value);
+      if(!mat) return this.aviso("ad-msg", "erro", "Informe a matrícula do colaborador.");
+      if(!this.nomeDe(mat)) return this.aviso("ad-msg", "erro", "Matrícula não encontrada no quadro (aba TURNOVER).");
+      if(!$$("ad-motivo").value) return this.aviso("ad-msg", "erro", "Escolha o motivo da advertência.");
+      if(!$$("ad-resumo").value.trim()) return this.aviso("ad-msg", "erro", "Escreva o resumo da advertência.");
+      const a = this.anexos.ad;
+      const r = await this.enviar($$("ad-salvar"), { acao:"lanc_advertencia_salvar", data:$$("ad-data").value, mat, motivo:$$("ad-motivo").value,
+        matAplicador:$$("ad-mat-apl").value, nomeAplicador:$$("ad-nome-apl").value, resumo:$$("ad-resumo").value,
+        anexo: a ? { nome:a.nome, mime:a.mime, base64:a.base64 } : null });
+      if(!r || !r.ok) return this.aviso("ad-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
+      this.aviso("ad-msg", "ok", `Advertência de <strong>${this.h(r.nome)}</strong> salva${r.anexo ? " · documento anexado" : ""}. Use <strong>Atualizar dados</strong> para ela aparecer em Gestão.`);
+      toast("Advertência salva.");
+      $$("ad-mat").value = ""; $$("ad-nome").value = ""; $$("ad-resumo").value = ""; $$("ad-motivo").value = "";
+      this.anexos.ad = null; mostrarAnexo(); historico();
     });
   },
 
   /* ================================================================== */
-  /* REP.AVARIA                                                          */
+  /* FÉRIAS                                                              */
+  /* ================================================================== */
+  renderFerias(){ this.abrir("lferias", this._ferias); },
+  async _ferias(pane){
+    const dias = this.ctx.diasFerias || [5,10,15,20,25,30,31];
+    this.fe = { dias:null, lista:[], todas:false };
+    pane.innerHTML = `<div class="panel">
+      ${this.cabecalho("Lançar Férias", "Agende as férias do colaborador. Na chamada, os dias de férias já vêm marcados como FÉRIAS (segunda a sexta) e o agendamento aparece em Gestão > Férias.")}
+      <div class="adm-form">
+        <label>Matrícula do colaborador<input type="text" id="fe-mat" inputmode="numeric" list="dl-fe" placeholder="Ex.: 10003615" autocomplete="off"></label>
+        <label>Nome (automático)<input type="text" id="fe-nome" readonly placeholder="—"></label>
+        <label>Início das férias<input type="date" id="fe-ini" value="${this.hojeISO()}"></label>
+      </div>
+      ${this.datalistPessoas("dl-fe", true)}
+      <div style="margin:6px 0 2px"><span class="small-muted" style="font-weight:700">Quantidade de dias:</span></div>
+      <div id="fe-dias">${dias.map(n=>`<button type="button" class="btn btn-outline" data-dias="${n}" style="margin:3px 6px 3px 0;min-width:58px">${n === 31 ? "30/31" : n}</button>`).join("")}</div>
+      <div id="fe-res" class="small-muted" style="margin:10px 0"></div>
+      <div id="fe-alerta"></div>
+      <div id="fe-msg"></div>
+      <div class="adm-actions"><button type="button" class="btn btn-primary" id="fe-salvar">Agendar férias</button></div>
+    </div>
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center"><h3 class="adm-h2" style="margin:0">Férias agendadas</h3>
+        <label class="adm-chk"><input type="checkbox" id="fe-todas"> Mostrar também as já encerradas e canceladas</label></div>
+      <div id="fe-lista" style="margin-top:10px"><p class="small-muted">Carregando...</p></div>
+    </div>`;
+    const $$ = (id)=> document.getElementById(id);
+    const fimDe = (ini, n)=> this.somaDias(ini, n - 1);
+    const sobrepoe = (a1, a2, b1, b2)=> a1 <= b2 && b1 <= a2;
+    const resumo = ()=>{
+      const ini = $$("fe-ini").value, n = this.fe.dias, mat = this.soDigitos($$("fe-mat").value);
+      $$("fe-nome").value = this.nomeDe(mat); $$("fe-nome").placeholder = mat ? "matrícula não encontrada" : "—";
+      $$("fe-dias").querySelectorAll("[data-dias]").forEach(b=>{ const on = Number(b.dataset.dias) === n; b.classList.toggle("btn-primary", on); b.classList.toggle("btn-outline", !on); });
+      if(!ini || !n){ $$("fe-res").textContent = n ? "" : "Escolha a quantidade de dias."; $$("fe-alerta").innerHTML = ""; return; }
+      const fim = fimDe(ini, n);
+      $$("fe-res").innerHTML = `Férias de <strong>${this.br(ini)}</strong> a <strong>${this.br(fim)}</strong> (${n === 31 ? "30/31" : n} dias corridos). Retorno em <strong>${this.br(this.somaDias(fim, 1))}</strong>.`;
+      const outros = this.fe.lista.filter(f=> f.status !== "CANCELADA" && f.mat !== mat && sobrepoe(ini, fim, f.ini, f.fim));
+      $$("fe-alerta").innerHTML = outros.length ? `<div class="warn-box">⚠️ Já há férias agendadas no mesmo período: ${outros.map(f=>`<strong>${this.h(f.nome)}</strong> (${this.br(f.ini)} a ${this.br(f.fim)})`).join("; ")}. Você ainda pode agendar, mas confira a cobertura da equipe.</div>` : "";
+    };
+    const desenharLista = ()=>{
+      const hoje = this.hojeISO();
+      const l = this.fe.lista.filter(f=> this.fe.todas || (f.status !== "CANCELADA" && f.fim >= hoje)).sort((a,b)=> a.ini < b.ini ? -1 : 1);
+      $$("fe-lista").innerHTML = l.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Início</th><th>Fim</th><th>Dias</th><th>Situação</th><th></th></tr></thead><tbody>
+        ${l.map(f=>{ const canc = f.status === "CANCELADA", enc = f.fim < hoje, em = f.ini <= hoje && hoje <= f.fim;
+          return `<tr><td>${this.h(f.mat)}</td><td>${this.h(f.nome)}</td><td>${this.br(f.ini)}</td><td>${this.br(f.fim)}</td><td>${f.dias}</td>
+          <td>${canc ? "Cancelada" : em ? "<strong style='color:#7a3fc4'>Em andamento</strong>" : enc ? "Encerrada" : "Agendada"}</td>
+          <td>${!canc && !enc ? `<button type="button" class="btn btn-outline btn-sm" data-cancel="${f.linha}">Cancelar</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+        : `<div class="small-muted">Nenhuma férias agendada.</div>`;
+      $$("fe-lista").querySelectorAll("[data-cancel]").forEach(b=> b.addEventListener("click", async ()=>{
+        if(!confirm("Cancelar este agendamento de férias?")) return;
+        const r = await this.enviar(b, { acao:"lanc_ferias_cancelar", linha:Number(b.dataset.cancel) });
+        if(!r || !r.ok) return toast((r && r.erro) || "Não foi possível cancelar.", "error");
+        toast("Agendamento cancelado."); await carregar();
+      }));
+    };
+    const carregar = async ()=>{
+      const r = await Api.call({ acao:"lanc_ferias_listar" }).catch(e=>({ ok:false, erro:e.message }));
+      if(!r || !r.ok){ $$("fe-lista").innerHTML = `<div class="error-box">${this.h((r && r.erro) || "Falha ao carregar.")}</div>`; return; }
+      this.fe.lista = r.ferias || []; desenharLista(); resumo();
+    };
+    $$("fe-mat").addEventListener("input", resumo); $$("fe-mat").addEventListener("change", resumo);
+    $$("fe-ini").addEventListener("change", resumo);
+    $$("fe-dias").querySelectorAll("[data-dias]").forEach(b=> b.addEventListener("click", ()=>{ this.fe.dias = Number(b.dataset.dias); resumo(); }));
+    $$("fe-todas").addEventListener("change", ()=>{ this.fe.todas = $$("fe-todas").checked; desenharLista(); });
+    $$("fe-salvar").addEventListener("click", async ()=>{
+      this.aviso("fe-msg", "", "");
+      const mat = this.soDigitos($$("fe-mat").value);
+      if(!mat) return this.aviso("fe-msg", "erro", "Informe a matrícula do colaborador.");
+      if(!this.nomeDe(mat)) return this.aviso("fe-msg", "erro", "Matrícula não encontrada no quadro (aba TURNOVER).");
+      if(!$$("fe-ini").value) return this.aviso("fe-msg", "erro", "Informe a data de início.");
+      if(!this.fe.dias) return this.aviso("fe-msg", "erro", "Escolha a quantidade de dias.");
+      const r = await this.enviar($$("fe-salvar"), { acao:"lanc_ferias_salvar", mat, ini:$$("fe-ini").value, dias:this.fe.dias });
+      if(!r || !r.ok) return this.aviso("fe-msg", "erro", this.h((r && r.erro) || "Não foi possível agendar."));
+      const conf = (r.conflitos||[]).length ? `<br>⚠️ Coincide com férias de: ${r.conflitos.map(c=>`<strong>${this.h(c.nome)}</strong> (${this.br(c.ini)} a ${this.br(c.fim)})`).join("; ")}.` : "";
+      this.aviso("fe-msg", (r.conflitos||[]).length ? "aviso" : "ok", `Férias de <strong>${this.h(r.nome)}</strong> agendadas: ${this.br(r.ini)} a ${this.br(r.fim)} (${r.dias} dias).${conf}`);
+      toast("Férias agendadas."); $$("fe-mat").value = ""; this.fe.dias = null; await carregar(); resumo();
+    });
+    this.aplicarPrefill("fe-mat");
+    await carregar();
+  },
+
+  /* ================================================================== */
+  /* AVARIA 9712 (aba REP.AVARIA)                                         */
   /* ================================================================== */
   renderAvaria(){ this.abrir("lavaria", this._avaria); },
   _avaria(pane){
     this.avVer = null;
     pane.innerHTML = `<div class="panel">
-      ${this.cabecalho("Lançar REP.AVARIA", "Lança o número da transação (Num.Lançamento) da 9712 na aba REP.AVARIA. Antes de gravar, o sistema confere se o número já foi lançado e se existe na 9712 (coluna K).")}
+      ${this.cabecalho("Lançar Avaria 9712", "Lança o número da transação (Num.Lançamento) da 9712 na aba REP.AVARIA. Antes de gravar, o sistema confere se o número já foi lançado e se existe na 9712 (coluna K).")}
       <div class="adm-form">
         <label>Num.Lançamento<input type="text" id="av-num" inputmode="numeric" placeholder="Ex.: 597172" autocomplete="off"></label>
         <label>Tipo de lançamento<select id="av-tipo" data-vazio="">${this.options(this.ctx.listas.TIPO_REP_AVARIA, null)}</select></label>
@@ -267,7 +467,7 @@ const LancUI = {
       if(!r || !r.ok){ if(r && /já existe/i.test(r.erro||"")) verificar(); return this.aviso("av-msg", "erro", this.h((r && r.erro) || "Não foi possível lançar.")); }
       this.avHist.unshift({ num, tipo, na9712: r.na9712 && r.na9712.aba ? (r.na9712.existe ? "✔ sim" : "⚠ não") : "—" });
       hist(); this.aviso("av-msg", "ok", `Lançamento <strong>${this.h(num)}</strong> gravado (${this.h(tipo)}).`);
-      toast("REP.AVARIA lançado.");
+      toast("Avaria 9712 lançada.");
       $$("av-num").value = ""; $$("av-ind").innerHTML = ""; $$("av-conf").style.display = "none"; $$("av-conf-ck").checked = false; $$("av-num").focus();
     });
   },
@@ -277,16 +477,17 @@ const LancUI = {
   /* ================================================================== */
   renderChamada(){ this.abrir("lchamada", this._chamada); },
   _chamada(pane){
-    this.ch = { data: this.hojeISO(), itens: [], jaExiste:false };
+    this.ch = { data: this.diaUtilAte(this.hojeISO()), itens: [], jaExiste:false };
     const stat = this.ctx.listas.STATUS_CHAMADA;
     const ativos = (this.ctx.pessoas||[]).filter(p=>p.ativo && p.mat);
     pane.innerHTML = `<div class="panel">
-      ${this.cabecalho("Lançar Chamada", "Grava na aba QUADRO REP. Se o dia já tem chamada, os valores existentes aparecem para editar. A equipe é a que está ATIVA na aba TURNOVER.")}
+      ${this.cabecalho("Lançar Chamada", "Grava na aba QUADRO REP. Chamadas são sempre de segunda a sexta. Toque no status de cada colaborador (toque de novo para limpar). Se o dia já tem chamada, os valores existentes aparecem para editar. A equipe é a que está ATIVA na aba TURNOVER.")}
       <div class="adm-form">
         <label>Dia da chamada<input type="date" id="ch-data" value="${this.ch.data}"></label>
-        <label>Marcar todos como<select id="ch-todos" data-vazio="" data-sem-evento="1">${this.options(stat, null, "—")}</select></label>
       </div>
-      ${this.novoItem("STATUS_CHAMADA", "ch-todos", "novo status")}
+      <div style="margin:4px 0 2px"><span class="small-muted" style="font-weight:700">Marcar todos como:</span> <span id="ch-todos-box"></span></div>
+      ${this.novoItem("STATUS_CHAMADA", "ch-novo-st", "novo status")}
+      <select id="ch-novo-st" data-vazio="" data-sem-evento="1" style="display:none"></select>
       <div id="ch-info" style="margin:10px 0"></div>
       <div id="ch-tab"></div>
       <div id="ch-msg"></div>
@@ -297,13 +498,13 @@ const LancUI = {
       <p class="small-muted" style="margin:0 0 10px">Ex.: um colaborador faltou a semana toda → selecione-o, escolha FALTA e clique em "Últimos 7 dias". Dias que já têm chamada são atualizados; os que não têm são criados.</p>
       <div class="adm-form">
         <label>Status<select id="lt-status" data-vazio="">${this.options(stat, null, "Selecione")}</select></label>
-        <label>De<input type="date" id="lt-ini" value="${this.hojeISO()}"></label>
-        <label>Até<input type="date" id="lt-fim" value="${this.hojeISO()}"></label>
+        <label>De<input type="date" id="lt-ini" value="${this.diaUtilAte(this.hojeISO())}"></label>
+        <label>Até<input type="date" id="lt-fim" value="${this.diaUtilAte(this.hojeISO())}"></label>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
         ${[[1,"Último 1 dia"],[3,"Últimos 3 dias"],[7,"Últimos 7 dias (1 semana)"],[15,"Últimos 15 dias"],[30,"Últimos 30 dias"]].map(([n,t])=>`<button type="button" class="btn btn-outline btn-sm" data-ult="${n}">${t}</button>`).join("")}
       </div>
-      <label class="adm-chk"><input type="checkbox" id="lt-dom" checked> Pular domingos</label>
+      <p class="small-muted" style="margin:0 0 6px">O lote só marca <strong>segunda a sexta</strong> (sábado e domingo são ignorados).</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0">
         <input type="search" id="lt-busca" placeholder="Buscar colaborador..." style="padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;min-width:220px">
         <button type="button" class="btn btn-outline btn-sm" id="lt-all">Selecionar todos</button>
@@ -319,20 +520,51 @@ const LancUI = {
     </div>`;
     this.ligarNovoItem(pane);
     const $$ = (id)=> document.getElementById(id);
-    const statusOpts = (sel)=> this.options(this.ctx.listas.STATUS_CHAMADA, sel, "— sem lançamento");
+    const corStatus = (st)=>{
+      const n = String(st||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase();
+      if(n.includes("PRESENT")) return "#1a9c62";
+      if(n.includes("FALTA")) return "#d64545";
+      if(n.includes("FERIAS")) return "#7a3fc4";
+      if(n.includes("ATESTADO")) return "#e08a1f";
+      if(n.includes("SUSPENS")) return "#8b1d1d";
+      if(n.includes("FOLGA")) return "#5f7388";
+      return "#2f6fce";
+    };
+    const chip = (st, ativo, attrs)=>{ const c = corStatus(st);
+      return `<button type="button" ${attrs} style="border:1.5px solid ${c};background:${ativo ? c : "#fff"};color:${ativo ? "#fff" : c};border-radius:999px;padding:7px 12px;font-size:12.5px;font-weight:700;cursor:pointer;margin:2px 4px 2px 0;min-height:34px">${this.h(st)}</button>`; };
+    const desenharTodos = ()=>{
+      $$("ch-todos-box").innerHTML = this.ctx.listas.STATUS_CHAMADA.map(st=> chip(st, false, `data-todos="${this.h(st)}"`)).join("");
+      $$("ch-todos-box").querySelectorAll("[data-todos]").forEach(b=> b.addEventListener("click", ()=>{
+        if(this.ehFimDeSemana(this.ch.data)) return;
+        this.ch.itens.forEach(it=> it.status = b.dataset.todos); desenharTabela();
+      }));
+    };
 
     const desenharTabela = ()=>{
       const c = this.ch;
       $$("ch-info").innerHTML = c.jaExiste
         ? `<div class="warn-box" style="margin:0">Já existe chamada para <strong>${this.br(c.data)}</strong>. Você está <strong>editando</strong> — altere o que precisar e salve.${c.fora ? ` (${c.fora} registro(s) do dia são de pessoas que não estão mais ativas e não aparecem aqui.)` : ""}</div>`
         : `<div class="hint-box" style="margin:0">Nenhuma chamada lançada para <strong>${this.br(c.data)}</strong>. Marque o status de cada colaborador.</div>`;
-      $$("ch-tab").innerHTML = c.itens.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Status</th></tr></thead><tbody>
-        ${c.itens.map((it,i)=>`<tr><td>${this.h(it.mat)}</td><td>${this.h(it.nome)}</td><td><select data-i="${i}" class="ch-st">${statusOpts(it.status)}</select></td></tr>`).join("")}</tbody></table></div>`
+      const stat = this.ctx.listas.STATUS_CHAMADA;
+      $$("ch-tab").innerHTML = c.itens.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Status (toque para marcar)</th></tr></thead><tbody>
+        ${c.itens.map((it,i)=>`<tr><td>${this.h(it.mat)}</td><td>${this.h(it.nome)}${it.sugerido ? `<div class="small-muted" style="font-size:11px">🏖️ férias agendadas</div>` : ""}</td>
+          <td style="min-width:260px">${stat.map(st=> chip(st, it.status === st, `data-i="${i}" data-st="${this.h(st)}" class="ch-chip"`)).join("")}</td></tr>`).join("")}</tbody></table></div>`
         : `<div class="warn-box">Nenhum colaborador ativo na aba TURNOVER.</div>`;
-      $$("ch-tab").querySelectorAll(".ch-st").forEach(s=> s.addEventListener("change", ()=>{ c.itens[Number(s.dataset.i)].status = s.value; }));
+      $$("ch-tab").querySelectorAll(".ch-chip").forEach(b=> b.addEventListener("click", ()=>{
+        const it = c.itens[Number(b.dataset.i)]; it.status = it.status === b.dataset.st ? "" : b.dataset.st; it.sugerido = false;
+        // redesenha só a linha para manter a rolagem
+        const linha = b.closest("tr");
+        linha.querySelectorAll(".ch-chip").forEach(x=>{ const ativo = it.status === x.dataset.st, cor = corStatus(x.dataset.st); x.style.background = ativo ? cor : "#fff"; x.style.color = ativo ? "#fff" : cor; });
+        const sug = linha.querySelector(".small-muted"); if(sug) sug.remove();
+      }));
     };
     const carregarDia = async (manterMsg)=>{
       const data = $$("ch-data").value; if(!data) return;
+      if(this.ehFimDeSemana(data)){
+        this.ch = { data, itens:[], jaExiste:false };
+        $$("ch-info").innerHTML = ""; $$("ch-tab").innerHTML = "";
+        return this.aviso("ch-msg", "erro", `${this.br(data)} cai no fim de semana. A chamada é sempre de segunda a sexta — escolha um dia útil.`);
+      }
       $$("ch-tab").innerHTML = `<p class="small-muted">Carregando o dia...</p>`; if(manterMsg !== true) this.aviso("ch-msg", "", "");
       const r = await Api.call({ acao:"lanc_chamada_dia", data }).catch(e=>({ ok:false, erro:e.message }));
       if(!r || !r.ok){ $$("ch-tab").innerHTML = ""; return this.aviso("ch-msg", "erro", this.h((r && r.erro) || "Falha ao carregar o dia.")); }
@@ -340,12 +572,9 @@ const LancUI = {
       desenharTabela();
     };
     $$("ch-data").addEventListener("change", ()=>{ $$("lt-fim").value = $$("ch-data").value || $$("lt-fim").value; carregarDia(); });
-    $$("ch-todos").addEventListener("change", ()=>{
-      const v = $$("ch-todos").value; if(!v) return;
-      this.ch.itens.forEach(it=> it.status = v); desenharTabela(); $$("ch-todos").value = "";
-    });
     $$("ch-salvar").addEventListener("click", async ()=>{
       this.aviso("ch-msg", "", "");
+      if(this.ehFimDeSemana(this.ch.data)) return this.aviso("ch-msg", "erro", "A chamada é sempre de segunda a sexta. Escolha um dia útil.");
       const r = await this.enviar($$("ch-salvar"), { acao:"lanc_chamada_salvar", data:this.ch.data, itens:this.ch.itens.map(i=>({ mat:i.mat, nome:i.nome, status:i.status })) });
       if(!r || !r.ok) return this.aviso("ch-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
       this.aviso("ch-msg", "ok", `Chamada de ${this.br(this.ch.data)} salva: ${r.criadas} nova(s), ${r.atualizadas} atualizada(s).`);
@@ -358,15 +587,15 @@ const LancUI = {
       const n = marcados().length, ini = $$("lt-ini").value, fim = $$("lt-fim").value, st = $$("lt-status").value;
       $$("lt-cont").textContent = n ? `${n} selecionado(s)` : "";
       if(!n || !ini || !fim || !st){ $$("lt-resumo").textContent = ""; return; }
-      let dias = 0, d = ini; const pular = $$("lt-dom").checked;
-      for(let i=0; i<400 && d <= fim; i++){ if(!(pular && this.isoParaData(d).getDay() === 0)) dias++; d = this.somaDias(d, 1); }
-      $$("lt-resumo").innerHTML = `Vai marcar <strong>${this.h(st)}</strong> para <strong>${n}</strong> colaborador(es), de <strong>${this.br(ini)}</strong> a <strong>${this.br(fim)}</strong> (${dias} dia(s)${pular ? ", sem domingos" : ""}).`;
+      let dias = 0, d = ini;
+      for(let i=0; i<400 && d <= fim; i++){ if(!this.ehFimDeSemana(d)) dias++; d = this.somaDias(d, 1); }
+      $$("lt-resumo").innerHTML = `Vai marcar <strong>${this.h(st)}</strong> para <strong>${n}</strong> colaborador(es), de <strong>${this.br(ini)}</strong> a <strong>${this.br(fim)}</strong> (${dias} dia(s) útil(eis), sem sábado e domingo).`;
     };
     pane.querySelectorAll("[data-ult]").forEach(b=> b.addEventListener("click", ()=>{
-      const fim = $$("lt-fim").value || this.hojeISO();
+      const fim = this.diaUtilAte($$("lt-fim").value || this.hojeISO());
       $$("lt-fim").value = fim; $$("lt-ini").value = this.somaDias(fim, -(Number(b.dataset.ult) - 1)); resumo();
     }));
-    ["lt-status","lt-ini","lt-fim","lt-dom"].forEach(id=> $$(id).addEventListener("change", resumo));
+    ["lt-status","lt-ini","lt-fim"].forEach(id=> $$(id).addEventListener("change", resumo));
     pane.querySelectorAll(".lt-ck").forEach(c=> c.addEventListener("change", resumo));
     $$("lt-all").addEventListener("click", ()=>{ pane.querySelectorAll("#lt-lista label").forEach(l=>{ if(l.style.display !== "none") l.querySelector("input").checked = true; }); resumo(); });
     $$("lt-none").addEventListener("click", ()=>{ pane.querySelectorAll(".lt-ck").forEach(c=> c.checked = false); resumo(); });
@@ -380,7 +609,7 @@ const LancUI = {
       if(!mats.length) return this.aviso("lt-msg", "erro", "Selecione ao menos um colaborador.");
       if(!status) return this.aviso("lt-msg", "erro", "Escolha o status.");
       if(!$$("lt-ini").value || !$$("lt-fim").value) return this.aviso("lt-msg", "erro", "Informe o período.");
-      const r = await this.enviar($$("lt-aplicar"), { acao:"lanc_chamada_lote", mats, status, ini:$$("lt-ini").value, fim:$$("lt-fim").value, pularDomingo:$$("lt-dom").checked });
+      const r = await this.enviar($$("lt-aplicar"), { acao:"lanc_chamada_lote", mats, status, ini:$$("lt-ini").value, fim:$$("lt-fim").value, pularDomingo:true });
       if(!r || !r.ok) return this.aviso("lt-msg", "erro", this.h((r && r.erro) || "Não foi possível aplicar."));
       this.aviso("lt-msg", "ok", `Lote aplicado: ${r.criadas} registro(s) criado(s) e ${r.atualizadas} atualizado(s).`);
       toast("Lote aplicado."); carregarDia();
@@ -389,9 +618,9 @@ const LancUI = {
       if(lista !== "STATUS_CHAMADA") return;
       const atual = $$("lt-status").value;
       $$("lt-status").innerHTML = this.options(this.ctx.listas.STATUS_CHAMADA, atual, "Selecione");
-      desenharTabela();
+      desenharTodos(); desenharTabela();
     };
-    carregarDia(); resumo();
+    desenharTodos(); carregarDia(); resumo();
   },
 
   /* ================================================================== */

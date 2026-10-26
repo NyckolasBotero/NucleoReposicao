@@ -328,7 +328,7 @@ const AdminUI = {
     const grupos = NAV_VIEWS.map(v=>{
       const itens = UI.subnavConfig[v.id]||[];
       return `<fieldset class="adm-fs"><legend><label><input type="checkbox" class="ac-all" data-v="${v.id}"> <strong>${escapeHtml(v.aba)}</strong></label></legend>
-        <div class="adm-checks">${itens.map(it=>`<label class="adm-chk"><input type="checkbox" class="ac-sub" data-v="${v.id}" data-aba="${escapeHtml(v.aba)}" data-sub="${escapeHtml(it.label)}" ${tem.has(normPerm(v.aba)+"|"+normPerm(it.label))?"checked":""}> ${escapeHtml(it.label)}</label>`).join("")}</div></fieldset>`;
+        <div class="adm-checks">${itens.map(it=>`<label class="adm-chk"><input type="checkbox" class="ac-sub" data-v="${v.id}" data-aba="${escapeHtml(v.aba)}" data-sub="${escapeHtml(it.label)}" ${[it.label].concat(it.aliases||[]).some(n=>tem.has(normPerm(v.aba)+"|"+normPerm(n)))?"checked":""}> ${escapeHtml(it.label)}</label>`).join("")}</div></fieldset>`;
     }).join("");
     UI.openModal(`
       <h3 style="margin-top:0;">${u ? "Editar acesso" : "Novo acesso"}</h3>
