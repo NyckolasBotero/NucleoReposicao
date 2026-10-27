@@ -126,12 +126,12 @@ const Nav = {
     const d = document.getElementById("drawer"); if(!d) return;
     // abre o grupo da tela atual
     document.querySelectorAll(".dr-group").forEach(g=> g.classList.toggle("open", g.dataset.view===UI.currentView));
-    document.body.classList.add("drawer-open"); d.setAttribute("aria-hidden","false");
+    document.body.classList.add("drawer-open"); document.documentElement.classList.add("drawer-open"); d.setAttribute("aria-hidden","false");
     const m = document.getElementById("hdr-menu"); if(m) m.setAttribute("aria-expanded","true");
   },
   fecharDrawer(){
     const d = document.getElementById("drawer"); if(!d) return;
-    document.body.classList.remove("drawer-open"); d.setAttribute("aria-hidden","true");
+    document.body.classList.remove("drawer-open"); document.documentElement.classList.remove("drawer-open"); d.setAttribute("aria-hidden","true");
     const m = document.getElementById("hdr-menu"); if(m) m.setAttribute("aria-expanded","false");
   },
   initDrawer(){
