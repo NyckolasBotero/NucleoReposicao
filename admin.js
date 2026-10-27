@@ -434,6 +434,7 @@ const AdminUI = {
       <h3 style="margin-top:0;">${u ? "Editar acesso" : "Novo acesso"}</h3>
       <div class="adm-form">
         <label>Matrícula<input type="text" inputmode="numeric" id="ac-mat" value="${u?escapeHtml(u.matricula):""}" placeholder="ex.: 10003993"></label>
+        <label>Nome do usuário<input type="text" id="ac-nome" autocomplete="off" value="${u?escapeHtml(u.nome||""):""}" placeholder="ex.: Fabio Nyckolas"></label>
         <label>Senha<input type="text" id="ac-senha" autocomplete="off" placeholder="${u?(u.temSenha?"deixe em branco para manter a atual":"defina uma senha"):"mínimo 4 caracteres"}"></label>
         <label>Status<select id="ac-status"><option value="Ativo" ${(!u||u.status==="Ativo")?"selected":""}>Ativo</option><option value="Bloqueado" ${(u&&u.status==="Bloqueado")?"selected":""}>Bloqueado</option></select></label>
       </div>
@@ -456,7 +457,7 @@ const AdminUI = {
   async salvarAcesso(orig){
     const box = document.getElementById("modal-box"), msg = document.getElementById("ac-msg"), btn = document.getElementById("ac-salvar");
     const perms = Array.from(box.querySelectorAll(".ac-sub:checked")).map(c=>({ aba:c.dataset.aba, sub:c.dataset.sub }));
-    const payload = { acao:"admin_salvar", original: orig||"", matricula: document.getElementById("ac-mat").value.trim(),
+    const payload = { acao:"admin_salvar", original: orig||"", matricula: document.getElementById("ac-mat").value.trim(), nome: document.getElementById("ac-nome").value.trim(),
       senha: document.getElementById("ac-senha").value, status: document.getElementById("ac-status").value, perms };
     btn.disabled = true; msg.innerHTML = "";
     try{
