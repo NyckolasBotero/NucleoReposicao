@@ -514,6 +514,7 @@ const LISTAS_EDITAVEIS = ['STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAME
 const SUB_DA_ACAO = {
   lanc_init: null, lanc_config_add: null,
   lanc_feedback_salvar: 'Lançar Feedback', lanc_advertencia_salvar: 'Lançar Advertência',
+  lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
   lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712',
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
@@ -532,6 +533,8 @@ function lancamento(d, s) {
     case 'lanc_config_add': return lancConfigAdd(d, s);
     case 'lanc_feedback_salvar': return feedbackSalvar(d, s);
     case 'lanc_advertencia_salvar': return advertenciaSalvar(d, s);
+    case 'lanc_advertencia_listar': return advertenciaListar(d);
+    case 'lanc_advertencia_editar': return advertenciaEditar(d, s);
     case 'lanc_ferias_listar': return feriasListar();
     case 'lanc_ferias_salvar': return feriasSalvar(d, s);
     case 'lanc_ferias_cancelar': return feriasCancelar(d, s);
@@ -871,6 +874,58 @@ function advertenciaSalvar(d, s) {
   formatarDatas(info.sh, c.data, n, 1);
   registrarLog(s, 'Advertência', mat + ' ' + nome + ' · ' + motivo + (link ? ' · com anexo' : ''));
   return { ok: true, nome: nome, anexo: link };
+}
+
+/** Colunas da aba ADVERTÊNCIAS (cria as que faltarem). */
+function colunasAdvertencia() {
+  abaComCabecalho(ABA_ADVERTENCIAS, ['Data', 'Cod', 'Nome', 'Motivo', 'Resumo Assunto', 'Cod Aplicador', 'Nome Aplicador', 'Anexo']);
+  const info = infoAba(ABA_ADVERTENCIAS);
+  return { info: info, c: {
+    data: garantirCol(info, ['DATA'], 'Data'), mat: garantirCol(info, ['COD', 'MATRICULA'], 'Cod'), nome: garantirCol(info, ['NOME'], 'Nome'),
+    motivo: garantirCol(info, ['MOTIVO'], 'Motivo'), resumo: garantirCol(info, ['RESUMO ASSUNTO', 'RESUMO'], 'Resumo Assunto'),
+    matApl: garantirCol(info, ['COD APLICADOR'], 'Cod Aplicador'), nomeApl: garantirCol(info, ['NOME APLICADOR'], 'Nome Aplicador'), anexo: garantirCol(info, ['ANEXO'], 'Anexo') } };
+}
+
+/** Advertências já lançadas (mais recentes primeiro). Filtra por matrícula se informada. */
+function advertenciaListar(d) {
+  const X = colunasAdvertencia(), info = X.info, c = X.c, filtro = soDigitos(d.mat);
+  const ult = info.sh.getLastRow();
+  if (ult < 2) return { ok: true, itens: [] };
+  const v = info.sh.getRange(2, 1, ult - 1, info.ult).getValues(), itens = [];
+  for (let i = v.length - 1; i >= 0 && itens.length < 300; i--) {
+    const l = v[i], mat = soDigitos(l[c.mat]);
+    if (!mat || (filtro && mat !== filtro)) continue;
+    itens.push({ linha: i + 2, data: chaveData(l[c.data]), mat: mat, nome: texto(l[c.nome]), motivo: texto(l[c.motivo]), resumo: texto(l[c.resumo]),
+      matApl: soDigitos(l[c.matApl]), nomeApl: texto(l[c.nomeApl]), anexo: texto(l[c.anexo]) });
+  }
+  return { ok: true, itens: itens };
+}
+
+/** Corrige uma advertência já lançada (data, colaborador, motivo, resumo, aplicador e documento). */
+function advertenciaEditar(d, s) {
+  const X = colunasAdvertencia(), info = X.info, c = X.c, linha = Number(d.linha) || 0;
+  if (linha < 2 || linha > info.sh.getLastRow()) throw new Error('Registro não encontrado. Recarregue a lista.');
+  const atual = info.sh.getRange(linha, 1, 1, info.ult).getValues()[0];
+  if (soDigitos(atual[c.mat]) !== soDigitos(d.matOriginal)) throw new Error('A planilha mudou desde que a lista foi carregada. Recarregue a lista e tente de novo.');
+  const mat = soDigitos(d.mat);
+  if (!mat) throw new Error('Informe a matrícula do colaborador.');
+  const nome = nomePorMatricula(mat) || (mat === soDigitos(atual[c.mat]) ? texto(atual[c.nome]) : '');
+  if (!nome) throw new Error('Matrícula não encontrada. Confira o número.');
+  const motivo = texto(d.motivo), resumo = texto(d.resumo);
+  if (!motivo) throw new Error('Escolha o motivo da advertência.');
+  if (!resumo) throw new Error('Escreva o resumo da advertência.');
+  const data = isoParaData(d.data);
+  const matApl = soDigitos(d.matAplicador) || soDigitos(atual[c.matApl]);
+  let anexo = texto(atual[c.anexo]);
+  if (d.anexo && d.anexo.base64) anexo = salvarAnexo(d.anexo, 'Advertencia', mat, d.data);
+  else if (d.removerAnexo) anexo = '';
+  const l = atual.slice();
+  l[c.data] = data; l[c.mat] = mat; l[c.nome] = nome; l[c.motivo] = motivo; l[c.resumo] = resumo;
+  l[c.matApl] = matApl; l[c.nomeApl] = texto(d.nomeAplicador) || nomePorMatricula(matApl) || texto(atual[c.nomeApl]); l[c.anexo] = anexo;
+  info.sh.getRange(linha, 1, 1, info.ult).setValues([l]);
+  formatarDatas(info.sh, c.data, linha, 1);
+  registrarLog(s, 'Advertência (edição)', mat + ' ' + nome + ' · ' + motivo + ' · ' + d.data);
+  return { ok: true, nome: nome, anexo: anexo };
 }
 
 /* ---------- REP.AVARIA ---------- */
