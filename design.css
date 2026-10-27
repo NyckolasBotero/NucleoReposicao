@@ -684,3 +684,9 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
   #hdr-menu svg{ width:22px; height:22px; }
 }
 @media (min-width:900px){ #drawer, #drawer-scrim, #hdr-menu{ display:none !important; } }
+
+/* ===== Auditoria: seções (Retornos x Ruas) ===== */
+.aud-sec{ display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:6px 14px; margin:26px 0 12px; padding:11px 16px; border-radius:10px; border-left:6px solid; font-size:15px; }
+.aud-sec span{ font-size:12px; font-weight:500; opacity:.75; }
+.aud-sec-ret{ border-color:#2f6fce; background:rgba(47,111,206,.10); }
+.aud-sec-rua{ border-color:#e08a1f; background:rgba(224,138,31,.10); }
