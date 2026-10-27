@@ -110,8 +110,8 @@ const LancUI = {
   anexoHtml(p, titulo){
     return `<fieldset class="adm-fs"><legend>${titulo}</legend>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button type="button" class="btn btn-primary" id="${p}-foto">📷 Tirar foto (digitalizar como scanner)</button>
-        <button type="button" class="btn btn-outline" id="${p}-arq">📄 Já tenho o arquivo (PDF ou imagem)</button>
+        <button type="button" class="btn btn-primary" id="${p}-foto">Tirar foto (digitalizar como scanner)</button>
+        <button type="button" class="btn btn-outline" id="${p}-arq">Já tenho o arquivo (PDF ou imagem)</button>
         <input type="file" id="${p}-foto-in" accept="image/*" capture="environment" style="display:none">
         <input type="file" id="${p}-arq-in" accept="application/pdf,image/*" style="display:none">
       </div>
@@ -417,7 +417,7 @@ const LancUI = {
         <label>Tipo de lançamento<select id="av-tipo" data-vazio="">${this.options(this.ctx.listas.TIPO_REP_AVARIA, null)}</select></label>
       </div>
       ${this.novoItem("TIPO_REP_AVARIA", "av-tipo", "novo tipo de lançamento")}
-      <div style="margin:12px 0"><button type="button" class="btn btn-outline" id="av-ver">🔎 Verificar número</button></div>
+      <div style="margin:12px 0"><button type="button" class="btn btn-outline" id="av-ver">Verificar número</button></div>
       <div id="av-ind" style="min-height:34px"></div>
       <div id="av-conf" style="display:none;margin:8px 0;min-height:34px"><label class="adm-chk"><input type="checkbox" id="av-conf-ck"> Confirmo lançar mesmo sem constar na 9712</label></div>
       <div id="av-msg"></div>
@@ -526,7 +526,7 @@ const LancUI = {
       if(n.includes("FALTA")) return "#d64545";
       if(n.includes("FERIAS")) return "#7a3fc4";
       if(n.includes("ATESTADO")) return "#e08a1f";
-      if(n.includes("SUSPENS")) return "#8b1d1d";
+      if(n.includes("SUSPENS")) return (window.Design && Design.escuro()) ? "#ff7b7b" : "#8b1d1d";
       if(n.includes("FOLGA")) return "#5f7388";
       return "#2f6fce";
     };

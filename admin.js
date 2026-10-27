@@ -104,7 +104,7 @@ const AdminUI = {
       <div class="panel">
         <div class="adm-head">
           <h2 class="adm-h">Bases</h2>
-          <button class="btn btn-outline btn-sm" id="bases-refresh">🔄 Atualizar situação</button>
+          <button class="btn btn-outline btn-sm" id="bases-refresh">Atualizar situação</button>
         </div>
         <p class="small-muted">Carregue aqui os arquivos exportados (8460, 8022, 1707 GERAL etc.). Antes de gravar, o sistema confere o que já existe na base para não duplicar.
           <strong>Acumula sem duplicar</strong>: entram só as linhas que ainda não existem. <strong>Substitui tudo</strong>: o arquivo novo troca o conteúdo da base (foto do momento).</p>
@@ -118,7 +118,7 @@ const AdminUI = {
               <td>${b.existe ? this.fmtNum(b.linhasAtuais) : `<span class="small-muted">aba não criada</span>`}</td>
               <td>${dr ? fmtDateBR(dr) : "—"}</td>
               <td>${u ? `<strong>${escapeHtml(u.quando)}</strong><div class="small-muted">${escapeHtml(u.usuario||"")} · ${escapeHtml(u.arquivo||"")}<br>${this.fmtNum(u.novas)} novas${b.modo==="acumular"?` · ${this.fmtNum(u.duplicadas)} já existiam`:""}</div>` : `<span class="small-muted">nenhum registro</span>`}</td>
-              <td><button class="btn btn-primary btn-sm" data-base="${i}">📂 Carregar</button></td>
+              <td><button class="btn btn-primary btn-sm" data-base="${i}">Carregar</button></td>
             </tr>`; }).join("")}</tbody>
         </table></div>
       </div>
@@ -138,7 +138,7 @@ const AdminUI = {
   async lerArquivo(file){
     const st = this.basesState, base = st.baseSel, box = document.getElementById("bases-envio");
     if(!base || !box) return;
-    box.innerHTML = `<div class="panel"><p class="small-muted">Lendo ${escapeHtml(file.name)}...</p></div>`;
+    box.innerHTML = `<div class="panel"><div class="loading-line"><span class="spinner"></span> Lendo ${escapeHtml(file.name)}…</div></div>`;
     try{
       if(typeof XLSX === "undefined") throw new Error("A biblioteca de leitura de Excel (SheetJS) não carregou. Recarregue a página.");
       const wb = XLSX.read(await file.arrayBuffer(), { type:"array", cellDates:true });
@@ -173,9 +173,11 @@ const AdminUI = {
       }
       st.arq = { nome:file.name, aba:nomeAba, base, cab, linhas, maxD, aviso, sim:null };
       this.desenharPreview();
+      toast("Arquivo lido", "success", { sub:`${linhas.length.toLocaleString("pt-BR")} linhas · base ${base.base}${aviso.length?" · confira os avisos":""}` });
     }catch(e){
       st.arq = null;
       box.innerHTML = `<div class="panel"><div class="error-box">${escapeHtml(e.message||String(e))}</div></div>`;
+      toast("Não foi possível ler o arquivo", "error", { sub:String(e.message||e).slice(0,140) });
     }
   },
 
@@ -198,8 +200,8 @@ const AdminUI = {
         <div id="bases-sim" style="margin-top:14px;">${a.sim ? this.htmlSimulacao(a) : `<span class="small-muted">Clique em <strong>Verificar duplicidade</strong> para ver quantas linhas são novas antes de gravar.</span>`}</div>
         <div class="adm-actions">
           <button class="btn btn-outline" id="bases-cancel" ${st.enviando?"disabled":""}>Cancelar</button>
-          <button class="btn btn-outline" id="bases-sim-btn" ${st.enviando?"disabled":""}>🔎 Verificar duplicidade</button>
-          <button class="btn btn-primary" id="bases-go" ${(!a.sim||st.enviando)?"disabled":""} title="${a.sim?"":"Faça a verificação primeiro"}">✅ Gravar na base</button>
+          <button class="btn btn-outline" id="bases-sim-btn" ${st.enviando?"disabled":""}>Verificar duplicidade</button>
+          <button class="btn btn-primary" id="bases-go" ${(!a.sim||st.enviando)?"disabled":""} title="${a.sim?"":"Faça a verificação primeiro"}">Gravar na base</button>
         </div>
         <div id="bases-prog"></div>
       </div>`;
@@ -239,6 +241,7 @@ const AdminUI = {
         a.sim = tot;
         st.enviando = false;
         this.desenharPreview();
+        toast("Verificação concluída", "success", { sub:`${tot.novas.toLocaleString("pt-BR")} novas · ${tot.duplicadas.toLocaleString("pt-BR")} já existem` });
         return;
       }
       await Api.call({ acao:"bases_concluir", base:a.base.base, arquivo:a.nome, enviadas:tot.recebidas, novas:tot.novas, duplicadas:tot.duplicadas });
@@ -247,13 +250,14 @@ const AdminUI = {
       await this.renderBases(true);
       const box = document.getElementById("bases-envio");
       if(box) box.innerHTML = `<div class="panel"><div class="hint-box">✅ Base <strong>${escapeHtml(a.base.base)}</strong> atualizada: ${this.fmtNum(tot.novas)} gravadas${a.base.modo==="acumular"?`, ${this.fmtNum(tot.duplicadas)} já existiam`:""}.
-        <button class="btn btn-primary btn-sm" id="bases-reload" style="margin-left:10px;">🔄 Atualizar o painel agora</button></div></div>`;
+        <button class="btn btn-primary btn-sm" id="bases-reload" style="margin-left:10px;">Atualizar o painel agora</button></div></div>`;
       const rb = document.getElementById("bases-reload");
       if(rb) rb.addEventListener("click", ()=> UI.carregarOnline());
     }catch(e){
       st.enviando = false;
       this.desenharPreview();
       const pr = document.getElementById("bases-prog");
+      toast("Não foi possível concluir o envio", "error", { sub:String(e.message||e).slice(0,140) });
       if(pr) pr.innerHTML = `<div class="error-box" style="margin-top:12px;">${escapeHtml(e.message||String(e))}${simular?"":"<br>Se parte do arquivo já foi gravada, faça a verificação de duplicidade de novo antes de reenviar."}</div>`;
     }
   },
@@ -310,7 +314,7 @@ const AdminUI = {
             <td>${escapeHtml(u.nome||"—")}</td>
             <td><span class="adm-tag ${u.status==="Ativo"?"acc":"off"}">${escapeHtml(u.status)}</span>${u.temSenha?"":` <span class="adm-tag off" title="Defina uma senha">sem senha</span>`}</td>
             <td>${u.perms.length} de ${total}</td>
-            <td><button class="btn btn-outline btn-sm" data-mat="${escapeHtml(u.matricula)}">✏️ Editar</button></td>
+            <td><button class="btn btn-outline btn-sm" data-mat="${escapeHtml(u.matricula)}">Editar</button></td>
           </tr>`).join("") || `<tr><td colspan="5" class="small-muted">Nenhum acesso encontrado.</td></tr>`}</tbody>
         </table></div>
       </div>`;
@@ -400,7 +404,7 @@ const AdminUI = {
             <div class="small-muted mono">${escapeHtml(p.sheetId)}</div></div>
           <div class="adm-link-btns">
             <a class="btn btn-outline btn-sm" href="${this.urlPlanilha(p.sheetId)}" target="_blank" rel="noopener">↗ Abrir planilha</a>
-            ${p.privada ? `<span class="adm-tag off">restrita (servidor)</span>` : `<button class="btn btn-outline btn-sm" data-teste="${p.id}">🔎 Testar leitura</button>`}
+            ${p.privada ? `<span class="adm-tag off">restrita (servidor)</span>` : `<button class="btn btn-outline btn-sm" data-teste="${p.id}">Testar leitura</button>`}
             ${tTag}
           </div>
         </div>

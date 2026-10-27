@@ -146,7 +146,7 @@ const FeedbackAdv = {
       (linhas.length ? `<div style="display:flex;flex-direction:column;gap:6px">${linhas.join("")}</div>` : `<div class="small-muted">${vazio}</div>`);
     const lin = (html, codKey)=> `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:8px 10px;font-size:13px;${codKey?"cursor:pointer;":""}" ${codKey?`onclick="UI.closeModal();FeedbackAdv.abrirFuncionario('${escapeHtml(codKey)}')"`:""}>${html}</div>`;
     UI.openModal(`
-      <h3 style="margin-top:0">🔔 Alertas</h3>
+      <h3 style="margin-top:0">Alertas</h3>
       ${sec("🔴 Precisam de advertência (3 feedbacks no mesmo motivo)", "#d64545", a.advertir.map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.motivo)}: ${x.fb} feedback(s), ${x.adv} advertência(s) → <strong>${x.pend} advertência(s) a emitir</strong>`, x.codKey)), "Ninguém atingiu 3 feedbacks sem advertência no mesmo motivo.")}
       ${sec("⏳ Período probatório acabando (até "+FB_PROBATORIO_AVISO+" dias)", "#e08a1f", a.probatorio.map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — termina em ${fmtDateBR(x.fim)} (${x.restam===0?"hoje":"faltam "+x.restam+" dia(s)"})`, x.codKey)), "Nenhum probatório vencendo nos próximos dias.")}
       ${sec("📝 Sem feedback há mais de "+FB_DIAS_SEM_FEEDBACK+" dias", "#2f6fce", a.semFeedback.slice(0,40).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${x.dias===null?"nunca recebeu feedback":x.dias+" dias sem feedback"}`, x.codKey)), "Toda a equipe recebeu feedback recentemente.") + (a.semFeedback.length>40 ? `<div class="small-muted">+ ${a.semFeedback.length-40} outros na tabela da aba.</div>` : "")}
@@ -171,8 +171,8 @@ const FeedbackAdv = {
     ov.style.cssText = "position:fixed;inset:0;z-index:2500;background:rgba(7,20,40,.92);display:flex;flex-direction:column;";
     ov.innerHTML = `<div style="display:flex;gap:8px;align-items:center;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;background:#073A7C;color:#fff">
         <div style="flex:1;font-weight:700;font-size:14px">${escapeHtml(titulo||"Documento")}</div>
-        <button class="btn btn-ghost btn-sm" id="anexo-dl" disabled>⬇ Baixar</button>
-        <button class="btn btn-ghost btn-sm" id="anexo-x">✕ Fechar</button></div>
+        <button class="btn btn-ghost btn-sm" id="anexo-dl" disabled>Baixar</button>
+        <button class="btn btn-ghost btn-sm" id="anexo-x">Fechar</button></div>
       <div id="anexo-corpo" style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;color:#fff;padding:8px">Carregando documento...</div>`;
     document.body.appendChild(ov);
     ov.querySelector("#anexo-x").onclick = ()=> this.fecharAnexo();
@@ -206,8 +206,8 @@ const FeedbackAdv = {
   botoesAnexo(url, titulo){
     if(!url) return `<span class="small-muted">sem documento</span>`;
     const u = escapeHtml(url).replace(/'/g, "&#39;"), t = escapeHtml(titulo).replace(/'/g, "&#39;");
-    return `<button type="button" class="btn btn-outline btn-sm" title="Ver sem baixar" onclick="event.stopPropagation();FeedbackAdv.verAnexo('${u}','${t}')">👁</button>
-      <button type="button" class="btn btn-outline btn-sm" title="Baixar" onclick="event.stopPropagation();FeedbackAdv.baixarAnexo('${u}')">⬇</button>`;
+    return `<button type="button" class="btn btn-outline btn-sm" title="Ver sem baixar" aria-label="Ver sem baixar" onclick="event.stopPropagation();FeedbackAdv.verAnexo('${u}','${t}')">${Icons.svg("eye",16)}</button>
+      <button type="button" class="btn btn-outline btn-sm" title="Baixar" aria-label="Baixar" onclick="event.stopPropagation();FeedbackAdv.baixarAnexo('${u}')">${Icons.svg("download",16)}</button>`;
   },
 
   /* ------------------------------------------------------------------ */
@@ -297,7 +297,7 @@ const FeedbackAdv = {
       </div>
 
       <div class="panel">
-        <div class="panel-header"><h3>📈 Histórico de feedbacks e advertências (12 meses)</h3></div>
+        <div class="panel-header"><h3>Histórico de feedbacks e advertências (12 meses)</h3></div>
         <div class="chart-wrap"><canvas id="chart-fbadv-linha"></canvas></div>
       </div>
 
@@ -373,7 +373,7 @@ const FeedbackAdv = {
     const lista = (titulo, arr, fmt, vazio)=> `<div style="flex:1;min-width:230px"><div style="font-weight:800;color:var(--blue-dark);margin-bottom:6px">${titulo}</div>
       ${arr.length ? `<ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.7">${arr.map(e=>`<li><a href="#" onclick="FeedbackAdv.abrirFuncionario('${escapeHtml(e.codKey)}');return false;">${escapeHtml(e.nome)}</a> — ${fmt(e)}</li>`).join("")}</ol>` : `<div class="small-muted">${vazio}</div>`}</div>`;
     return `<div class="panel">
-      <div class="panel-header"><h3>💡 Insights</h3></div>
+      <div class="panel-header"><h3>Insights</h3></div>
       ${ins.bullets.length ? `<ul style="margin:0 0 14px;padding-left:20px;font-size:13.5px;line-height:1.7">${ins.bullets.map(b=>`<li>${b}</li>`).join("")}</ul>` : `<div class="small-muted" style="margin-bottom:12px">Sem destaques no momento.</div>`}
       <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">
         ${lista("🏅 Mais advertências", ins.topAdv, e=>e.adv.length+" advertência(s)", "Nenhuma advertência registrada.")}
@@ -416,7 +416,7 @@ const FeedbackAdv = {
       </div>
 
       <div class="panel">
-        <div class="panel-header"><h3>🚦 Farol por motivo</h3><span class="panel-note">A cada ${FB_A_CADA} feedbacks no mesmo motivo deve ser emitida 1 advertência</span></div>
+        <div class="panel-header"><h3>Farol por motivo</h3><span class="panel-note">A cada ${FB_A_CADA} feedbacks no mesmo motivo deve ser emitida 1 advertência</span></div>
         <div class="table-wrap"><table class="data-table">
           <thead><tr><th>Motivo</th><th>Feedbacks</th><th>Advertências</th><th>A emitir</th><th>Situação</th></tr></thead>
           <tbody>${e.motivos.length ? e.motivos.map(m=>`<tr>
@@ -428,12 +428,12 @@ const FeedbackAdv = {
       </div>
 
       <div class="panel">
-        <div class="panel-header"><h3>📈 Histórico (12 meses)</h3></div>
+        <div class="panel-header"><h3>Histórico (12 meses)</h3></div>
         <div class="chart-wrap"><canvas id="chart-fbadv-func"></canvas></div>
       </div>
 
       <div class="panel">
-        <div class="panel-header"><h3>🗣️ Feedbacks (${e.feedbacks.length})</h3></div>
+        <div class="panel-header"><h3>Feedbacks (${e.feedbacks.length})</h3></div>
         <div class="table-wrap"><table class="data-table">
           <thead><tr><th>Data</th><th>Motivo</th><th>Av. Pessoal</th><th>Av. Gestor</th><th>Desempenho</th><th>Resumo</th><th>Aplicador</th><th>Documento</th></tr></thead>
           <tbody>${e.feedbacks.length ? e.feedbacks.map(r=>`<tr>
@@ -447,7 +447,7 @@ const FeedbackAdv = {
       </div>
 
       <div class="panel">
-        <div class="panel-header"><h3>⚠️ Advertências (${e.adv.length})</h3></div>
+        <div class="panel-header"><h3>Advertências (${e.adv.length})</h3></div>
         <div class="table-wrap"><table class="data-table">
           <thead><tr><th>Data</th><th>Motivo</th><th>Resumo</th><th>Aplicador</th><th>Documento</th></tr></thead>
           <tbody>${e.adv.length ? e.adv.map(r=>`<tr>
@@ -458,7 +458,7 @@ const FeedbackAdv = {
         </table></div>
       </div>
 
-      ${ultAdvComDoc ? `<div class="panel"><div class="panel-header"><h3>📄 Pré-visualização — última advertência com documento (${fmtDateBR(ultAdvComDoc.data)})</h3></div>
+      ${ultAdvComDoc ? `<div class="panel"><div class="panel-header"><h3>Pré-visualização — última advertência com documento (${fmtDateBR(ultAdvComDoc.data)})</h3></div>
         <div id="fbadv-prev" style="height:560px;border:1px solid var(--gray-200);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--gray-500)">Carregando pré-visualização...</div></div>` : ""}
     `;
     Charts.make("chart-fbadv-func", {
