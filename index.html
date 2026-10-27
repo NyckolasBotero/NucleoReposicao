@@ -745,7 +745,7 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
 
 /* ---------- celular / tablet em pé ---------- */
 @media (max-width:899px){
-  body:not(.locked){ padding-bottom:calc(68px + var(--sab)); }
+  body:not(.locked){ padding-bottom:calc(16px + var(--sab)); }
   .hide-sm{ display:none !important; }
   .hide-lg{ display:inline-flex; }
   #app-header{ padding:calc(8px + var(--sat)) 12px 8px; flex-wrap:nowrap; gap:8px; }
@@ -761,6 +761,8 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
     padding:6px 4px calc(6px + var(--sab)); background:var(--white); border-top:1px solid var(--gray-200); border-bottom:none; box-shadow:0 -2px 14px rgba(16,32,64,.10);
   }
   body.locked #main-nav{ display:none !important; }
+  #main-nav, #sub-nav, #sub-nav.show{ display:none !important; }
+  #hdr-theme, #hdr-logout, #btn-refresh-online{ display:none !important; }
   #main-nav .nav-btn{
     flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; padding:6px 2px; min-height:52px;
     font-size:11px; font-weight:700; border-bottom:none; border-radius:10px; color:var(--gray-500);
@@ -884,6 +886,27 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
   </div>
 </aside>
 
+<!-- ===================== MENU LATERAL DIREITO (celular) ===================== -->
+<div id="drawer-scrim"></div>
+<aside id="drawer" aria-label="Menu" aria-hidden="true">
+  <div class="dr-head">
+    <div class="sb-avatar" id="dr-avatar">?</div>
+    <div class="dr-user"><div id="dr-user-name">—</div><div id="dr-user-mat" class="dr-sub"></div></div>
+    <button type="button" class="dr-x" id="dr-close" aria-label="Fechar menu" data-ic="x"></button>
+  </div>
+  <nav id="dr-groups"></nav>
+  <div class="dr-foot">
+    <button type="button" class="dr-act" data-dr="alertas"><span data-ic="bell"></span><span>Alertas</span><span class="alert-badge" id="dr-alertas-n" style="display:none">0</span></button>
+    <button type="button" class="dr-act" data-dr="refresh"><span data-ic="refresh"></span><span>Atualizar dados</span></button>
+    <button type="button" class="dr-act" data-dr="arquivo"><span data-ic="folder"></span><span>Carregar arquivo</span></button>
+    <button type="button" class="dr-act" data-dr="png"><span data-ic="image"></span><span>Exportar PNG</span></button>
+    <button type="button" class="dr-act" data-dr="pdf"><span data-ic="download"></span><span>Exportar PDF</span></button>
+    <button type="button" class="dr-act" data-mov-toggle data-mov-sw role="switch" aria-checked="true"><span data-ic="motion"></span><span data-mov-tx>Animações</span><span class="sw"></span></button>
+    <button type="button" class="dr-act" data-theme-toggle data-theme-sw role="switch" aria-checked="false"><span data-theme-ic></span><span data-theme-tx>Modo claro</span><span class="sw"></span></button>
+    <button type="button" class="dr-act dr-sair" data-dr="sair"><span data-ic="logout"></span><span>Sair</span></button>
+  </div>
+</aside>
+
 <header id="app-header">
   <h1><img id="header-logo" class="header-logo" src="logo-branco.png" alt="Santa Therezinha"><span class="hdr-tx"><small id="hdr-crumb"></small><span id="hdr-title">NÚCLEO REPOSIÇÃO</span></span></h1>
   <div class="header-right">
@@ -896,6 +919,7 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
     <button class="btn btn-ghost hide-sm" id="btn-reload" title="Plano B: carregar o Excel manualmente"><span data-ic="folder"></span><span class="btn-tx">Carregar arquivo</span></button>
     <button class="btn btn-ghost btn-ico hide-lg" id="hdr-theme" data-theme-toggle title="Alternar modo claro/escuro"><span data-theme-ic></span></button>
     <button class="btn btn-ghost btn-ico hide-lg" id="hdr-logout" title="Sair" data-ic="logout"></button>
+    <button class="btn btn-ghost btn-ico hide-lg" id="hdr-menu" aria-label="Abrir menu" aria-expanded="false" aria-controls="drawer" data-ic="menu"></button>
     <input type="file" id="file-input" accept=".xlsx,.xls">
   </div>
 </header>
