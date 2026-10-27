@@ -451,3 +451,62 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
 .pop-in > *:first-child{ animation:popIn 460ms var(--ease-standard) both; }
 #flow-overlay-root.show .flow-backdrop{ animation:fadeIn var(--duration-slow) var(--ease-standard) both; }
 .tst{ animation-timing-function:var(--ease-standard); }
+
+/* ============================ 11. LÍQUIDO ============================
+   preenchimento que sobe, gota que respinga, gelatina ao clicar, indicador que escorre
+   no menu, fundo do menu com bolhas à deriva, vidro líquido e troca de tema em onda */
+:root{ --ease-liquid: cubic-bezier(.34, 1.4, .5, 1); --liq: color-mix(in srgb, var(--blue-med) 17%, transparent); --liq-hi: rgba(255,255,255,.26); }
+
+/* 1) botões: um líquido sobe de baixo e a superfície ondula */
+.btn::before{ content:""; position:absolute; z-index:-1; pointer-events:none; left:50%; top:104%; width:230%; aspect-ratio:1; margin-left:-115%;
+  border-radius:42% 58% 46% 54% / 52% 44% 56% 48%; background:var(--liq); transform:rotate(0deg);
+  transition:top 760ms var(--ease-liquid); animation:liqSpin 7s linear infinite paused; }
+.btn:hover:not(:disabled)::before{ top:-12%; animation-play-state:running; }
+.btn-primary{ --liq: var(--liq-hi); }
+.btn-ghost{ --liq: color-mix(in srgb, var(--blue-med) 14%, transparent); }
+@keyframes liqSpin{ to{ transform:rotate(360deg); } }
+.btn::after{ display:none; }                       /* o líquido substitui o brilho que passava */
+
+/* 2) gelatina ao clicar (a classe é posta pelo JS e sai sozinha) */
+.jelly{ animation:jelly 640ms var(--ease-standard) both !important; }
+@keyframes jelly{
+  0%{ transform:scale(1,1); } 22%{ transform:scale(1.16,.82); } 42%{ transform:scale(.9,1.14); }
+  62%{ transform:scale(1.06,.96); } 80%{ transform:scale(.985,1.02); } 100%{ transform:scale(1,1); } }
+/* a onda do clique vira uma gota que se espalha e se desfaz */
+.rpl{ filter:blur(.6px); animation:drop 820ms var(--ease-decel) forwards; opacity:.32; }
+@keyframes drop{ 0%{ transform:scale(0); border-radius:50%; } 55%{ transform:scale(.62,.7); border-radius:46% 54% 50% 50%; opacity:.28; } 100%{ transform:scale(1); opacity:0; } }
+
+/* 3) menu: o "destaque" é uma gota que escorre até o item (a seleção e o mouse a conduzem) */
+.sb-blob{ position:absolute; left:0; top:0; width:0; height:0; z-index:0; pointer-events:none; border-radius:12px; opacity:0;
+  background:linear-gradient(135deg, rgba(255,255,255,.22), rgba(255,255,255,.1));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 6px 18px -8px rgba(0,0,0,.4);
+  transition:transform 560ms var(--ease-liquid), width 560ms var(--ease-liquid), height 560ms var(--ease-liquid), opacity 200ms; }
+.sb-blob.pronto{ opacity:1; }
+.sb-blob.estica{ animation:blobStretch 560ms var(--ease-standard); }
+@keyframes blobStretch{ 0%{ filter:blur(0); } 40%{ filter:blur(1.4px); } 100%{ filter:blur(0); } }
+@media (min-width:900px){
+  #sb-groups{ position:relative; }
+  #sb-groups .sb-group{ position:relative; z-index:1; }
+  #sb-groups.tem-blob .sb-item:hover, #sb-groups.tem-blob .sb-item.active,
+  #sb-groups.tem-blob .sb-group-btn:hover, #sb-groups.tem-blob .sb-group.current > .sb-group-btn{ background:transparent !important; box-shadow:none; }
+  body.sb-collapsed #sidebar #sb-groups.tem-blob .sb-group.current > .sb-group-btn{ background:transparent !important; }
+
+  /* 4) fundo do menu: bolhas de luz à deriva, como líquido em movimento */
+  #sidebar::before, #sidebar::after{ content:""; position:absolute; z-index:0; pointer-events:none; border-radius:50%; filter:blur(38px); opacity:.6; }
+  #sidebar::before{ width:230px; height:230px; left:-70px; top:22%; background:radial-gradient(circle, #3f86e6 0%, transparent 70%); animation:liqDriftA 17s ease-in-out infinite alternate; }
+  #sidebar::after{ width:210px; height:210px; right:-80px; bottom:14%; background:radial-gradient(circle, rgba(224,138,31,.7) 0%, transparent 70%); animation:liqDriftB 21s ease-in-out infinite alternate; }
+  #sidebar > *{ position:relative; z-index:1; }
+}
+@keyframes liqDriftA{ 0%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(60px,-90px) scale(1.25); } 100%{ transform:translate(10px,120px) scale(.9); } }
+@keyframes liqDriftB{ 0%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(-50px,80px) scale(1.2); } 100%{ transform:translate(-10px,-110px) scale(.95); } }
+
+/* 5) vidro líquido: janelas, avisos e cabeçalho translúcidos, com brilho na borda */
+.modal-box, .tst:not(.tst-welcome){ background:color-mix(in srgb, var(--white) 84%, transparent); -webkit-backdrop-filter:blur(20px) saturate(1.7); backdrop-filter:blur(20px) saturate(1.7);
+  border:1px solid color-mix(in srgb, #fff 45%, transparent); box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -1px 0 rgba(255,255,255,.08), var(--shadow-lg); }
+[data-theme="dark"] .modal-box, [data-theme="dark"] .tst:not(.tst-welcome){ border-color:rgba(255,255,255,.1); box-shadow:inset 0 1px 0 rgba(255,255,255,.12), var(--shadow-lg); }
+.card{ background-image:radial-gradient(220px circle at var(--mx,50%) var(--my,0%), transparent, transparent); }
+.card:hover{ background-image:radial-gradient(240px circle at var(--mx,50%) var(--my,50%), color-mix(in srgb, var(--blue-med) 13%, transparent), transparent 65%); }
+
+/* 6) troca de tema: a nova cor se espalha como uma onda a partir do clique */
+::view-transition-old(root), ::view-transition-new(root){ animation:none; mix-blend-mode:normal; }
+::view-transition-old(root){ z-index:1; } ::view-transition-new(root){ z-index:2; }
