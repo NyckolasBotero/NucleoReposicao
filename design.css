@@ -365,7 +365,7 @@ textarea{ background:var(--white); color:var(--ink); }
   background:linear-gradient(105deg, transparent 25%, rgba(255,255,255,.42) 50%, transparent 75%); transform:translateX(-130%); }
 .btn:hover:not(:disabled)::after{ opacity:1; transform:translateX(130%); transition:transform 700ms var(--ease-standard); }
 .btn:hover:not(:disabled){ transform:translateY(-2px); box-shadow:0 10px 22px -8px rgba(16,32,64,.35); }
-.btn-primary:hover:not(:disabled){ filter:brightness(1.07) saturate(1.1); box-shadow:0 12px 24px -8px color-mix(in srgb, var(--brand) 70%, transparent); }
+.btn-primary:hover:not(:disabled){ filter:brightness(1.07) saturate(1.1); box-shadow:0 12px 24px -8px rgba(224,138,31,.7); }
 .btn-outline:hover:not(:disabled){ background:var(--blue-light); border-color:var(--blue-med); color:var(--blue-med); }
 .btn-ghost:hover:not(:disabled){ box-shadow:0 8px 18px -8px rgba(16,32,64,.3); }
 .btn .ic, .btn svg{ transition:transform var(--duration-slow) var(--ease-spring); }
@@ -455,7 +455,7 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
 /* ============================ 11. LÍQUIDO ============================
    preenchimento que sobe, gota que respinga, gelatina ao clicar, indicador que escorre
    no menu, fundo do menu com bolhas à deriva, vidro líquido e troca de tema em onda */
-:root{ --ease-liquid: cubic-bezier(.34, 1.4, .5, 1); --liq: color-mix(in srgb, var(--blue-med) 17%, transparent); --liq-hi: rgba(255,255,255,.26); }
+:root{ --ease-liquid: cubic-bezier(.34, 1.4, .5, 1); --liq: rgba(47,111,206,.17); --liq-hi: rgba(255,255,255,.26); }
 
 /* 1) botões: um líquido sobe de baixo e a superfície ondula */
 .btn::before{ content:""; position:absolute; z-index:-1; pointer-events:none; left:50%; top:104%; width:230%; aspect-ratio:1; margin-left:-115%;
@@ -463,7 +463,10 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
   transition:top 760ms var(--ease-liquid); animation:liqSpin 7s linear infinite paused; }
 .btn:hover:not(:disabled)::before{ top:-12%; animation-play-state:running; }
 .btn-primary{ --liq: var(--liq-hi); }
-.btn-ghost{ --liq: color-mix(in srgb, var(--blue-med) 14%, transparent); }
+.btn-ghost{ --liq: rgba(47,111,206,.14); }
+[data-theme="dark"]{ --liq: rgba(77,143,239,.2); }
+[data-theme="dark"] .btn-ghost{ --liq: rgba(77,143,239,.18); }
+[data-theme="dark"] .btn-primary{ --liq: var(--liq-hi); }
 @keyframes liqSpin{ to{ transform:rotate(360deg); } }
 .btn::after{ display:none; }                       /* o líquido substitui o brilho que passava */
 
@@ -501,12 +504,17 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
 @keyframes liqDriftB{ 0%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(-50px,80px) scale(1.2); } 100%{ transform:translate(-10px,-110px) scale(.95); } }
 
 /* 5) vidro líquido: janelas, avisos e cabeçalho translúcidos, com brilho na borda */
-.modal-box, .tst:not(.tst-welcome){ background:color-mix(in srgb, var(--white) 84%, transparent); -webkit-backdrop-filter:blur(20px) saturate(1.7); backdrop-filter:blur(20px) saturate(1.7);
-  border:1px solid color-mix(in srgb, #fff 45%, transparent); box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -1px 0 rgba(255,255,255,.08), var(--shadow-lg); }
+.modal-box, .tst:not(.tst-welcome){ background:rgba(255,255,255,.84); -webkit-backdrop-filter:blur(20px) saturate(1.7); backdrop-filter:blur(20px) saturate(1.7);
+  border:1px solid rgba(255,255,255,.45); box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -1px 0 rgba(255,255,255,.08), var(--shadow-lg); }
 [data-theme="dark"] .modal-box, [data-theme="dark"] .tst:not(.tst-welcome){ border-color:rgba(255,255,255,.1); box-shadow:inset 0 1px 0 rgba(255,255,255,.12), var(--shadow-lg); }
 .card{ background-image:radial-gradient(220px circle at var(--mx,50%) var(--my,0%), transparent, transparent); }
-.card:hover{ background-image:radial-gradient(240px circle at var(--mx,50%) var(--my,50%), color-mix(in srgb, var(--blue-med) 13%, transparent), transparent 65%); }
+.card:hover{ background-image:radial-gradient(240px circle at var(--mx,50%) var(--my,50%), rgba(47,111,206,.13), transparent 65%); }
 
 /* 6) troca de tema: a nova cor se espalha como uma onda a partir do clique */
 ::view-transition-old(root), ::view-transition-new(root){ animation:none; mix-blend-mode:normal; }
 ::view-transition-old(root){ z-index:1; } ::view-transition-new(root){ z-index:2; }
+
+[data-theme="dark"] .modal-box, [data-theme="dark"] .tst:not(.tst-welcome){ background:rgba(21,29,43,.84); }
+[data-theme="dark"] .card:hover{ background-image:radial-gradient(240px circle at var(--mx,50%) var(--my,50%), rgba(77,143,239,.14), transparent 65%); }
+/* html2canvas (PDF/PNG) não entende funções de cor modernas: nada de efeito líquido na captura */
+.export-no-anim .btn::before, .export-no-anim .btn::after{ display:none !important; }
