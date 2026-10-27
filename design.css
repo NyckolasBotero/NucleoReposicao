@@ -614,3 +614,5 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
   #load-feed:not(.resumo) .lf-rows:not(:empty){ margin-top:5px; }
   #load-feed.resumo{ width:auto; }
 }
+.cards-grid.cards-meses{ grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+.cards-meses .card-value{ font-size:26px; }
