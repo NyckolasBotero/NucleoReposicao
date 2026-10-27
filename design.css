@@ -638,7 +638,10 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
   }
   body.drawer-open #drawer{ transform:none; visibility:visible; }
   body.drawer-open #drawer-scrim{ opacity:1; pointer-events:auto; }
-  body.drawer-open{ overflow:hidden; }
+  html.drawer-open, body.drawer-open{ overflow:hidden; }
+  /* o fundo não rola com o menu aberto: o menu e a cortina absorvem o gesto; só a lista de grupos rola */
+  #drawer, #drawer-scrim{ touch-action:none; overscroll-behavior:contain; }
+  #dr-groups{ touch-action:pan-y; }
   body.locked #drawer, body.locked #drawer-scrim, body.locked #hdr-menu{ display:none !important; }
 
   .dr-head{ display:flex; align-items:center; gap:10px; padding:14px 14px 12px; border-bottom:1px solid rgba(255,255,255,.14); }
