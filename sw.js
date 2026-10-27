@@ -1,6 +1,6 @@
 /* Núcleo Reposição – funcionamento como aplicativo (PWA) */
 const VERSION = 'nucleo-v2';
-const CORE = ['./', './index.html', './app.js', './admin.js', './design.js', './design.css', './feedbacks.js', './lancamentos.js', './scanner.js', './manifest.json', './icon-192.png', './icon-512.png', './logo.png', './logo-branco.png'];
+const CORE = ['./', './index.html', './app.js', './admin.js', './design.js', './design.css', './feedbacks.js', './retornos.js', './lancamentos.js', './scanner.js', './manifest.json', './icon-192.png', './icon-512.png', './logo.png', './logo-branco.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
