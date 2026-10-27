@@ -291,6 +291,32 @@ const Design = {
     box.addEventListener("scroll", ()=>{ if(sobre) sync(); }, { passive:true });
     agendar();
   },
+  /** dica flutuante (fora do cartão, que corta o que passa da borda): qualquer [data-tip] com HTML escapado */
+  dicas(){
+    let tip = document.getElementById("dica");
+    if(!tip){ tip = document.createElement("div"); tip.id = "dica"; tip.setAttribute("role","tooltip"); document.body.appendChild(tip); }
+    let alvo = null;
+    const posicionar = el=>{
+      const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+      let x = r.left + r.width/2 - w/2, y = r.top - h - 12, abaixo = false;
+      if(y < 8){ y = r.bottom + 12; abaixo = true; }
+      x = Math.max(8, Math.min(innerWidth - w - 8, x));
+      tip.style.left = x + "px"; tip.style.top = y + "px"; tip.classList.toggle("abaixo", abaixo);
+      tip.style.setProperty("--seta", Math.max(14, Math.min(w - 14, r.left + r.width/2 - x)) + "px");
+    };
+    const mostrar = el=>{
+      alvo = el; tip.innerHTML = el.getAttribute("data-tip");
+      tip.classList.remove("on"); tip.style.visibility = "hidden"; tip.style.display = "block";
+      posicionar(el);
+      tip.style.visibility = ""; void tip.offsetWidth; tip.classList.add("on");
+    };
+    const esconder = ()=>{ alvo = null; tip.classList.remove("on"); setTimeout(()=>{ if(!alvo) tip.style.display = "none"; }, 180); };
+    document.addEventListener("mouseover", e=>{ const el = e.target.closest && e.target.closest("[data-tip]"); if(el && el !== alvo) mostrar(el); else if(!el && alvo) esconder(); });
+    document.addEventListener("focusin", e=>{ const el = e.target.closest && e.target.closest("[data-tip]"); if(el) mostrar(el); });
+    document.addEventListener("focusout", ()=> esconder());
+    document.addEventListener("click", e=>{ const el = e.target.closest && e.target.closest("[data-tip]"); if(el && matchMedia("(pointer: coarse)").matches){ alvo === el ? esconder() : mostrar(el); } else if(alvo && !el) esconder(); });
+    addEventListener("scroll", ()=>{ if(!alvo) return; const r = alvo.getBoundingClientRect(); if(r.bottom < 0 || r.top > innerHeight) esconder(); else posicionar(alvo); }, { passive:true });
+  },
   movimento(){
     // 1) onda no ponto do clique
     const alvos = ".btn, .sb-group-btn, .sb-foot-btn, .sb-theme, .toggle-group button, .subnav-btn, .nav-btn, .icon-btn";
@@ -318,6 +344,7 @@ const Design = {
       const r = c.getBoundingClientRect(); c.style.setProperty("--mx", (e.clientX - r.left) + "px"); c.style.setProperty("--my", (e.clientY - r.top) + "px");
     }, { passive:true });
     this.gotaDoMenu();
+    this.dicas();
 
     // 2) menu recolhido: clicar numa aba expande o menu (com o efeito) e já abre o grupo
     const grupos = document.getElementById("sb-groups");
