@@ -113,8 +113,64 @@ const RetornoQ = {
     });
   },
 
+
+  /* ---------------- topo da Auditoria: % geral de Retornos, de Ruas e dos dois ---------------- */
+  mesKey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); },
+  media(a, b){ const v = [a,b].filter(x=>x!=null); return v.length ? v.reduce((s,x)=>s+x,0)/v.length : null; },
+  qRuas(rows){ return rows.length ? AuditOnline.qualidadeDe(rows) : null; },
+  serieGeral(){
+    const meses = new Map();
+    const add = d=>{ if(d){ const k = this.mesKey(d); if(!meses.has(k)) meses.set(k, new Date(d.getFullYear(), d.getMonth(), 1)); } };
+    (AuditOnline.rows||[]).forEach(x=>add(x.data));
+    if(this.dados) this.dados.aud.forEach(x=>add(x.data));
+    const nomes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+    return Array.from(meses.entries()).sort((a,b)=>a[0]<b[0]?-1:1).slice(-18).map(([k,ini])=>{
+      const fim = new Date(ini.getFullYear(), ini.getMonth()+1, 0);
+      const qr = this.dados ? this.calcular(ini, fim).tot : null;
+      const qRet = qr ? qr.qualidade : null;
+      const qRua = this.qRuas((AuditOnline.rows||[]).filter(x=>{ const d = dateOnly(x.data); return d>=ini && d<=fim; }));
+      return { label:nomes[ini.getMonth()]+"/"+String(ini.getFullYear()).slice(2), ret:qRet, rua:qRua, geral:this.media(qRet, qRua) };
+    });
+  },
+  renderTopo(){
+    const box = document.getElementById("aud-topo"); if(!box) return;
+    const st = AuditOnline.state, ini = st.dataInicial, fim = st.dataFinal;
+    const rowsPer = (AuditOnline.rows||[]).filter(x=>{ const d = dateOnly(x.data); return (!ini || d>=dateOnly(ini)) && (!fim || d<=dateOnly(fim)); });
+    const qRua = this.qRuas(rowsPer);
+    const pronto = !!(this.dados && !this.dados.diag.falta.length);
+    const qRet = pronto ? this.calcular(ini, fim).tot.qualidade : null;
+    const geral = this.media(qRet, qRua);
+    const cl = q=> q==null ? "" : q>=90 ? "pos" : q>=70 ? "warn" : "neg";
+    const f = q=> q==null ? "—" : fmtNum(q,1)+"%";
+    const per = (ini||fim) ? `${ini?fmtDateBR(ini):"início"} até ${fim?fmtDateBR(fim):"hoje"}` : "todo o histórico";
+    const card = (t,v,sub,c,cor)=>`<div class="card ${c}" style="border-left:5px solid ${cor};"><div class="card-label">${t}</div><div class="card-value ${c}" style="font-size:30px">${v}</div><div class="card-sub">${sub}</div></div>`;
+    box.innerHTML = `<div class="panel">
+      <div class="adm-head"><h3 style="margin:0;">Qualidade geral <span class="small-muted" style="font-weight:500">· ${per}</span></h3></div>
+      <div class="cards-grid" style="margin-top:10px;">
+        ${card("% Qualidade · Retornos", f(qRet), pronto ? "auditoria de retornos (Auditoria_Retorno)" : (this.erro ? "não foi possível ler os retornos" : "carregando retornos..."), cl(qRet), "#2f6fce")}
+        ${card("% Qualidade · Ruas", f(qRua), "auditoria de ruas (Auditoria_Ruas)", cl(qRua), "#e08a1f")}
+        ${card("% Qualidade · Geral dos 2", f(geral), "média de Retornos e Ruas", cl(geral), "#1a9c62")}
+      </div>
+      <h4 style="margin:12px 0 8px;font-size:14px;">Evolução mês a mês</h4>
+      <div class="chart-wrap short"><canvas id="chart-qualidade-geral"></canvas></div>
+    </div>`;
+    const s = this.serieGeral(); if(!s.length) return;
+    const pt = (cor)=>({ borderColor:cor, backgroundColor:cor, tension:.3, pointRadius:4, pointHoverRadius:6, spanGaps:true });
+    const vals = s.flatMap(m=>[m.ret,m.rua,m.geral]).filter(v=>v!=null);
+    Charts.make("chart-qualidade-geral", { type:"line",
+      data:{ labels:s.map(m=>m.label), datasets:[
+        { label:"Retornos", data:s.map(m=>m.ret), ...pt("#2f6fce"), datalabels:{ display:false } },
+        { label:"Ruas", data:s.map(m=>m.rua), ...pt("#e08a1f"), datalabels:{ display:false } },
+        { label:"Geral dos 2", data:s.map(m=>m.geral), ...pt("#1a9c62"), borderWidth:3, pointRadius:5, datalabels:{ display:true, align:"top", anchor:"end", color:"#1a9c62", font:{size:11,weight:"700"}, formatter:v=>v==null?"":fmtNum(v,1)+"%" } }
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, layout:{ padding:{ top:20, right:12 } }, interaction:{ mode:"index", intersect:false },
+        plugins:{ legend:{ labels:{font:{size:11}} }, tooltip:{ callbacks:{ label:c=>c.dataset.label+": "+(c.parsed.y==null?"-":fmtNum(c.parsed.y,1)+"%") } } },
+        scales:{ y:{ min:Math.max(0, Math.floor(Math.min(100,...vals)/10)*10-10), max:100, ticks:{ callback:v=>v+"%" }, grid:{color:"rgba(128,140,160,.18)"} }, x:{ grid:{display:false} } } } });
+  },
+
   /* ---------------- tela ---------------- */
   async render(){
+    this.renderTopo();
     const box = document.getElementById("aud-retornos"); if(!box) return;
     if(!this.dados && !this.carregando && !this.erro){
       box.innerHTML = `<div class="panel"><h3 style="margin:0 0 6px;">Qualidade de Retornos</h3><p class="small-muted">Carregando Auditoria_Retorno, Rotina_Retorno e Quadro_Repositores...</p></div>`;
@@ -149,26 +205,17 @@ const RetornoQ = {
         ${card("Erros encontrados", fmtNum(t.erros), "", t.erros?"neg":"")}
         ${card("Qualidade geral", t.qualidade==null?"—":fmtNum(t.qualidade,1)+"%", "", t.qualidade==null?"":(t.qualidade>=90?"pos":t.qualidade>=70?"warn":"neg"))}
       </div>
-      <div class="grid-2">
+      <div>
         <div><h4 style="margin:6px 0 8px;font-size:14px;">Por repositor</h4>
           <div class="table-wrap"><table class="data-table"><thead><tr><th>Repositor</th><th>Ruas</th><th>Retornos</th><th>Auditados</th><th>Erros</th><th>Qualidade</th></tr></thead><tbody>
           ${c.reps.map(p=>`<tr><td>${escapeHtml(p.nome)}</td><td>${p.ruas.join(", ")}</td><td>${fmtNum(p.retornos)}</td><td>${fmtNum(p.auditados)}</td><td>${p.erros?`<strong style="color:var(--red)">${p.erros}</strong>`:"0"}</td><td class="${cor(p.qualidade)}"><strong>${fq(p.qualidade)}</strong></td></tr>`).join("")||`<tr><td colspan="6" class="small-muted">Nenhum repositor com ruas em ${this.abas.quadro}.</td></tr>`}
           </tbody></table></div></div>
-        <div><h4 style="margin:6px 0 8px;font-size:14px;">Por rua</h4>
+        <div style="margin-top:18px;"><h4 style="margin:6px 0 8px;font-size:14px;">Por rua <span class="small-muted" style="font-weight:500">· retornos auditados em cada rua</span></h4>
           <div class="table-wrap"><table class="data-table"><thead><tr><th>Rua</th><th>Repositor(es)</th><th>Retornos</th><th>Auditados</th><th>% audit.</th><th>Erros</th><th>Peso</th><th>Qualidade</th></tr></thead><tbody>
           ${c.ruas.map(r=>`<tr><td><strong>${r.rua}</strong></td><td>${r.reps.map(escapeHtml).join(", ")||'<span class="small-muted">sem repositor</span>'}</td><td>${fmtNum(r.retornos)}</td><td>${fmtNum(r.auditados)}</td><td>${r.cobertura==null?"—":fmtNum(r.cobertura,0)+"%"}</td><td>${r.erros?`<strong style="color:var(--red)">${r.erros}</strong>`:"0"}</td><td>${r.auditados?r.peso:"—"}</td><td class="${cor(r.qualidade)}"><strong>${fq(r.qualidade)}</strong></td></tr>`).join("")||`<tr><td colspan="8" class="small-muted">Sem retornos no período.</td></tr>`}
           </tbody></table></div></div>
       </div>
-      <h4 style="margin:14px 0 8px;font-size:14px;">Qualidade de retornos mês a mês</h4>
-      <div class="chart-wrap short"><canvas id="chart-retornos-mes"></canvas></div>
     </div>`;
     document.getElementById("rq-reload").addEventListener("click", async ()=>{ this.dados=null; this.erro=null; await this.carregar(true); this.render(); });
-    const s = this.serieMensal();
-    Charts.make("chart-retornos-mes", { type:"line",
-      data:{ labels:s.map(m=>m.label), datasets:[{ label:"Qualidade de retornos (%)", data:s.map(m=>m.q), borderColor:Charts.colors.blue, backgroundColor:"rgba(47,111,206,.12)", fill:true, tension:.3, pointRadius:5, pointHoverRadius:7,
-        datalabels:{ display:true, align:"top", anchor:"end", color:Charts.colors.blue, font:{size:11,weight:"700"}, formatter:v=>v==null?"":fmtNum(v,1)+"%" } }] },
-      options:{ responsive:true, maintainAspectRatio:false, layout:{ padding:{ top:20, right:12 } },
-        plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>"Qualidade: "+(c.parsed.y==null?"-":fmtNum(c.parsed.y,1)+"%"), afterBody:i=>{ const m=s[i[0].dataIndex]; return m?["", m.aud+" auditado(s) · "+m.err+" erro(s)"]:[]; } } } },
-        scales:{ y:{ min:Math.max(0, Math.floor(Math.min(100,...s.map(m=>m.q==null?100:m.q))/10)*10-10), max:100, ticks:{ callback:v=>v+"%" }, grid:{color:"rgba(128,140,160,.18)"} }, x:{ grid:{display:false} } } } });
   }
 };

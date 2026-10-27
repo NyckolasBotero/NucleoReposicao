@@ -6220,7 +6220,10 @@ function renderAuditoria(){
       <div class="spacer"></div>
       <button class="btn btn-outline btn-sm" id="aud-clear">Limpar filtros</button>
     </div>
+    <div id="aud-topo"></div>
+    <div class="aud-sec aud-sec-ret"><strong>🔁 Auditoria de Retornos</strong><span>fonte: Auditoria_Retorno + Rotina_Retorno + Quadro_Repositores</span></div>
     <div id="aud-retornos"></div>
+    <div class="aud-sec aud-sec-rua"><strong>📍 Auditoria de Ruas</strong><span>fonte: Auditoria_Ruas · % de qualidade por rua e por repositor</span></div>
     <div id="aud-content"></div>
   `;
   if(typeof RetornoQ!=="undefined") RetornoQ.render();
