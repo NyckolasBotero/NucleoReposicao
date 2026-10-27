@@ -116,13 +116,14 @@ function tabelaPermissoes() {
   let ultCol = Math.max(sh.getLastColumn(), 3);
   const cab = sh.getRange(1, 1, 1, ultCol).getDisplayValues()[0].map(normalizar);
   const achar = function (p) { return cab.findIndex(function (h) { return h.indexOf(p) === 0; }); };
-  const T = { sh: sh, iMat: achar('MATRIC'), iAba: achar('ABA'), iSub: achar('SUBABA'), iSen: achar('SENHA'), iSta: achar('STATUS') };
+  const T = { sh: sh, iMat: achar('MATRIC'), iAba: achar('ABA'), iSub: achar('SUBABA'), iSen: achar('SENHA'), iSta: achar('STATUS'), iNome: achar('NOME') };
   if (T.iMat < 0 || T.iAba < 0 || T.iSub < 0) throw new Error('A aba precisa das colunas Matricula, Aba e Sub Aba.');
   if (T.iSen < 0) { T.iSen = ultCol; sh.getRange(1, ultCol + 1).setValue('Senha').setFontWeight('bold'); ultCol++; }
   if (T.iSta < 0) {
     T.iSta = ultCol; sh.getRange(1, ultCol + 1).setValue('Status').setFontWeight('bold'); ultCol++;
     if (sh.getLastRow() > 1) sh.getRange(2, ultCol, sh.getLastRow() - 1, 1).setValue('Ativo');
   }
+  if (T.iNome < 0) { T.iNome = ultCol; sh.getRange(1, ultCol + 1).setValue('Nome').setFontWeight('bold'); ultCol++; }
   T.ultCol = ultCol;
   T.linhas = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, ultCol).getDisplayValues() : [];
   return T;
@@ -134,7 +135,8 @@ function lerUsuarios() {
   T.linhas.forEach(function (l) {
     const mat = String(l[T.iMat]).trim(), aba = String(l[T.iAba]).trim(), sub = String(l[T.iSub]).trim();
     if (!mat) return;
-    const u = mapa[mat] = mapa[mat] || { matricula: mat, senha: '', bloqueado: false, perms: [], _vistos: {} };
+    const u = mapa[mat] = mapa[mat] || { matricula: mat, nome: '', senha: '', bloqueado: false, perms: [], _vistos: {} };
+    const nm = String(l[T.iNome] || '').trim(); if (nm && !u.nome) u.nome = nm;
     const sen = String(l[T.iSen]).trim();
     if (sen && !u.senha) u.senha = sen;
     if (bloqueado(l[T.iSta])) u.bloqueado = true;
@@ -281,6 +283,8 @@ function nomeDaMatricula(mat) {
   try {
     const cache = CacheService.getScriptCache(), chave = 'nome_' + mat;
     const c = cache.get(chave); if (c !== null) return c;
+    // nome digitado em Administração > Acessos tem prioridade sobre o do QUADRO REP
+    try { const ud = lerUsuarios().usuarios[mat]; if (ud && ud.nome) { cache.put(chave, ud.nome, 21600); return ud.nome; } } catch (e) {}
     const sh = SpreadsheetApp.openById(DADOS_SHEET_ID).getSheetByName('QUADRO REP');
     let nome = '';
     if (sh && sh.getLastRow() > 1) {
@@ -302,7 +306,7 @@ function adminListar() {
   const r = lerUsuarios();
   const lista = Object.keys(r.usuarios).map(function (m) {
     const u = r.usuarios[m];
-    return { matricula: m, nome: nomeDaMatricula(m), status: u.bloqueado ? 'Bloqueado' : 'Ativo', temSenha: !!u.senha, perms: u.perms };
+    return { matricula: m, nome: r.usuarios[m].nome || nomeDaMatricula(m), status: u.bloqueado ? 'Bloqueado' : 'Ativo', temSenha: !!u.senha, perms: u.perms };
   }).sort(function (a, b) { return (a.nome || a.matricula).localeCompare(b.nome || b.matricula); });
   return { ok: true, usuarios: lista };
 }
@@ -312,6 +316,7 @@ function adminSalvar(d, sessao) {
   const orig = String(d.original || '').trim();
   const mat = String(d.matricula || '').replace(/\D/g, '');
   const status = d.status === 'Bloqueado' ? 'Bloqueado' : 'Ativo';
+  const nomeDigitado = String(d.nome || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const perms = (Array.isArray(d.perms) ? d.perms : []).filter(function (p) { return p && p.aba && p.sub; });
   if (!mat) throw new Error('Informe a matrícula.');
   const r = lerUsuarios(), T = r.T;
@@ -331,20 +336,21 @@ function adminSalvar(d, sessao) {
     throw new Error('Você não pode tirar o seu próprio acesso a Administração > Acessos.');
 
   const sh = T.sh, ref = orig || mat;
+  const nomeFinal = nomeDigitado || (atual && atual.nome) || '';  // em branco = mantém o nome já cadastrado
   // apaga as linhas atuais da matrícula (de baixo para cima)
   for (let i = T.linhas.length - 1; i >= 0; i--) if (String(T.linhas[i][T.iMat]).trim() === ref) sh.deleteRow(i + 2);
   // grava as novas (matrícula e senha como TEXTO)
   const linhas = perms.map(function (p) {
     const l = new Array(T.ultCol).fill('');
-    l[T.iMat] = mat; l[T.iAba] = p.aba; l[T.iSub] = p.sub; l[T.iSen] = senha; l[T.iSta] = status;
+    l[T.iMat] = mat; l[T.iAba] = p.aba; l[T.iSub] = p.sub; l[T.iSen] = senha; l[T.iSta] = status; l[T.iNome] = nomeFinal;
     return l;
   });
   if (!linhas.length) { // bloqueado sem permissões: mantém uma linha para não perder a matrícula
-    const l = new Array(T.ultCol).fill(''); l[T.iMat] = mat; l[T.iSen] = senha; l[T.iSta] = 'Bloqueado'; linhas.push(l);
+    const l = new Array(T.ultCol).fill(''); l[T.iMat] = mat; l[T.iSen] = senha; l[T.iSta] = 'Bloqueado'; l[T.iNome] = nomeFinal; linhas.push(l);
   }
   const ini = sh.getLastRow() + 1;
   sh.getRange(ini, 1, linhas.length, T.ultCol).setNumberFormat('@').setValues(linhas);
-  CacheService.getScriptCache().remove('nome_' + mat);
+  CacheService.getScriptCache().remove('nome_' + mat); if (orig) CacheService.getScriptCache().remove('nome_' + orig);
   return { ok: true };
 }
 
