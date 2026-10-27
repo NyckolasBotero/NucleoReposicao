@@ -7147,9 +7147,21 @@ function buildResumoTable(rows, meta, corte){
     </table>`;
 }
 
+/** Acompanhamento Individual: só quem está no quadro atual (independe do filtro da Produção) */
+function employeesQuadroAtual(){
+  const processed = window.APP_STATE.processed;
+  const registry = window.APP_STATE.nameRegistry;
+  const atual = window.APP_STATE.currentTeam;
+  let codes = uniq(processed.p8460.filter(r=>r.tipoos===58).map(r=>r.codKey));
+  if(atual && atual.codes && atual.codes.size) codes = codes.filter(c=>atual.codes.has(c));
+  return codes.map(c=>({ codKey:c, nome: registry.get(c)||c })).sort((a,b)=>a.nome.localeCompare(b.nome));
+}
+
 function renderIndividual(){
   const pane = $("#pane-individual");
-  const all = allEmployeesForProduction();
+  const all = employeesQuadroAtual();
+  // quem foi escolhido antes e saiu do quadro atual deixa de ser selecionado
+  if(individualState.codKey && !all.some(e=>e.codKey===individualState.codKey)) individualState.codKey = null;
   const meta = individualState.meta;
   const corte = individualState.linhaDeCorteMes;
 
@@ -7180,7 +7192,7 @@ function renderIndividual(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>Visão Geral — Todos os Repositores</h3>
+        <h3>Visão Geral — Quadro Atual (${all.length})</h3>
         <div class="panel-actions">
           <span class="panel-note">Meta: ${fmtNum(meta)} O.S. · Corte: ${fmtNum(corte)} O.S. · Ordenado por maior esforço necessário</span>
           <button class="btn btn-outline btn-sm" id="btn-export-individual-pdf">PDF</button>
