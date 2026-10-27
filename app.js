@@ -5821,10 +5821,13 @@ function renderChamada(){
   })();
 
   // mês a mês presença
+  // sempre TODOS os meses fechados (anteriores ao mês corrente), sem depender do filtro de datas do histórico
+  const mesCorrenteKey = ymKey(new Date());
   const byMonth = (() => {
     const m = new Map();
-    histRows.forEach(r=>{
+    processed.quadro.forEach(r=>{
       const k = ymKey(r.data);
+      if(k >= mesCorrenteKey) return;
       if(!m.has(k)) m.set(k, { key:k, date:r.data, PRESENTE:0, FALTA:0, FOLGA:0, FERIAS:0, ATESTADO:0, SEGUNDO_TURNO:0 });
       m.get(k)[r.bucket] = (m.get(k)[r.bucket]||0)+1;
     });
@@ -5833,6 +5836,11 @@ function renderChamada(){
       return { ...d, label: fmtMonthYear(Math.floor(d.key/100), (d.key%100)-1), presencaPct: den>0?base/den*100:null };
     });
   })();
+
+  const tipLinha = (cor, nome, v)=> `<div class="tip-l"><span class="tip-d" style="background:${cor}"></span><span>${nome}</span><b>${fmtNum(v)}</b></div>`;
+  const tipQtds = `<div class="tip-t">Quantidades no período</div>` +
+    tipLinha("#1a9c62","Presentes",s.counts.PRESENTE) + tipLinha("#5b9bd5","Seg. Turno",s.counts.SEGUNDO_TURNO) + tipLinha("#d64545","Faltas",s.counts.FALTA) +
+    tipLinha("#8a97a8","Folgas",s.counts.FOLGA) + tipLinha("#9c6ade","Férias",s.counts.FERIAS) + tipLinha("#e08a1f","Atestados",s.counts.ATESTADO);
 
   const statusColor = { PRESENTE:"var(--green)", FALTA:"var(--red)", FOLGA:"var(--gray-500)", FERIAS:"#9c6ade", ATESTADO:"var(--orange)", SEGUNDO_TURNO:"#5b9bd5", SUSPENSAO:"#8a2be2" };
   const statusLabel = { PRESENTE:"Presente", FALTA:"Falta", FOLGA:"Folga", FERIAS:"Férias", ATESTADO:"Atestado", SEGUNDO_TURNO:"Seg. Turno", SUSPENSAO:"Suspensão" };
@@ -5892,33 +5900,27 @@ function renderChamada(){
 
       ${histMin?`<div class="hint-box">📅 Exibindo: <strong>${fmtDateBR(histMin)}</strong> até <strong>${fmtDateBR(histMax)}</strong> — ${histRows.length} registros</div>`:''}
 
-      <div class="cards-grid">
-        <div class="card ${s.presencaPct>=90?'pos':s.presencaPct<80?'neg':'warn'}">
+      <div class="cards-grid cards-2">
+        <div class="card tip-card ${s.presencaPct>=90?'pos':s.presencaPct<80?'neg':'warn'}" tabindex="0" data-tip="${escapeHtml(tipQtds)}">
           <div class="card-label">% Presença do Período</div>
           <div class="card-value ${s.presencaPct>=90?'pos':s.presencaPct<80?'neg':'warn'}">${s.presencaPct!==null?fmtNum(s.presencaPct,1)+'%':'-'}</div>
           <div class="card-sub">(Pres. + Seg.Turno) ÷ (Pres. + Seg.Turno + Falta)</div>
+          <div class="tip-hint">passe o mouse para ver as quantidades</div>
         </div>
-        <div class="card"><div class="card-label">Presentes</div><div class="card-value">${s.counts.PRESENTE}</div></div>
-        <div class="card"><div class="card-label">Seg. Turno</div><div class="card-value">${s.counts.SEGUNDO_TURNO}</div></div>
-        <div class="card neg"><div class="card-label">Faltas</div><div class="card-value neg">${s.counts.FALTA}</div></div>
-        <div class="card"><div class="card-label">Folgas</div><div class="card-value">${s.counts.FOLGA}</div></div>
-        <div class="card"><div class="card-label">Férias</div><div class="card-value">${s.counts.FERIAS}</div></div>
-        <div class="card"><div class="card-label">Atestados</div><div class="card-value">${s.counts.ATESTADO}</div></div>
-        <div class="card warn"><div class="card-label">Absenteísmo</div><div class="card-value warn">${s.absenteismo!==null?fmtNum(s.absenteismo,1)+'%':'-'}</div></div>
+        <div class="card warn tip-card" tabindex="0" data-tip="${escapeHtml(tipQtds)}">
+          <div class="card-label">Absenteísmo</div>
+          <div class="card-value warn">${s.absenteismo!==null?fmtNum(s.absenteismo,1)+'%':'-'}</div>
+          <div class="card-sub">Faltas ÷ (Pres. + Seg.Turno + Falta)</div>
+          <div class="tip-hint">passe o mouse para ver as quantidades</div>
+        </div>
       </div>
 
-      <div class="grid-2" style="margin-top:14px;">
-        <div class="panel" style="margin-bottom:0;">
-          <div class="panel-header"><h3>Presença Dia a Dia</h3></div>
-          <div class="chart-wrap"><canvas id="chart-presenca-dia"></canvas></div>
-        </div>
-        <div class="panel" style="margin-bottom:0;">
-          <div class="panel-header"><h3>Status (Período)</h3></div>
-          <div class="chart-wrap"><canvas id="chart-status-hist"></canvas></div>
-        </div>
+      <div class="panel" style="margin-top:14px;margin-bottom:0;">
+        <div class="panel-header"><h3>Status (Período)</h3></div>
+        <div class="chart-wrap" style="max-width:520px;margin:0 auto;"><canvas id="chart-status-hist"></canvas></div>
       </div>
       <div class="panel" style="margin-top:14px;margin-bottom:0;">
-        <div class="panel-header"><h3>Presença Mês a Mês</h3></div>
+        <div class="panel-header"><h3>Presença Mês a Mês</h3><span class="small-muted">todos os meses fechados — não muda com o filtro de datas</span></div>
         <div class="chart-wrap"><canvas id="chart-presenca-mes"></canvas></div>
       </div>
 
@@ -5988,23 +5990,6 @@ function renderChamada(){
         formatter:(value)=> value>0?fmtNum(value):"" } } }
   });
 
-  // Gráfico linha dia a dia
-  Charts.make("chart-presenca-dia", {
-    type:"line",
-    data:{ labels: byDay.map(d=>fmtDateBR(d.date)), datasets:[
-      { label:"% Presença", data: byDay.map(d=>d.presencaPct), borderColor:Charts.colors.green, backgroundColor:"rgba(26,156,98,.12)", fill:true, tension:.3, yAxisID:"pct" },
-      { label:"Faltas", data: byDay.map(d=>d.FALTA), borderColor:Charts.colors.red, borderDash:[4,4], tension:0, yAxisID:"qtd" }
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ labels:{font:{size:11}} } },
-      scales:{
-        pct:{ type:"linear", position:"left", min:0, max:100, grid:{color:"#eaeef3"}, ticks:{callback:v=>v+'%',color:"var(--green)"} },
-        qtd:{ type:"linear", position:"right", min:0, grid:{display:false}, ticks:{color:"var(--red)"} },
-        x:{ grid:{display:false}, ticks:{color:"#7a8798",font:{size:10}} }
-      }
-    }
-  });
-
   // Gráfico pizza histórico
   Charts.make("chart-status-hist", {
     type:"doughnut",
@@ -6022,9 +6007,12 @@ function renderChamada(){
     data:{ labels: byMonth.map(m=>m.label), datasets:[
       { label:"Presentes", data: byMonth.map(m=>m.PRESENTE+m.SEGUNDO_TURNO), backgroundColor:Charts.colors.green, borderRadius:4 },
       { label:"Faltas",    data: byMonth.map(m=>m.FALTA), backgroundColor:Charts.colors.red, borderRadius:4 },
-      { label:"Folgas",    data: byMonth.map(m=>m.FOLGA), backgroundColor:Charts.colors.gray, borderRadius:4 }
+      { label:"Folgas",    data: byMonth.map(m=>m.FOLGA), backgroundColor:Charts.colors.gray, borderRadius:4 },
+      { label:"% Presença", type:"line", yAxisID:"pct", data: byMonth.map(m=>m.presencaPct), borderColor:Charts.colors.blue||"#2f6fce", backgroundColor:"#2f6fce", tension:.3, pointRadius:4,
+        datalabels:{ display:true, align:"top", anchor:"end", color:"#2f6fce", font:{size:11,weight:"700"}, formatter:v=> v==null ? "" : fmtNum(v,1)+"%" } }
     ]},
-    options: Charts.baseOptions({ scales:{ x:{stacked:true,grid:{display:false}}, y:{stacked:true} } })
+    options: Charts.baseOptions({ scales:{ x:{stacked:true,grid:{display:false}}, y:{stacked:true},
+      pct:{ type:"linear", position:"right", min:0, max:100, grid:{display:false}, ticks:{ callback:v=>v+"%" } } } })
   });
 }
 
