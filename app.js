@@ -80,8 +80,8 @@ const Nav = {
     const box = document.getElementById("sb-groups"); if(!box) return;
     box.innerHTML = this.views().map(v=>`
       <div class="sb-group${UI.currentView===v.id?' open':''}" data-view="${v.id}">
-        <button type="button" class="sb-group-btn" data-toggle="${v.id}"><span class="sb-ic">${v.icon}</span><span class="sb-gl">${escapeHtml(v.aba)}</span><span class="sb-caret">▾</span></button>
-        <div class="sb-items">${this.items(v.id).map(it=>`<button type="button" class="sb-item" data-view="${v.id}" data-pane="${it.id}">${escapeHtml(it.label)}</button>`).join("")}</div>
+        <button type="button" class="sb-group-btn" data-toggle="${v.id}" title="${escapeHtml(v.aba)}"><span class="sb-ic">${Icons.forNav(v.id)}</span><span class="sb-gl">${escapeHtml(v.aba)}</span><span class="sb-caret">${Icons.svg("caret")}</span></button>
+        <div class="sb-items"><div class="sb-items-in">${this.items(v.id).map(it=>`<button type="button" class="sb-item" data-view="${v.id}" data-pane="${it.id}"><span class="sb-ii">${Icons.forNav(it.id)}</span><span class="sb-il">${escapeHtml(it.label)}</span></button>`).join("")}</div></div>
       </div>`).join("");
     box.querySelectorAll("[data-toggle]").forEach(b=> b.addEventListener("click", ()=> b.parentElement.classList.toggle("open")));
     box.querySelectorAll(".sb-item").forEach(b=> b.addEventListener("click", ()=> UI.goTo(b.dataset.view, b.dataset.pane)));
@@ -89,8 +89,8 @@ const Nav = {
 
   renderBottom(){
     const bar = document.getElementById("main-nav"); if(!bar) return;
-    bar.innerHTML = this.views().map(v=>`<button type="button" class="nav-btn" data-view="${v.id}"><span class="nb-ic">${v.icon}</span><span class="nb-tx">${escapeHtml(v.aba)}</span></button>`).join("") +
-      `<button type="button" class="nav-btn nav-menu" id="nav-menu-btn"><span class="nb-ic">👤</span><span class="nb-tx">Conta</span></button>`;
+    bar.innerHTML = this.views().map(v=>`<button type="button" class="nav-btn" data-view="${v.id}"><span class="nb-ic">${Icons.forNav(v.id)}</span><span class="nb-tx">${escapeHtml(v.aba)}</span></button>`).join("") +
+      `<button type="button" class="nav-btn nav-menu" id="nav-menu-btn"><span class="nb-ic">${Icons.svg("user")}</span><span class="nb-tx">Conta</span></button>`;
     bar.querySelectorAll(".nav-btn[data-view]").forEach(b=> b.addEventListener("click", ()=> UI.goTo(b.dataset.view)));
     document.getElementById("nav-menu-btn").addEventListener("click", ()=> this.openAccount());
   },
@@ -115,7 +115,7 @@ const Nav = {
   // destaca a sub aba atual e mostra o título no cabeçalho
   sync(){
     document.querySelectorAll(".sb-item").forEach(b=> b.classList.toggle("active", b.dataset.view===UI.currentView && b.dataset.pane===UI.currentPane));
-    document.querySelectorAll(".sb-group").forEach(g=>{ if(g.dataset.view===UI.currentView) g.classList.add("open"); });
+    document.querySelectorAll(".sb-group").forEach(g=>{ if(g.dataset.view===UI.currentView) g.classList.add("open"); g.classList.toggle("current", g.dataset.view===UI.currentView); });
     document.querySelectorAll("#main-nav .nav-btn[data-view]").forEach(b=> b.classList.toggle("active", b.dataset.view===UI.currentView));
     const it = (UI.subnavConfig[UI.currentView]||[]).find(i=>i.id===UI.currentPane);
     const v = NAV_VIEWS.find(x=>x.id===UI.currentView);
@@ -134,17 +134,19 @@ const Nav = {
       <h3 style="margin-top:0;">${escapeHtml(nome)}</h3>
       <p class="small-muted">${u.legacy ? "Modo provisório (senha única)" : "Matrícula "+escapeHtml(u.matricula||"")}</p>
       <div class="acct-actions">
-        <button type="button" class="btn btn-outline" onclick="Nav.acao('refresh')">🔄 Atualizar dados</button>
-        <button type="button" class="btn btn-outline" onclick="Nav.acao('arquivo')">📂 Carregar arquivo (plano B)</button>
-        <button type="button" class="btn btn-outline" onclick="Nav.acao('png')">⤓ Exportar PNG</button>
-        <button type="button" class="btn btn-outline" onclick="Nav.acao('pdf')">⤓ Exportar PDF</button>
-        <button type="button" class="btn btn-primary" onclick="Nav.acao('sair')">⏻ Sair</button>
+        <button type="button" class="btn btn-outline" onclick="Nav.acao('refresh')">${Icons.svg("refresh")} Atualizar dados</button>
+        <button type="button" class="btn btn-outline" onclick="Nav.acao('arquivo')">${Icons.svg("folder")} Carregar arquivo (plano B)</button>
+        <button type="button" class="btn btn-outline" onclick="Nav.acao('tema')">${Icons.svg(Design.escuro()?"sun":"moon")} ${Design.escuro()?"Modo claro":"Modo escuro"}</button>
+        <button type="button" class="btn btn-outline" onclick="Nav.acao('png')">${Icons.svg("image")} Exportar PNG</button>
+        <button type="button" class="btn btn-outline" onclick="Nav.acao('pdf')">${Icons.svg("download")} Exportar PDF</button>
+        <button type="button" class="btn btn-primary" onclick="Nav.acao('sair')">${Icons.svg("logout")} Sair</button>
       </div>`);
   },
   acao(a){
     UI.closeModal();
     if(a==="refresh") UI.carregarOnline();
     else if(a==="arquivo") document.getElementById("file-input").click();
+    else if(a==="tema") Design.alternarTema();
     else if(a==="png") Export.toPNG();
     else if(a==="pdf") Export.toPDF();
     else if(a==="sair") Auth.logout();
@@ -319,7 +321,8 @@ const DEFAULT_COMMISSION_CONFIG = {
 const $ = (sel, ctx) => (ctx||document).querySelector(sel);
 const $all = (sel, ctx) => Array.from((ctx||document).querySelectorAll(sel));
 
-function toast(msg, type){
+function toast(msg, type, opts){
+  if(window.Design) return Design.toast(msg, type, opts);
   const el = $("#toast");
   el.textContent = msg;
   el.className = "show" + (type ? " "+type : "");
@@ -635,7 +638,7 @@ const ImportLog = {
           ${comAlerta.length ? `<div class="warn-box" style="margin-bottom:18px;">${comAlerta.map(s=>escapeHtml(s.msg)).join("<br>")}</div>` : ``}
 
           <div class="flow-log-actions">
-            <button class="btn btn-outline" id="flow-btn-outro">📂 Carregar outro arquivo</button>
+            <button class="btn btn-outline" id="flow-btn-outro">Carregar outro arquivo</button>
             <button class="btn btn-primary" id="flow-btn-entrar">Acessar Dashboard →</button>
           </div>
         </div>
@@ -2981,7 +2984,7 @@ const Charts = {
   defaultDatalabels(){
     return {
       display: "auto",
-      color: "#123A6B",
+      color: Design.cores().rotulo,
       font: { size: 10, weight: "700" },
       anchor: "end",
       align: "top",
@@ -3000,16 +3003,17 @@ const Charts = {
 
   baseOptions(extra){
     extra = extra || {};
+    const cor = Design.cores();
     const defaults = {
       responsive:true, maintainAspectRatio:false,
       plugins:{
-        legend:{ labels:{ font:{ size:11 }, color:"#4a5568" } },
-        tooltip:{ backgroundColor:"#123a6b", padding:10, titleFont:{size:12}, bodyFont:{size:12} },
+        legend:{ labels:{ font:{ size:11 }, color:cor.texto } },
+        tooltip:{ backgroundColor:cor.tooltip, padding:10, titleFont:{size:12}, bodyFont:{size:12} },
         datalabels: this.defaultDatalabels()
       },
       scales:{
-        x:{ grid:{ display:false }, ticks:{ color:"#7a8798", font:{size:11} } },
-        y:{ grid:{ color:"#eaeef3" }, ticks:{ color:"#7a8798", font:{size:11} }, beginAtZero:true }
+        x:{ grid:{ display:false }, ticks:{ color:cor.suave, font:{size:11} } },
+        y:{ grid:{ color:cor.grade }, ticks:{ color:cor.suave, font:{size:11} }, beginAtZero:true }
       }
     };
     const merged = Object.assign({}, defaults, extra);
@@ -3118,7 +3122,7 @@ const FeedbackDoc = {
 
     const el = document.createElement("div");
     el.id = "feedback-pdf-container-" + idx;
-    el.className = "feedback-pdf-container";
+    el.className = "feedback-pdf-container keep-light";
     el.style.cssText = "position:fixed; left:-99999px; top:0; width:1500px; background:#ffffff; font-family:-apple-system,Segoe UI,Arial,sans-serif; color:#1f2937; padding:20px 26px;";
 
     el.innerHTML = `
@@ -3957,7 +3961,10 @@ const UI = {
           const hint = document.getElementById('avaria-sem-arquivo-hint');
           if(hint) hint.remove();
 
-          toast(file.online ? "Dados atualizados do Google Sheets." : "Arquivo carregado com sucesso.","success");
+          const abas = Object.keys(raw||{}).filter(k=>Array.isArray(raw[k]));
+          const linhasTot = abas.reduce((n,k)=>n+raw[k].length,0);
+          toast(file.online ? "Dados atualizados" : "Arquivo carregado", "success", { sub: `${abas.length} abas · ${linhasTot.toLocaleString("pt-BR")} linhas · ${file.online ? "Google Sheets" : file.name}` });
+          if(window.Design) Design.marcarAtualizacao(file.online ? "online" : "arquivo");
           if(jaAberto && Auth.can(this.currentView, this.currentPane)) this.switchView(this.currentView, true, this.currentPane);
           else this.switchView(Nav.firstView()||"indicadores", true);
           $("#file-input").value = "";
@@ -3978,11 +3985,15 @@ const UI = {
       console.error("[Central de Reposição] Erro na etapa:", stage, err);
       LoadingScreen.hide();
       const msg = (err && err.message) ? err.message : String(err);
-      const stackHint = (err && err.stack) ? "\n\nDetalhe técnico (stack):\n" + err.stack.split("\n").slice(0,4).join("\n") : "";
+      const stackHint = (err && err.stack) ? err.stack.split("\n").slice(0,4).join("\n") : "";
       $("#empty-error").innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;white-space:pre-line;">` +
-        `<strong>Falha na etapa: ${escapeHtml(stage)}</strong>\n\n${escapeHtml(msg)}${escapeHtml(stackHint)}` +
+        `<strong>Falha na etapa: ${escapeHtml(stage)}</strong>\n\n${escapeHtml(msg)}` +
+        (stackHint ? `<details style="margin-top:10px;white-space:normal;"><summary style="cursor:pointer;font-weight:700;">Detalhes técnicos</summary><pre style="white-space:pre-wrap;font-size:11.5px;margin:8px 0 0;">${escapeHtml(stackHint)}</pre></details>` : "") +
         `</div>`;
-      toast(file.online ? "Erro ao buscar dados do Google Sheets." : "Erro ao carregar arquivo.","error");
+      toast(file.online ? "Não consegui buscar os dados" : "Não consegui ler o arquivo", "error", {
+        sub: msg.split("\n")[0].slice(0,140),
+        acao: file.online ? { rotulo:"Tentar de novo", fn:()=> UI.carregarOnline() } : null
+      });
       // garante que a interface não fica "meio carregada"
       window.APP_STATE.ready = false;
       $("#file-input").value = "";
@@ -4041,7 +4052,7 @@ const UI = {
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
     if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','lfeedback','ladvertencia','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias'].includes(pane)){
       const el = $("#pane-"+pane);
-      if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">🔄 Buscar dados online</button></div>`;
+      if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">Buscar dados online</button></div>`;
       return;
     }
     const fns = {
@@ -4448,7 +4459,7 @@ function renderProducaoContent(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>🏆 Ranking de Repositores — O.S. 58</h3>
+        <h3>Ranking de Repositores — O.S. 58</h3>
         <div class="panel-actions">
           <label class="small-muted" style="margin-right:6px;">Apenas Repositor (Cargo)?</label>
           <div class="toggle-group" id="prod-ranking-repositor-toggle">
@@ -4463,7 +4474,7 @@ function renderProducaoContent(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>📈 Projeção de Fechamento do Mês</h3>
+        <h3>Projeção de Fechamento do Mês</h3>
         <div class="panel-actions">
           <label class="small-muted">Base:</label>
           <select id="proj-base-select">
@@ -5149,7 +5160,7 @@ function renderFeedbackRankingPanel(){
   return `
     <div class="panel">
       <div class="panel-header">
-        <h3>🏆 Ranking de Repositores</h3>
+        <h3>Ranking de Repositores</h3>
         <div class="panel-actions" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
           <div class="filter-group" style="min-width:auto;">
             <label style="font-size:10px;">Apenas Quadro Atual?</label>
@@ -5165,7 +5176,7 @@ function renderFeedbackRankingPanel(){
               <button data-v="SIM" class="${feedbackOnlyRepositor?'active':''}">Sim</button>
             </div>
           </div>
-          <button class="btn btn-primary btn-sm" id="btn-download-feedback" ${nSel?'':'disabled'}>⬇ Download Feedback (PDF)${nSel>1?` — ${nSel} funcionários`:''}</button>
+          <button class="btn btn-primary btn-sm" id="btn-download-feedback" ${nSel?'':'disabled'}>Download Feedback (PDF)${nSel>1?` — ${nSel} funcionários`:''}</button>
         </div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
@@ -5426,7 +5437,7 @@ function renderQuadro(){
       <div class="panel-header">
         <h3>Quadro Consolidado</h3>
         <div class="panel-actions">
-          <button class="btn btn-outline btn-sm" id="btn-export-quadro-pdf">⬇ Exportar PDF (1 página)</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-quadro-pdf">Exportar PDF (1 página)</button>
         </div>
       </div>
       <div class="table-wrap"><table class="data-table" id="quadro-table">
@@ -5447,7 +5458,7 @@ function renderQuadro(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>🔍 Validador de Quadro — RH</h3>
+        <h3>Validador de Quadro — RH</h3>
         <span class="panel-note">Cole a lista enviada pelo RH e compare com o seu quadro atual</span>
       </div>
       <div class="hint-box">
@@ -5462,7 +5473,7 @@ function renderQuadro(){
 10003928	KETNEY CRISTINE ALVES DOS SANTOS"
           style="flex:1;font-family:monospace;font-size:12px;padding:8px;border:1px solid #dde3ea;border-radius:6px;resize:vertical;"></textarea>
         <div style="display:flex;flex-direction:column;gap:8px;justify-content:flex-start;padding-top:4px;">
-          <button class="btn btn-primary" id="btn-rh-validar">🔍 Validar</button>
+          <button class="btn btn-primary" id="btn-rh-validar">Validar</button>
           <button class="btn btn-outline btn-sm" id="btn-rh-limpar">Limpar</button>
         </div>
       </div>
@@ -5821,10 +5832,10 @@ function renderChamada(){
     <!-- ===== BLOCO 1: RESUMO ESTÁTICO DO QUADRO ATUAL ===== -->
     <div class="panel" style="border-left:4px solid var(--blue-med);">
       <div class="panel-header">
-        <h3>📋 Quadro Atual — ${fmtDateBR(maxDate)} (estático)</h3>
+        <h3>Quadro Atual — ${fmtDateBR(maxDate)} (estático)</h3>
         <div class="panel-actions">
-          <button class="btn btn-outline btn-sm" id="btn-export-quadroatual-pdf">⬇ PDF</button>
-          <button class="btn btn-outline btn-sm" id="btn-export-quadroatual-png">⬇ PNG</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-quadroatual-pdf">PDF</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-quadroatual-png">PNG</button>
         </div>
       </div>
       <div class="cards-grid" style="margin-bottom:16px;">
@@ -5862,7 +5873,7 @@ function renderChamada(){
     <!-- ===== BLOCO 2: HISTÓRICO FILTRADO ===== -->
     <div class="panel">
       <div class="panel-header" style="flex-direction:column;align-items:flex-start;gap:10px;">
-        <h3>📅 Histórico de Presença</h3>
+        <h3>Histórico de Presença</h3>
         <div class="toolbar" style="padding:0;border:none;background:none;box-shadow:none;margin:0;">
           <div class="filter-group"><label>Data Inicial</label><input type="date" id="cham-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
           <div class="filter-group"><label>Data Final</label><input type="date" id="cham-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
@@ -5905,7 +5916,7 @@ function renderChamada(){
       <!-- 3 tabelas de ranking -->
       <div class="grid-3" style="margin-top:14px;">
         <div class="panel" style="margin-bottom:0;">
-          <div class="panel-header"><h3>⚠️ Ranking Faltantes</h3></div>
+          <div class="panel-header"><h3>Ranking Faltantes</h3></div>
           <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
             <table class="data-table">
               <thead><tr><th>Código</th><th>Funcionário</th><th>Faltas</th></tr></thead>
@@ -5914,7 +5925,7 @@ function renderChamada(){
           </div>
         </div>
         <div class="panel" style="margin-bottom:0;">
-          <div class="panel-header"><h3>🔁 Ranking Seg. Turno</h3></div>
+          <div class="panel-header"><h3>Ranking Seg. Turno</h3></div>
           <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
             <table class="data-table">
               <thead><tr><th>Código</th><th>Funcionário</th><th>Qtd</th></tr></thead>
@@ -5923,7 +5934,7 @@ function renderChamada(){
           </div>
         </div>
         <div class="panel" style="margin-bottom:0;">
-          <div class="panel-header"><h3>🏥 Ranking Atestados</h3></div>
+          <div class="panel-header"><h3>Ranking Atestados</h3></div>
           <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
             <table class="data-table">
               <thead><tr><th>Código</th><th>Funcionário</th><th>Qtd</th></tr></thead>
@@ -6368,7 +6379,7 @@ function renderComissao(){
     ${commissionOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
 
     <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
-      <div class="panel-header"><h3>🔍 Desconto por % Qualidade</h3></div>
+      <div class="panel-header"><h3>Desconto por % Qualidade</h3></div>
       <div class="toolbar" style="margin-bottom:0;">
         <div class="filter-group">
           <label>Aplicar desconto por qualidade?</label>
@@ -6409,9 +6420,9 @@ function renderComissao(){
           <button class="btn btn-outline btn-sm" id="btn-toggle-col-valorponto">${commissionShowValorPonto?'Ocultar':'Mostrar'} Valor/Ponto</button>
           <button class="btn btn-outline btn-sm" id="btn-toggle-col-regra">${commissionShowRegra?'Ocultar':'Mostrar'} Regra</button>
           <button class="btn btn-outline btn-sm" id="btn-toggle-col-comissao">${commissionShowComissaoTotal?'Ocultar':'Mostrar'} Comissão</button>
-          <button class="btn btn-outline btn-sm" id="btn-export-comissao-pdf">⬇ PDF</button>
-          <button class="btn btn-outline btn-sm" id="btn-export-comissao-png">⬇ PNG</button>
-          <button class="btn btn-primary btn-sm" id="btn-export-comissao-xlsx">⬇ Exportar Excel</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-comissao-pdf">PDF</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-comissao-png">PNG</button>
+          <button class="btn btn-primary btn-sm" id="btn-export-comissao-xlsx">Exportar Excel</button>
         </div>
       </div>
       <p class="panel-note">Pontos = Produção (O.S. 58)${commissionConsiderarMissoes==='SIM'?' + Missões (O.S. equivalente: Média Histórica do colaborador × Tempo da Missão ÷ 9h, arredondado para baixo)':' — missões NÃO somadas (toggle "Considerar Missões?" está em Não)'}.</p>
@@ -6853,11 +6864,11 @@ function renderCronograma(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>📅 Cronograma Dia / Reposição</h3>
+        <h3>Cronograma Dia / Reposição</h3>
         <div class="panel-actions">
-          <button class="btn btn-outline btn-sm" id="btn-export-cronograma-pdf">⬇ PDF</button>
-          <button class="btn btn-outline btn-sm" id="btn-export-cronograma-png">⬇ PNG</button>
-          <button class="btn btn-primary btn-sm" id="btn-export-cronograma-xlsx">⬇ Excel</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-cronograma-pdf">PDF</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-cronograma-png">PNG</button>
+          <button class="btn btn-primary btn-sm" id="btn-export-cronograma-xlsx">Excel</button>
         </div>
       </div>
       <div id="cronograma-timeline-area">
@@ -7148,7 +7159,7 @@ function renderIndividual(){
 
   pane.innerHTML = `
     <div class="panel">
-      <div class="panel-header"><h3>🔍 Acompanhamento Individual — Selecionar Funcionário</h3></div>
+      <div class="panel-header"><h3>Acompanhamento Individual — Selecionar Funcionário</h3></div>
       <div class="toolbar">
         <div class="filter-group" style="flex:2;">
           <label>Funcionário</label>
@@ -7171,10 +7182,10 @@ function renderIndividual(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>📊 Visão Geral — Todos os Repositores</h3>
+        <h3>Visão Geral — Todos os Repositores</h3>
         <div class="panel-actions">
           <span class="panel-note">Meta: ${fmtNum(meta)} O.S. · Corte: ${fmtNum(corte)} O.S. · Ordenado por maior esforço necessário</span>
-          <button class="btn btn-outline btn-sm" id="btn-export-individual-pdf">⬇ PDF</button>
+          <button class="btn btn-outline btn-sm" id="btn-export-individual-pdf">PDF</button>
         </div>
       </div>
       <div id="ind-visao-geral-panel">
@@ -7252,7 +7263,7 @@ function renderIndividualResult(){
   el.innerHTML = `
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 ${escapeHtml(d.nome)}</h3>
+        <h3>${escapeHtml(d.nome)}</h3>
         <span class="panel-note">Referência: ${fmtDateBR(Production.maxDataDate())} · Meta: ${fmtNum(d.meta)} O.S./mês · ${fmtNum(d.metaDia,1)} O.S./dia · Corte: ${fmtNum(corte)}</span>
       </div>
 
@@ -7531,7 +7542,7 @@ function renderTurnover(){
     <!-- ======================== FILTRO DE PERÍODO — controla todo o painel ======================== -->
     <div class="panel" style="border:1.5px solid #2f6fce;background:#eff6ff;">
       <div class="panel-header">
-        <h3>🗓️ Filtro de Período</h3>
+        <h3>Filtro de Período</h3>
         <span class="panel-note" style="font-weight:700;color:#123a6b;">Ativo: ${periodoLabel}</span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
@@ -7549,7 +7560,7 @@ function renderTurnover(){
     <!-- ======================== RESUMO + CARDS ======================== -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📊 Turnover — Painel de Controle</h3>
+        <h3>Turnover — Painel de Controle</h3>
         <div class="panel-actions">
           <label style="font-size:11px;color:#7a8798;">Período de análise:</label>
           <select id="tv-periodo-select" style="font-size:12px;padding:4px 8px;border:1px solid #dde3ea;border-radius:6px;">
@@ -7591,7 +7602,7 @@ function renderTurnover(){
     <!-- ======================== TRANSFERÊNCIAS — DETALHAMENTO ======================== -->
     <div class="panel">
       <div class="panel-header">
-        <h3>🔀 Transferências — Detalhamento</h3>
+        <h3>Transferências — Detalhamento</h3>
         <span class="panel-note">Filtra por DATA TRANSFERENCIA · independente do período de análise acima</span>
       </div>
       <div class="toolbar" style="margin-bottom:10px;">
@@ -7620,7 +7631,7 @@ function renderTurnover(){
     <!-- ======================== TABELA GERAL ======================== -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 Quadro Geral — ${d.filtroAtivo?'Funcionários com Evento no Período':'Todos os Funcionários'}</h3>
+        <h3>Quadro Geral — ${d.filtroAtivo?'Funcionários com Evento no Período':'Todos os Funcionários'}</h3>
         <span class="panel-note">${d.tvFiltrado.length} registro(s)${d.filtroAtivo?' no período filtrado':''} · ${d.quadroCadastrado} ativos no total</span>
       </div>
       <div class="table-wrap">
@@ -7677,7 +7688,7 @@ function renderTurnover(){
     <!-- ======================== CONFERÊNCIA ======================== -->
     ${d.noTurnoverNaoChamada.length || d.naChamadaNaoTurnover.length ? `
     <div class="panel">
-      <div class="panel-header"><h3>🔎 Conferência — Turnover × Chamada</h3></div>
+      <div class="panel-header"><h3>Conferência — Turnover × Chamada</h3></div>
       ${d.noTurnoverNaoChamada.length ? `
         <div style="font-size:12px;font-weight:700;color:#d64545;margin-bottom:6px;">❌ Ativo no Turnover mas NÃO encontrado na Chamada (${d.noTurnoverNaoChamada.length})</div>
         <div class="table-wrap" style="margin-bottom:14px;">
@@ -7824,7 +7835,7 @@ function renderFerias(){
   pane.innerHTML = `
     <div class="panel">
       <div class="panel-header">
-        <h3>🏖️ Férias — Painel de Controle</h3>
+        <h3>Férias — Painel de Controle</h3>
         <span class="panel-note">Cálculo: Data de Contratação + 12 meses (fecha 1 ano) → férias programadas para o mês seguinte · ciclo se repete a cada 12 meses · ciclos vencidos há mais de 4 meses são presumidos como já tirados e avançam pro próximo ano</span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -7840,9 +7851,9 @@ function renderFerias(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 Funcionários ${FeriasState.filtro ? '— filtro: '+escapeHtml(d.linhas.find(l=>l.bucket===FeriasState.filtro)?.bucketLabel||'') : '(todos)'}</h3>
+        <h3>Funcionários ${FeriasState.filtro ? '— filtro: '+escapeHtml(d.linhas.find(l=>l.bucket===FeriasState.filtro)?.bucketLabel||'') : '(todos)'}</h3>
         <span class="panel-note">${linhasFiltradas.length} de ${d.total} · ordenado por urgência (vencidas primeiro)</span>
-        ${FeriasState.filtro ? `<button onclick="FeriasState.filtro=null;renderFerias();" style="padding:5px 12px;font-size:11px;font-weight:700;border-radius:6px;border:1.5px solid #7a8798;background:#fff;color:#7a8798;cursor:pointer;">✕ Limpar filtro</button>` : ''}
+        ${FeriasState.filtro ? `<button onclick="FeriasState.filtro=null;renderFerias();" style="padding:5px 12px;font-size:11px;font-weight:700;border-radius:6px;border:1.5px solid #7a8798;background:#fff;color:#7a8798;cursor:pointer;">Limpar filtro</button>` : ''}
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -8679,7 +8690,7 @@ function renderAvaria() {
     <!-- UPLOAD -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📦 ${tituloAba}</h3>
+        <h3>${tituloAba}</h3>
         <div class="panel-actions">
           <label class="btn btn-primary" style="cursor:pointer;">
             📂 Carregar ZIP de XMLs
@@ -8704,7 +8715,7 @@ function renderAvaria() {
     <!-- FILTROS -->
     <div class="panel">
       <div class="panel-header" style="margin-bottom:8px;">
-        <h3>🔎 Filtros</h3>
+        <h3>Filtros</h3>
         <div class="panel-actions" style="flex-wrap:wrap;gap:6px;">
           ${(()=>{
             // calcula atalhos baseado nas datas disponíveis nos XMLs
@@ -8764,7 +8775,7 @@ function renderAvaria() {
           <label>Busca (NF, motivo, arquivo)</label>
           <input type="text" id="av-busca" placeholder="Pesquisar..." value="${AvState.filtro.busca}">
         </div>
-        <button class="btn btn-outline btn-sm" id="av-limpar-filtro">✕ Limpar</button>
+        <button class="btn btn-outline btn-sm" id="av-limpar-filtro">Limpar</button>
       </div>
     </div>
 
@@ -8788,7 +8799,7 @@ function renderAvaria() {
     <!-- COMPARATIVO MÊS vs MÊS ANTERIOR -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📅 Comparativo — Mês Atual vs Anterior${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
+        <h3>Comparativo — Mês Atual vs Anterior${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
         <div class="panel-actions">
           <label style="font-size:11px;color:#7a8798;">Mesmo período:</label>
           <div class="toggle-group">
@@ -8841,19 +8852,19 @@ function renderAvaria() {
 
     <!-- GRÁFICOS -->
     <div class="panel av-page-break">
-      <div class="panel-header"><h3>📈 Valor Total por Mês${AvState.filtro.categoria?' — '+AvState.filtro.categoria:''}</h3></div>
+      <div class="panel-header"><h3>Valor Total por Mês${AvState.filtro.categoria?' — '+AvState.filtro.categoria:''}</h3></div>
       <div class="chart-wrap" style="height:280px;"><canvas id="av-chart-mensal"></canvas></div>
       <div id="av-table-mensal"></div>
     </div>
 
     <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
       <div class="panel">
-        <div class="panel-header"><h3>📊 Notas e Itens por Mês</h3></div>
+        <div class="panel-header"><h3>Notas e Itens por Mês</h3></div>
         <div class="chart-wrap" style="height:240px;"><canvas id="av-chart-notas"></canvas></div>
       </div>
       <div class="panel">
         <div class="panel-header">
-          <h3>📅 Valor por Ano (todos os dados)</h3>
+          <h3>Valor por Ano (todos os dados)</h3>
         </div>
         <div class="chart-wrap" style="height:240px;"><canvas id="av-chart-anual"></canvas></div>
         <div id="av-table-anual"></div>
@@ -8861,14 +8872,14 @@ function renderAvaria() {
     </div>
 
     <div class="panel">
-      <div class="panel-header"><h3>📆 Semanas do Último Mês com Dados</h3></div>
+      <div class="panel-header"><h3>Semanas do Último Mês com Dados</h3></div>
       <div class="chart-wrap" style="height:240px;"><canvas id="av-chart-semanas"></canvas></div>
       <div id="av-table-semanas"></div>
     </div>
 
     <!-- RANKING DE CATEGORIAS -->
     <div class="panel">
-      <div class="panel-header"><h3>📊 Ranking por Categoria</h3></div>
+      <div class="panel-header"><h3>Ranking por Categoria</h3></div>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>#</th><th>Categoria</th><th>Notas</th><th>Itens</th><th>Valor Produtos</th><th>Valor Total</th><th>Média/Nota</th></tr></thead>
@@ -8889,7 +8900,7 @@ function renderAvaria() {
     <!-- TABELA DE NOTAS -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 Notas Fiscais — ${totalNotas} registros${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
+        <h3>Notas Fiscais — ${totalNotas} registros${AvState.filtro.categoria?' · '+AvState.filtro.categoria:''}</h3>
       </div>
       <div class="table-wrap">
         <table class="data-table" style="font-size:11.5px;">
@@ -8982,8 +8993,8 @@ function avRenderDetalhe(nota) {
   el.innerHTML = `
     <div class="panel" style="border-left:4px solid #2f6fce;">
       <div class="panel-header">
-        <h3>📄 Detalhe NF-e ${escapeHtml(nota.nNF)} — Série ${escapeHtml(nota.serie)}</h3>
-        <button class="btn btn-outline btn-sm" onclick="AvState.detalheNota=null;document.getElementById('av-detalhe').innerHTML='';">✕ Fechar</button>
+        <h3>Detalhe NF-e ${escapeHtml(nota.nNF)} — Série ${escapeHtml(nota.serie)}</h3>
+        <button class="btn btn-outline btn-sm" onclick="AvState.detalheNota=null;document.getElementById('av-detalhe').innerHTML='';">Fechar</button>
       </div>
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
         <div style="flex:1;min-width:220px;">
@@ -9318,7 +9329,7 @@ function renderOperadores() {
     <!-- FILTROS -->
     <div class="panel">
       <div class="panel-header">
-        <h3>⚙️ Produção Operadores — O.S. Tipo 61 (8457)</h3>
+        <h3>Produção Operadores — O.S. Tipo 61 (8457)</h3>
         <div class="panel-actions" style="gap:6px;flex-wrap:wrap;">
           ${(()=>{
             const h=new Date(), y=h.getFullYear(), m=h.getMonth();
@@ -9351,7 +9362,7 @@ function renderOperadores() {
 
     <!-- CARDS RESUMO -->
     <div class="panel">
-      <div class="panel-header"><h3>📊 Resumo: ${fmtDateBR(iniAtual)} a ${fmtDateBR(fimAtual)}
+      <div class="panel-header"><h3>Resumo: ${fmtDateBR(iniAtual)} a ${fmtDateBR(fimAtual)}
         <span style="margin-left:8px;font-size:11px;font-weight:600;padding:2px 10px;border-radius:20px;
           background:${RelState.apenasRep?'#0b2647':'#5b92e5'};color:#fff;">
           ${RelState.apenasRep?'👥 Apenas Reposição':'🌐 Todos'}
@@ -9386,13 +9397,13 @@ function renderOperadores() {
 
     <!-- GRÁFICO COMPARATIVO -->
     <div class="panel">
-      <div class="panel-header"><h3>📈 Evolução de O.S. — Atual vs Anterior</h3></div>
+      <div class="panel-header"><h3>Evolução de O.S. — Atual vs Anterior</h3></div>
       <div style="height:240px;"><canvas id="op-chart-comp"></canvas></div>
     </div>
 
     <!-- MÉDIAS POR RUA -->
     <div class="panel">
-      <div class="panel-header"><h3>📊 Média de O.S. por Rua</h3></div>
+      <div class="panel-header"><h3>Média de O.S. por Rua</h3></div>
       <div class="table-wrap">
         <table class="data-table" style="font-size:11.5px;">
           <thead><tr><th>Rua</th><th>Total O.S.</th><th>Prédios Atendidos</th><th>Média O.S./Prédio</th><th>% do Total</th></tr></thead>
@@ -9420,7 +9431,7 @@ function renderOperadores() {
 
     <!-- MÉDIAS POR BLOCO -->
     <div class="panel">
-      <div class="panel-header"><h3>🏢 Média de O.S. por Bloco de Prédios</h3></div>
+      <div class="panel-header"><h3>Média de O.S. por Bloco de Prédios</h3></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
         ${blocosComDados.map(b=>{
           const d=blocoMap.get(b);
@@ -9463,7 +9474,7 @@ function renderOperadores() {
     <!-- MAPA DE CALOR RUA × PRÉDIO -->
     <div class="panel av-page-break">
       <div class="panel-header">
-        <h3>🔥 Mapa de Calor — Rua × Prédio (Destino)</h3>
+        <h3>Mapa de Calor — Rua × Prédio (Destino)</h3>
         <span class="panel-note">${ruas.length} ruas · ${predios.length} prédios · ${fmtNum(totalAtual)} O.S. · cor = quantidade</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
@@ -9565,7 +9576,7 @@ function renderOperadores() {
 
     <!-- RANKING OPERADORES -->
     <div class="panel">
-      <div class="panel-header"><h3>🏅 Ranking de Operadores — Atual vs Anterior</h3></div>
+      <div class="panel-header"><h3>Ranking de Operadores — Atual vs Anterior</h3></div>
       <div class="table-wrap">
         <table class="data-table" style="font-size:11.5px;">
           <thead><tr><th>#</th><th>Operador</th><th>O.S. Atual</th><th>QTD</th><th>Dias</th><th>O.S./Dia</th><th>O.S. Anterior</th><th>Var. Abs.</th><th>Var. %</th></tr></thead>
@@ -9640,8 +9651,8 @@ function opHeatClick(ruaVal, predVal, xField, yField) {
   const totalQ=rows.reduce((s,r)=>s+(r.qtd||0),0);
   el.innerHTML=`<div class="panel" style="border-left:4px solid #1a4480;">
     <div class="panel-header">
-      <h3>🔍 Rua <strong>${escapeHtml(ruaVal)}</strong> / Prédio <strong>${escapeHtml(predVal)}</strong> — ${rows.length} O.S. · ${fmtNum(totalQ)} unidades</h3>
-      <button class="btn btn-outline btn-sm" onclick="document.getElementById('op-heat-detalhe').innerHTML=''">✕ Fechar</button>
+      <h3>Rua <strong>${escapeHtml(ruaVal)}</strong> / Prédio <strong>${escapeHtml(predVal)}</strong> — ${rows.length} O.S. · ${fmtNum(totalQ)} unidades</h3>
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('op-heat-detalhe').innerHTML=''">Fechar</button>
     </div>
     <div class="table-wrap"><table class="data-table" style="font-size:11.5px;">
       <thead><tr><th>Operador</th><th>O.S.</th></tr></thead>
@@ -9958,10 +9969,10 @@ function renderRelacoes(){
     <!-- FILTROS -->
     <div class="panel pdf-hide-geral">
       <div class="panel-header">
-        <h3>🔗 Relações Rep — Lançamentos por Repositores</h3>
+        <h3>Relações Rep — Lançamentos por Repositores</h3>
         <div class="panel-actions" style="gap:5px;flex-wrap:wrap;">
           ${renderAtalhos(isAtivo('mes_atual')?'mes_atual':isAtivo('mes_ant')?'mes_ant':isAtivo('ano_atual')?'ano_atual':isAtivo('ano_ant')?'ano_ant':!iniStr&&!fimStr?'tudo':null,'relAtalho')}
-          <button onclick="relExportarPDF()" style="padding:5px 14px;font-size:11px;font-weight:700;border-radius:6px;border:1.5px solid #d64545;background:#fff;color:#d64545;cursor:pointer;">📄 Exportar PDF</button>
+          <button onclick="relExportarPDF()" style="padding:5px 14px;font-size:11px;font-weight:700;border-radius:6px;border:1.5px solid #d64545;background:#fff;color:#d64545;cursor:pointer;">Exportar PDF</button>
         </div>
       </div>
       <div class="toolbar">
@@ -10043,7 +10054,7 @@ function renderRelacoes(){
     <!-- TOP PRODUTOS DIA ANTERIOR -->
     <div class="panel">
       <div class="panel-header">
-        <h3>🏆 Top Produtos por Valor — Dia Anterior${dOntem?' ('+dOntem.split('-').reverse().join('/')+')':''}</h3>
+        <h3>Top Produtos por Valor — Dia Anterior${dOntem?' ('+dOntem.split('-').reverse().join('/')+')':''}</h3>
         <span class="panel-note">Base: todos os dados filtrados · excl. Recuperação</span>
       </div>
       ${(()=>{
@@ -10112,7 +10123,7 @@ function renderRelacoes(){
       return `
       <div class="panel" style="border-left:4px solid #1a9c62;">
         <div class="panel-header">
-          <h3>♻️ Recuperação — Avaria Evitada</h3>
+          <h3>Recuperação — Avaria Evitada</h3>
           <span class="panel-note">Motivo: RECUPERADO (REP) STO · excluído do total de avaria · gráfico: Evitado × Avaria dia a dia</span>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
@@ -10186,17 +10197,17 @@ function renderRelacoes(){
     <div id="rel-pdf-p4">
     <!-- GRÁFICOS TEMPORAIS -->
     <div class="panel">
-      <div class="panel-header"><h3>📅 Dia a Dia — Valor e Quantidade</h3></div>
+      <div class="panel-header"><h3>Dia a Dia — Valor e Quantidade</h3></div>
       <div style="height:280px;"><canvas id="rel-chart-dia"></canvas></div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
       <div class="panel">
-        <div class="panel-header"><h3>📆 Semana a Semana</h3></div>
+        <div class="panel-header"><h3>Semana a Semana</h3></div>
         <div style="height:280px;"><canvas id="rel-chart-semana"></canvas></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><h3>🗓️ Mês a Mês</h3></div>
+        <div class="panel-header"><h3>Mês a Mês</h3></div>
         <div style="height:280px;"><canvas id="rel-chart-mes"></canvas></div>
       </div>
     </div>
@@ -10233,7 +10244,7 @@ function renderRelacoes(){
     <!-- TABELA POR LANÇAMENTO -->
     <div class="panel">
       <div class="panel-header">
-        <h3>🧾 Por Num. Lançamento — ${fN(lancUnicos)} lançamentos</h3>
+        <h3>Por Num. Lançamento — ${fN(lancUnicos)} lançamentos</h3>
         <span class="panel-note">Clique numa linha para ver os itens do lançamento</span>
       </div>
       <div class="table-wrap">
@@ -10278,7 +10289,7 @@ function renderRelacoes(){
     <!-- TABELA DETALHADA -->
     <div class="panel">
       <div class="panel-header">
-        <h3>📋 Tabela Detalhada — ${fN(sortedRows.length)} registros</h3>
+        <h3>Tabela Detalhada — ${fN(sortedRows.length)} registros</h3>
         <span class="panel-note">Página ${pag+1}/${totalPags} · ${fN(tamPag)} por página</span>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
@@ -11155,7 +11166,7 @@ function capVerRegras() {
   modal.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:28px 32px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
-        <h3 style="margin:0;font-size:16px;color:#1a2e44;">📋 Regras — Gerar Demanda</h3>
+        <h3 style="margin:0;font-size:16px;color:#1a2e44;">Regras — Gerar Demanda</h3>
         <button onclick="this.closest('div[style*=fixed]').remove();" style="border:none;background:none;font-size:20px;cursor:pointer;color:#7a8798;">✕</button>
       </div>
       <div style="font-size:13px;color:#3a4a5c;line-height:1.7;">
@@ -11195,9 +11206,9 @@ function capDemandaPreviewPDF() {
   modal.innerHTML = `
     <div style="background:#fff;border-radius:12px;padding:24px;max-width:700px;width:95%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.3);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-        <h3 style="margin:0;font-size:15px;color:#1a2e44;">👁️ Preview Demanda — ${lista.length} produtos</h3>
+        <h3 style="margin:0;font-size:15px;color:#1a2e44;">Preview Demanda — ${lista.length} produtos</h3>
         <div style="display:flex;gap:8px;">
-          <button onclick="capDemandaExportPDF();" style="padding:6px 14px;border-radius:6px;border:none;background:#e07b00;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">📄 Gerar PDF</button>
+          <button onclick="capDemandaExportPDF();" style="padding:6px 14px;border-radius:6px;border:none;background:#e07b00;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">Gerar PDF</button>
           <button onclick="this.closest('div[style*=fixed]').remove();" style="border:none;background:none;font-size:20px;cursor:pointer;color:#7a8798;">✕</button>
         </div>
       </div>
@@ -11969,7 +11980,7 @@ function renderCapacidadeCD() {
           ${CapCDState.filtroProdutos.length>0
             ? `<button onclick="CapCDState.filtroProdutos=[];renderCapacidadeCD();"
                  style="margin-top:3px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;padding:0;">
-                 ✕ Limpar (${CapCDState.filtroProdutos.length} selecionados)</button>`
+                 Limpar (${CapCDState.filtroProdutos.length} selecionados)</button>`
             : ''}
         </div>
 
@@ -12003,7 +12014,7 @@ function renderCapacidadeCD() {
 
         <div class="filter-group">
           <label>&nbsp;</label>
-          <button onclick="capVerRegras();" style="padding:6px 14px;border-radius:6px;border:1.5px solid #1a9c62;background:#edfaf4;color:#1a9c62;font-size:12px;font-weight:700;cursor:pointer;">📋 Ver Regras</button>
+          <button onclick="capVerRegras();" style="padding:6px 14px;border-radius:6px;border:1.5px solid #1a9c62;background:#edfaf4;color:#1a9c62;font-size:12px;font-weight:700;cursor:pointer;">Ver Regras</button>
         </div>
 
       </div>
@@ -12098,10 +12109,10 @@ function renderCapacidadeCD() {
             <label>&nbsp;</label>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <button onclick="capGerarDemandaAction();"
-                style="padding:7px 18px;border-radius:6px;border:none;background:#1a4480;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">⚡ Gerar Demanda</button>
-              ${CapCDState.demandaGerada ? `<button onclick="capDemandaPreviewPDF();" style="padding:7px 14px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:12px;font-weight:700;cursor:pointer;">👁️ Preview PDF</button>
-              <button onclick="capDemandaExportPDF();" style="padding:7px 14px;border-radius:6px;border:none;background:#e07b00;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">📄 Gerar PDF</button>` : ''}
-              ${CapCDState.demandaGerada ? `<button onclick="CapCDState.demandaGerada=null;CapCDState.demandaPage=0;renderCapacidadeCD();" style="padding:7px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#7a8798;font-size:11px;cursor:pointer;">✕ Limpar</button>` : ''}
+                style="padding:7px 18px;border-radius:6px;border:none;background:#1a4480;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">Gerar Demanda</button>
+              ${CapCDState.demandaGerada ? `<button onclick="capDemandaPreviewPDF();" style="padding:7px 14px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:12px;font-weight:700;cursor:pointer;">Preview PDF</button>
+              <button onclick="capDemandaExportPDF();" style="padding:7px 14px;border-radius:6px;border:none;background:#e07b00;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">Gerar PDF</button>` : ''}
+              ${CapCDState.demandaGerada ? `<button onclick="CapCDState.demandaGerada=null;CapCDState.demandaPage=0;renderCapacidadeCD();" style="padding:7px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;color:#7a8798;font-size:11px;cursor:pointer;">Limpar</button>` : ''}
             </div>
           </div>
 
@@ -12393,7 +12404,7 @@ function renderCapacidadeCD() {
       </div>
       ${(CapCDState.filtroUrgencia!=='todos'||CapCDState.filtroOrigem!=='todos'||CapCDState.filtroDiffIni!==''||CapCDState.filtroDiffFim!=='')?
         `<div style="margin-top:8px;font-size:11px;color:#1a4480;">Mostrando <strong>${transFiltered.length}</strong> de ${comp.itensTransferidos.length} transferidos
-        <button onclick="CapCDState.filtroUrgencia='maxalta';CapCDState.filtroOrigem='todos';CapCDState.filtroDiffIni='';CapCDState.filtroDiffFim='';renderCapacidadeCD();" style="margin-left:8px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">✕ Redefinir filtros</button></div>`:''
+        <button onclick="CapCDState.filtroUrgencia='maxalta';CapCDState.filtroOrigem='todos';CapCDState.filtroDiffIni='';CapCDState.filtroDiffFim='';renderCapacidadeCD();" style="margin-left:8px;font-size:11px;color:#d64545;background:none;border:none;cursor:pointer;">Redefinir filtros</button></div>`:''
       }
     </div>
 
@@ -12627,7 +12638,7 @@ function renderCapacidadeCD() {
         <button onclick="CapCDState.mostrarDetalhes=true;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${CapCDState.mostrarDetalhes?'active':''}">Sim</button>
         <button onclick="CapCDState.mostrarDetalhes=false;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${!CapCDState.mostrarDetalhes?'active':''}">Não</button>
       </div>
-      <button class="cap-btn-pdf" onclick="capExportPDF()">📄 Extrair PDF (8022)</button>
+      <button class="cap-btn-pdf" onclick="capExportPDF()">Extrair PDF (8022)</button>
     </div>
     ${tblTotal===0 ? `<div class="cap-aviso-inline" style="background:#e6f9f0;border-color:#1a9c62;color:#1a9c62;">✅ Todos os itens estão validados!</div>` : `
     <div class="cap-table-wrap" id="cap-main-table-wrap">
@@ -12681,7 +12692,7 @@ function renderCapacidadeCD() {
     return `
     <div class="cap-section-title" style="color:#1a4480;">⚡ Demanda Gerada
       <span style="font-size:12px;font-weight:400;color:#7a8798;">(${fN(total)} itens únicos)</span>
-      <button onclick="capCopiarCodigos();" style="margin-left:12px;padding:4px 12px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:11px;font-weight:700;cursor:pointer;">📋 Copiar Códigos</button>
+      <button onclick="capCopiarCodigos();" style="margin-left:12px;padding:4px 12px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:11px;font-weight:700;cursor:pointer;">Copiar Códigos</button>
     </div>
 
     <!-- Resumo por origem -->
@@ -12778,7 +12789,7 @@ function renderCapacidadeCD() {
   pane.innerHTML = `
     <div class="panel-section cap-root">
       <div class="panel-header" style="margin-bottom:0;">
-        <h2 class="panel-title" style="margin:0;">📦 Capacidade CD</h2>
+        <h2 class="panel-title" style="margin:0;">Capacidade CD</h2>
       </div>
       ${filtroHTML}
       ${avisosHTML}
@@ -12816,7 +12827,7 @@ function renderCapacidadeCD() {
         <div style="background:#f0f6ff;border:1.5px solid #b3ccf5;border-radius:12px;padding:18px 20px;margin:0 0 16px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
             <div style="font-size:14px;font-weight:700;color:#1a4480;">⚡ Resumo da Demanda do Dia</div>
-            <button onclick="capCopiarCodigos();" style="padding:5px 14px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:11px;font-weight:700;cursor:pointer;">📋 Copiar ${fN(total)} Códigos</button>
+            <button onclick="capCopiarCodigos();" style="padding:5px 14px;border-radius:6px;border:1.5px solid #1a4480;background:#fff;color:#1a4480;font-size:11px;font-weight:700;cursor:pointer;">Copiar ${fN(total)} Códigos</button>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
             ${Object.entries(origemCount).map(([orig,cnt])=>{
@@ -13744,7 +13755,7 @@ function renderAbastecimentoPicking(){
 
     <div class="panel">
       <div class="panel-header">
-        <h3>📊 Abastecimento por Rua — % da capacidade (Cap Pick, 1707)</h3>
+        <h3>Abastecimento por Rua — % da capacidade (Cap Pick, 1707)</h3>
         <span class="panel-note">a parte escura mostra o % abastecido, preenchendo de baixo para cima · clique na barra para filtrar a lista</span>
       </div>
       <div class="chart-wrap tall"><canvas id="abast-chart-rua-pct"></canvas></div>
