@@ -702,7 +702,8 @@ const ImportLog = {
   // fixas/hardcoded, sempre a partir de REQUIRED_SHEETS + OPTIONAL_SHEETS + o que
   // efetivamente veio em raw
   buildLog(raw){
-    const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
+    // "AUDITORIA REP" saiu do log: as bases de auditoria agora são Auditoria_Ruas e Auditoria_Retorno (+ apoio)
+    const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]).filter(n=>n!=="AUDITORIA REP");
     const oi0 = OnlineSheets.info;
     return allSheets.map(name0=>{
       const rows = raw[name0];
@@ -727,7 +728,29 @@ const ImportLog = {
           msg:`Sheet ${name} carregada, porém nenhuma coluna de data válida foi identificada.`, rowCount:rows.length };
       }
       return { name, status:"ok", statusLabel:"✓ Carregada", date:maxDate, msg:null, rowCount:rows.length };
-    });
+    }).concat(this.logAuditoria());
+  },
+
+  // bases de auditoria lidas direto do Google Sheets de auditoria (fora do Excel/planilha principal)
+  logAuditoria(){
+    const mk = (nome, rows, erro, carregou)=>{
+      const name = nome+" (Google Sheets)";
+      if(erro) return { name, status:"alerta", statusLabel:"⚠️ Falha ao ler (online)", date:null, msg:`Aba ${nome}: ${erro}`, rowCount:0 };
+      if(!carregou) return { name, status:"alerta", statusLabel:"⚠️ Não carregada", date:null, msg:`Aba ${nome} não foi lida nesta carga.`, rowCount:0 };
+      if(!rows.length) return { name, status:"vazia", statusLabel:"Sem dados", date:null, msg:"A aba foi encontrada, mas não contém nenhuma linha de dados.", rowCount:0 };
+      return { name, status:"ok", statusLabel:"✓ Carregada", date:this.detectMaxDate(rows), msg:null, rowCount:rows.length };
+    };
+    const out = [];
+    if(typeof AuditOnline!=="undefined"){
+      out.push(mk("Auditoria_Ruas", AuditOnline.rows||[], AuditOnline.error, AuditOnline.rows!==null));
+    }
+    if(typeof RetornoQ!=="undefined"){
+      const D = RetornoQ.dados, e = RetornoQ.erro, ok = !!D;
+      out.push(mk("Auditoria_Retorno", ok?D.aud:[], e, ok));
+      out.push(mk("Rotina_Retorno", ok?D.rot:[], e, ok));
+      out.push(mk("Quadro_Repositores", ok?D.reps:[], e, ok));
+    }
+    return out;
   },
 
   show(file, raw, onAccessDashboard, onLoadAnother){
@@ -4078,6 +4101,14 @@ const UI = {
       }
 
       await LoadingScreen.step("finalizando", 100);
+      stage = "leitura das bases de auditoria (Auditoria_Ruas / Auditoria_Retorno)";
+      // atualiza as bases de auditoria junto com a carga, para aparecerem no log (falha não trava a carga)
+      try{
+        await Promise.all([
+          AuditOnline.load(true),
+          (typeof RetornoQ!=="undefined" ? RetornoQ.carregar(true) : null)
+        ]);
+      }catch(_){}
       stage = "montagem do log de importação";
       if(!naLogin) LoadingScreen.hide();
 
