@@ -101,10 +101,24 @@ const Design = {
     this.configurarGraficos();
     clearTimeout(this._tt); this._tt = setTimeout(()=> html.classList.remove("theme-switching"), 450);
   },
-  alternarTema(){
-    this.aplicarTema(this.escuro() ? "light" : "dark", true);
-    this.redesenhar();
-    this.toast(this.escuro() ? "Modo escuro ativado" : "Modo claro ativado", "info", { duracao:1800, icone: this.escuro() ? "moon" : "sun" });
+  alternarTema(ev){
+    const trocar = ()=>{ this.aplicarTema(this.escuro() ? "light" : "dark", true); this.redesenhar(); };
+    const aviso = ()=> this.toast(this.escuro() ? "Modo escuro ativado" : "Modo claro ativado", "info", { duracao:1800, icone: this.escuro() ? "moon" : "sun" });
+    if(document.startViewTransition && !this.reduzirMovimento()){
+      const el = ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect ? ev.currentTarget.getBoundingClientRect() : null;
+      const x = ev && ev.clientX ? ev.clientX : (el ? el.left + el.width/2 : innerWidth/2), y = ev && ev.clientY ? ev.clientY : (el ? el.top + el.height/2 : innerHeight/2);
+      try{
+        const vt = document.startViewTransition(trocar);
+        vt.ready.then(()=>{
+          const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+          document.documentElement.animate({ clipPath:[`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] },
+            { duration:800, easing:"cubic-bezier(.22,1,.36,1)", pseudoElement:"::view-transition-new(root)" });
+        }).catch(()=>{});
+        vt.finished.finally(aviso);
+        return;
+      }catch(e){}
+    }
+    trocar(); aviso();
   },
   sincronizarTema(){
     const esc = this.escuro();
@@ -239,6 +253,44 @@ const Design = {
 
   /* ------------------------------ movimento expressivo ------------------------------ */
   reduzirMovimento(){ try{ return matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){ return false; } },
+  /** indicador líquido do menu: uma gota que escorre até o item sob o mouse (ou o selecionado) */
+  gotaDoMenu(){
+    const box = document.getElementById("sb-groups"); if(!box || this.reduzirMovimento()) return;
+    let blob = null, sobre = null, t = 0;
+    const garantir = ()=>{
+      if(!blob || blob.parentNode !== box){ blob = document.createElement("div"); blob.className = "sb-blob"; box.insertBefore(blob, box.firstChild); }
+      box.classList.add("tem-blob");
+    };
+    const ativo = ()=>{
+      const it = box.querySelector(".sb-group.open .sb-item.active"); if(it && !this.menuRecolhido()) return it;
+      return box.querySelector(".sb-group.current > .sb-group-btn") || box.querySelector(".sb-item.active");
+    };
+    const ir = (alvo, anima)=>{
+      garantir();
+      if(!alvo || !alvo.offsetParent){ blob.classList.remove("pronto"); return; }
+      const r = alvo.getBoundingClientRect(), c = box.getBoundingClientRect();
+      if(!r.width) return;
+      const primeira = !blob.classList.contains("pronto");
+      if(primeira) blob.style.transition = "none";
+      blob.style.width = r.width + "px"; blob.style.height = r.height + "px";
+      blob.style.transform = `translate(${r.left - c.left}px, ${r.top - c.top + box.scrollTop}px)`;
+      if(primeira){ void blob.offsetWidth; blob.style.transition = ""; }
+      blob.classList.add("pronto");
+      if(anima){ blob.classList.remove("estica"); void blob.offsetWidth; blob.classList.add("estica"); }
+    };
+    const sync = ()=> ir(sobre && sobre.isConnected ? sobre : ativo(), false);
+    const agendar = ()=>{ clearTimeout(t); t = setTimeout(sync, 60); setTimeout(sync, 480); };
+    box.addEventListener("mouseover", e=>{
+      const a = e.target.closest && e.target.closest(".sb-group-btn, .sb-item"); if(!a || a === sobre) return;
+      sobre = a; ir(a, true);
+    });
+    box.addEventListener("mouseleave", ()=>{ sobre = null; ir(ativo(), true); });
+    new MutationObserver(agendar).observe(box, { childList:true, subtree:true, attributes:true, attributeFilter:["class"] });
+    const sb = document.getElementById("sidebar"); if(sb) sb.addEventListener("transitionend", e=>{ if(e.propertyName === "width") sync(); });
+    addEventListener("resize", agendar);
+    box.addEventListener("scroll", ()=>{ if(sobre) sync(); }, { passive:true });
+    agendar();
+  },
   movimento(){
     // 1) onda no ponto do clique
     const alvos = ".btn, .sb-group-btn, .sb-foot-btn, .sb-theme, .toggle-group button, .subnav-btn, .nav-btn, .icon-btn";
@@ -251,6 +303,21 @@ const Design = {
       o.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d/2}px;top:${e.clientY - r.top - d/2}px`;
       el.appendChild(o); setTimeout(()=> o.remove(), 760);
     }, { passive:true });
+
+    // 1b) gelatina: o botão "balança" ao ser clicado
+    document.addEventListener("click", e=>{
+      if(this.reduzirMovimento()) return;
+      const el = e.target.closest && e.target.closest(".btn, .toggle-group button, .icon-btn, .sb-foot-btn, .sb-icbtn");
+      if(!el || el.disabled) return;
+      el.classList.remove("jelly"); void el.offsetWidth; el.classList.add("jelly");
+      setTimeout(()=> el.classList.remove("jelly"), 660);
+    });
+    // 1c) brilho do vidro acompanha o mouse nos cards
+    document.addEventListener("pointermove", e=>{
+      const c = e.target.closest && e.target.closest(".card"); if(!c) return;
+      const r = c.getBoundingClientRect(); c.style.setProperty("--mx", (e.clientX - r.left) + "px"); c.style.setProperty("--my", (e.clientY - r.top) + "px");
+    }, { passive:true });
+    this.gotaDoMenu();
 
     // 2) menu recolhido: clicar numa aba expande o menu (com o efeito) e já abre o grupo
     const grupos = document.getElementById("sb-groups");
@@ -318,7 +385,7 @@ const Design = {
     // menu recolhido: lembra a escolha (computador)
     let rec = false; try{ rec = localStorage.getItem("nucleo_menu") === "1"; }catch(e){}
     this.recolherMenu(rec, false);
-    document.querySelectorAll("[data-theme-toggle]").forEach(b=> b.addEventListener("click", ()=> this.alternarTema()));
+    document.querySelectorAll("[data-theme-toggle]").forEach(b=> b.addEventListener("click", e=> this.alternarTema(e)));
     const col = document.getElementById("sb-collapse"); if(col) col.addEventListener("click", ()=> this.recolherMenu(!this.menuRecolhido(), true));
     this.sincronizarTema();
     this.configurarGraficos();
