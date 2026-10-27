@@ -74,7 +74,7 @@ const Nav = {
   views(){ return NAV_VIEWS.filter(v=>this.items(v.id).length); },
   firstView(){ const v = this.views()[0]; return v ? v.id : null; },
 
-  render(){ UI.garantirViewPermitida(); UI.buildSubnav(); this.renderSidebar(); this.renderBottom(); this.renderUser(); this.renderAtalhosVazio(); this.sync(); },
+  render(){ UI.garantirViewPermitida(); UI.buildSubnav(); this.renderSidebar(); this.renderBottom(); this.renderDrawer(); this.renderUser(); this.renderAtalhosVazio(); this.sync(); },
 
   renderSidebar(){
     const box = document.getElementById("sb-groups"); if(!box) return;
@@ -93,6 +93,68 @@ const Nav = {
       `<button type="button" class="nav-btn nav-menu" id="nav-menu-btn"><span class="nb-ic">${Icons.svg("user")}</span><span class="nb-tx">Conta</span></button>`;
     bar.querySelectorAll(".nav-btn[data-view]").forEach(b=> b.addEventListener("click", ()=> UI.goTo(b.dataset.view)));
     document.getElementById("nav-menu-btn").addEventListener("click", ()=> this.openAccount());
+  },
+
+
+  /* ---- menu lateral direito (celular): grupos que abrem e se segmentam (acordeão) ---- */
+  renderDrawer(){
+    const box = document.getElementById("dr-groups"); if(!box) return;
+    box.innerHTML = this.views().map(v=>`
+      <div class="dr-group${UI.currentView===v.id?' open':''}" data-view="${v.id}">
+        <button type="button" class="dr-gbtn" data-dtoggle="${v.id}"><span class="dr-gic">${Icons.forNav(v.id)}</span><span class="dr-gl">${escapeHtml(v.aba)}</span><span class="dr-caret">${Icons.svg("caret")}</span></button>
+        <div class="dr-items"><div class="dr-items-in">${this.items(v.id).map(it=>`<button type="button" class="dr-item" data-view="${v.id}" data-pane="${it.id}"><span class="dr-iic">${Icons.forNav(it.id)}</span><span>${escapeHtml(it.label)}</span></button>`).join("")}</div></div>
+      </div>`).join("");
+    box.querySelectorAll("[data-dtoggle]").forEach(b=> b.addEventListener("click", ()=>{
+      const g = b.parentElement, abrir = !g.classList.contains("open");
+      box.querySelectorAll(".dr-group.open").forEach(x=> x.classList.remove("open"));
+      if(abrir) g.classList.add("open");
+    }));
+    box.querySelectorAll(".dr-item").forEach(b=> b.addEventListener("click", ()=>{ UI.goTo(b.dataset.view, b.dataset.pane); this.fecharDrawer(); }));
+    this.syncDrawer();
+  },
+  syncDrawer(){
+    document.querySelectorAll(".dr-item").forEach(b=> b.classList.toggle("active", b.dataset.view===UI.currentView && b.dataset.pane===UI.currentPane));
+    document.querySelectorAll(".dr-group").forEach(g=> g.classList.toggle("current", g.dataset.view===UI.currentView));
+    const u = Auth.user;
+    if(u){
+      const nome = u.nome || (u.legacy ? "Acesso geral" : "Matrícula "+u.matricula);
+      const set = (id,t)=>{ const e=document.getElementById(id); if(e) e.textContent=t; };
+      set("dr-user-name", nome); set("dr-user-mat", u.legacy ? "Senha única (modo provisório)" : "Matrícula "+u.matricula); set("dr-avatar", (nome||"?").trim().charAt(0).toUpperCase());
+    }
+  },
+  abrirDrawer(){
+    const d = document.getElementById("drawer"); if(!d) return;
+    // abre o grupo da tela atual
+    document.querySelectorAll(".dr-group").forEach(g=> g.classList.toggle("open", g.dataset.view===UI.currentView));
+    document.body.classList.add("drawer-open"); d.setAttribute("aria-hidden","false");
+    const m = document.getElementById("hdr-menu"); if(m) m.setAttribute("aria-expanded","true");
+  },
+  fecharDrawer(){
+    const d = document.getElementById("drawer"); if(!d) return;
+    document.body.classList.remove("drawer-open"); d.setAttribute("aria-hidden","true");
+    const m = document.getElementById("hdr-menu"); if(m) m.setAttribute("aria-expanded","false");
+  },
+  initDrawer(){
+    if(this._drawerOk) return; this._drawerOk = true;
+    const $i = id=>document.getElementById(id);
+    $i("hdr-menu").addEventListener("click", ()=> document.body.classList.contains("drawer-open") ? this.fecharDrawer() : this.abrirDrawer());
+    $i("dr-close").addEventListener("click", ()=> this.fecharDrawer());
+    $i("drawer-scrim").addEventListener("click", ()=> this.fecharDrawer());
+    document.addEventListener("keydown", e=>{ if(e.key==="Escape") this.fecharDrawer(); });
+    window.matchMedia("(min-width:900px)").addEventListener("change", e=>{ if(e.matches) this.fecharDrawer(); });
+    // gesto: arrastar para a direita fecha
+    let x0=null; const dr=$i("drawer");
+    dr.addEventListener("touchstart", e=>{ x0=e.touches[0].clientX; }, {passive:true});
+    dr.addEventListener("touchend", e=>{ if(x0!=null && e.changedTouches[0].clientX-x0>70) this.fecharDrawer(); x0=null; }, {passive:true});
+    document.querySelectorAll("#drawer [data-dr]").forEach(b=> b.addEventListener("click", ()=>{
+      const a=b.dataset.dr; this.fecharDrawer();
+      if(a==="alertas") FeedbackAdv.abrirAlertas();
+      else if(a==="refresh") UI.carregarOnline();
+      else if(a==="arquivo") document.getElementById("file-input").click();
+      else if(a==="png") Export.toPNG();
+      else if(a==="pdf") Export.toPDF();
+      else if(a==="sair") Auth.logout();
+    }));
   },
 
   renderUser(){
@@ -114,6 +176,7 @@ const Nav = {
 
   // destaca a sub aba atual e mostra o título no cabeçalho
   sync(){
+    this.syncDrawer();
     document.querySelectorAll(".sb-item").forEach(b=> b.classList.toggle("active", b.dataset.view===UI.currentView && b.dataset.pane===UI.currentPane));
     document.querySelectorAll(".sb-group").forEach(g=>{ if(g.dataset.view===UI.currentView) g.classList.add("open"); g.classList.toggle("current", g.dataset.view===UI.currentView); });
     document.querySelectorAll("#main-nav .nav-btn[data-view]").forEach(b=> b.classList.toggle("active", b.dataset.view===UI.currentView));
@@ -3837,6 +3900,7 @@ const UI = {
     $("#btn-ir-avaria").addEventListener("click", ()=> abrirAvariaSemArquivo());
     $("#btn-ir-cd3d").addEventListener("click", ()=> abrirCD3DSemArquivo());
     $("#btn-ir-admin").addEventListener("click", ()=> abrirAdminSemDados());
+    Nav.initDrawer();
     $("#sb-logout").addEventListener("click", ()=> Auth.logout());
     $("#sb-refresh").addEventListener("click", ()=> this.carregarOnline());
     $("#sb-arquivo").addEventListener("click", ()=> $("#file-input").click());
@@ -4135,6 +4199,20 @@ function atalhoTurnover(tipo){
   renderTurnover();
 }
 
+
+// Detecta qual atalho está ativo comparando as datas (dia local, sem UTC)
+function _ymd(d){ return d? d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate() : ''; }
+function atalhoAtivoPorDatas(ini,fim,tipos){
+  tipos = tipos || ['mes_atual','mes_ant','ano_atual','ano_ant','ultimos_3m'];
+  if(!ini && !fim) return 'tudo';
+  for(const t of tipos){
+    if(t==='tudo'||t==='ultimos_30'||t==='ultimos_90') continue;
+    const p=periodoAtalho(t);
+    if(_ymd(p.ini)===_ymd(ini) && _ymd(p.fim)===_ymd(fim)) return t;
+  }
+  return null;
+}
+
 function periodoAtalho(tipo){
   const h = new Date();
   const y = h.getFullYear(), m = h.getMonth();
@@ -4222,15 +4300,7 @@ function renderProducao(){
       <div class="filter-group">
         <label>Atalhos</label>
         <div id="prod-atalhos" style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${(()=>{
-            const h=new Date(), y=h.getFullYear(), m=h.getMonth();
-            const ini=st.dataInicial, fim=st.dataFinal;
-            const isoIni=ini?ini.toISOString().slice(0,10):'', isoFim=fim?fim.toISOString().slice(0,10):'';
-            const sel=!isoIni&&!isoFim?'tudo':
-              isoIni===new Date(y,m,1).toISOString().slice(0,10)?'mes_atual':
-              isoIni===new Date(y,m-1,1).toISOString().slice(0,10)?'mes_ant':null;
-            return renderAtalhos(sel,'atalhoProducao',['mes_atual','mes_ant','tudo']);
-          })()}
+          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,['mes_atual','mes_ant']),'atalhoProducao',['mes_atual','mes_ant','tudo'])}
         </div>
       </div>
       <div class="spacer"></div>
@@ -4241,10 +4311,6 @@ function renderProducao(){
     <div id="prod-content"></div>
   `;
 
-  $("#prod-atalhos").addEventListener("click", e=>{
-    const b = e.target.closest("button"); if(!b) return;
-    atalhoProducao(b.dataset.v==='mes-atual'?'mes_atual':b.dataset.v==='mes-anterior'?'mes_ant':'tudo');
-  });
 
   $("#prod-mode-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
@@ -5389,15 +5455,7 @@ function renderQuadro(){
       <div class="filter-group">
         <label>Atalhos</label>
         <div id="quadro-atalhos" style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${(()=>{
-            const h=new Date(), y=h.getFullYear(), m=h.getMonth();
-            const ini=st.dataInicial, fim=st.dataFinal;
-            const isoIni=ini?ini.toISOString().slice(0,10):'', isoFim=fim?fim.toISOString().slice(0,10):'';
-            const sel=!isoIni&&!isoFim?'tudo':
-              isoIni===new Date(y,m,1).toISOString().slice(0,10)?'mes_atual':
-              isoIni===new Date(y,m-1,1).toISOString().slice(0,10)?'mes_ant':null;
-            return renderAtalhos(sel,'atalhoQuadro',['mes_atual','mes_ant','tudo']);
-          })()}
+          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,['mes_atual','mes_ant']),'atalhoQuadro',['mes_atual','mes_ant','tudo'])}
         </div>
       </div>
       <div class="spacer"></div>
@@ -5489,10 +5547,6 @@ function renderQuadro(){
   $("#quadro-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderQuadro(); });
   $("#quadro-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderQuadro(); });
   $("#quadro-clear").addEventListener("click", ()=>{ st.dataInicial=null; st.dataFinal=null; renderQuadro(); });
-  $("#quadro-atalhos").addEventListener("click", e=>{
-    const b = e.target.closest("button"); if(!b) return;
-    atalhoQuadro(b.dataset.v==='mes-atual'?'mes_atual':b.dataset.v==='mes-anterior'?'mes_ant':'tudo');
-  });
 }
 
 function validarQuadroRH(){
@@ -6352,15 +6406,7 @@ function renderComissao(){
       <div class="filter-group">
         <label>Atalhos</label>
         <div id="comm-atalhos" style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${(()=>{
-            const h=new Date(), y=h.getFullYear(), m=h.getMonth();
-            const ini=st.dataInicial, fim=st.dataFinal;
-            const isoIni=ini?ini.toISOString().slice(0,10):'', isoFim=fim?fim.toISOString().slice(0,10):'';
-            const sel=!isoIni&&!isoFim?'tudo':
-              isoIni===new Date(y,m,1).toISOString().slice(0,10)?'mes_atual':
-              isoIni===new Date(y,m-1,1).toISOString().slice(0,10)?'mes_ant':null;
-            return renderAtalhos(sel,'atalhoComissao',['mes_atual','mes_ant','tudo']);
-          })()}
+          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,['mes_atual','mes_ant']),'atalhoComissao',['mes_atual','mes_ant','tudo'])}
         </div>
       </div>
       <div class="filter-group">
@@ -6454,10 +6500,6 @@ function renderComissao(){
   });
   $("#comm-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderComissao(); });
   $("#comm-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; renderComissao(); });
-  $("#comm-atalhos").addEventListener("click", e=>{
-    const b = e.target.closest("button"); if(!b) return;
-    atalhoComissao(b.dataset.v==='mes-atual'?'mes_atual':b.dataset.v==='mes-anterior'?'mes_ant':'tudo');
-  });
   $("#btn-toggle-col-missoes").addEventListener("click", ()=>{ commissionShowMissoes = !commissionShowMissoes; renderComissao(); });
   $("#btn-toggle-col-valorponto").addEventListener("click", ()=>{ commissionShowValorPonto = !commissionShowValorPonto; renderComissao(); });
   $("#btn-toggle-col-regra").addEventListener("click", ()=>{ commissionShowRegra = !commissionShowRegra; renderComissao(); });
@@ -9361,15 +9403,7 @@ function renderOperadores() {
       <div class="panel-header">
         <h3>Produção Operadores — O.S. Tipo 61 (8457)</h3>
         <div class="panel-actions" style="gap:6px;flex-wrap:wrap;">
-          ${(()=>{
-            const h=new Date(), y=h.getFullYear(), m=h.getMonth();
-            const ini=Op8457State.ini, fim=Op8457State.fim;
-            const ii=ini?ini.toISOString().slice(0,10):'', fi=fim?fim.toISOString().slice(0,10):'';
-            const sel=!ii&&!fi?'tudo':
-              ii===new Date(y,m,1).toISOString().slice(0,10)?'mes_atual':
-              ii===new Date(y,m-1,1).toISOString().slice(0,10)?'mes_ant':null;
-            return renderAtalhos(sel,'op8457Atalho',['mes_atual','mes_ant','tudo']);
-          })()}
+          ${renderAtalhos(atalhoAtivoPorDatas(Op8457State.ini,Op8457State.fim,['mes_atual','mes_ant']),'op8457Atalho',['mes_atual','mes_ant','tudo'])}
         </div>
       </div>
       <div class="toolbar">
@@ -10001,7 +10035,7 @@ function renderRelacoes(){
       <div class="panel-header">
         <h3>Relações Rep — Lançamentos por Repositores</h3>
         <div class="panel-actions" style="gap:5px;flex-wrap:wrap;">
-          ${renderAtalhos(isAtivo('mes_atual')?'mes_atual':isAtivo('mes_ant')?'mes_ant':isAtivo('ano_atual')?'ano_atual':isAtivo('ano_ant')?'ano_ant':!iniStr&&!fimStr?'tudo':null,'relAtalho')}
+          ${renderAtalhos(atalhoAtivoPorDatas(RelState.ini,RelState.fim),'relAtalho')}
           <button onclick="relExportarPDF()" style="padding:5px 14px;font-size:11px;font-weight:700;border-radius:6px;border:1.5px solid #d64545;background:#fff;color:#d64545;cursor:pointer;">Exportar PDF</button>
         </div>
       </div>

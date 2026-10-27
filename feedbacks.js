@@ -133,7 +133,7 @@ const FeedbackAdv = {
   atualizarAlertas(){
     let n = 0;
     try{ n = this.alertas().total; }catch(e){ n = 0; }
-    ["hdr-alertas-n","sb-alertas-n"].forEach(id=>{
+    ["hdr-alertas-n","sb-alertas-n","dr-alertas-n"].forEach(id=>{
       const el = document.getElementById(id); if(!el) return;
       el.textContent = n>99 ? "99+" : String(n); el.style.display = n ? "" : "none";
     });
