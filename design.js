@@ -19,6 +19,7 @@ const Icons = {
     download: '<path d="M12 4v11"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/>',
     image: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m20.5 16-5-5L6 20"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    motion: '<path d="M3 12h3.500l2.500-6 4 12 2.500-6H21"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2.5 12h2M19.5 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
     chevrons: '<path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/>',
@@ -328,7 +329,24 @@ const Design = {
   },
 
   /* ------------------------------ movimento expressivo ------------------------------ */
-  reduzirMovimento(){ try{ return matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){ return false; } },
+  /** escolha da pessoa ("on"/"off") vale mais que a configuração do sistema (Windows: "Mostrar animações") */
+  prefMov(){ try{ const v = localStorage.getItem("nucleo_mov"); return v === "on" || v === "off" ? v : null; }catch(e){ return null; } },
+  reduzirMovimento(){
+    const p = this.prefMov(); if(p) return p === "off";
+    try{ return matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){ return false; }
+  },
+  alternarMovimento(){
+    const novo = this.reduzirMovimento() ? "on" : "off";
+    try{ localStorage.setItem("nucleo_mov", novo); }catch(e){}
+    document.documentElement.setAttribute("data-mov", novo);
+    this.sincronizarMovimento();
+    this.toast(novo === "on" ? "Animações ligadas" : "Animações desligadas", "info", { duracao:2200, sub: novo === "on" ? "Recarregue a página para ativar tudo (rolagem suave e menu líquido)." : "" });
+  },
+  sincronizarMovimento(){
+    const lig = !this.reduzirMovimento();
+    document.querySelectorAll("[data-mov-sw]").forEach(b=> b.setAttribute("aria-checked", lig ? "true" : "false"));
+    document.querySelectorAll("[data-mov-tx]").forEach(el=>{ el.textContent = lig ? "Animações ligadas" : "Animações desligadas"; });
+  },
   /** indicador líquido do menu: uma gota que escorre até o item sob o mouse (ou o selecionado) */
   gotaDoMenu(){
     const box = document.getElementById("sb-groups"); if(!box || this.reduzirMovimento()) return;
@@ -491,6 +509,8 @@ const Design = {
     document.querySelectorAll("[data-theme-toggle]").forEach(b=> b.addEventListener("click", e=> this.alternarTema(e)));
     const col = document.getElementById("sb-collapse"); if(col) col.addEventListener("click", ()=> this.recolherMenu(!this.menuRecolhido(), true));
     this.sincronizarTema();
+    document.querySelectorAll("[data-mov-toggle]").forEach(b=> b.addEventListener("click", ()=> this.alternarMovimento()));
+    this.sincronizarMovimento();
     this.configurarGraficos();
     // acompanha mudança do tema do sistema enquanto a pessoa não escolheu manualmente
     try{
