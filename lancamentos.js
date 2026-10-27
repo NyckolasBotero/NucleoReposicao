@@ -274,7 +274,8 @@ const LancUI = {
       <div id="ad-msg"></div>
       <div class="adm-actions"><button type="button" class="btn btn-primary" id="ad-salvar">Salvar advertência</button></div>
       ${this.rodapeAtualizar()}
-    </div>`;
+    </div>
+    <div class="panel" id="ad-lancadas"></div>`;
     const $$ = (id)=> document.getElementById(id);
     const mostrarAnexo = this.ligarAnexo("ad");
     this.ligarNovoItem(pane);
@@ -319,6 +320,77 @@ const LancUI = {
       toast("Advertência salva.");
       $$("ad-mat").value = ""; $$("ad-nome").value = ""; $$("ad-resumo").value = ""; $$("ad-motivo").value = "";
       this.anexos.ad = null; mostrarAnexo(); historico();
+      this.advListar(true);
+    });
+    this.advListar(true);
+  },
+
+  /* ---- advertências já lançadas: lista + edição ---- */
+  adv: { itens:null, erro:null, filtro:"" },
+  async advListar(buscar){
+    const box = document.getElementById("ad-lancadas"); if(!box) return;
+    const st = this.adv;
+    if(buscar || !st.itens){
+      box.innerHTML = `<h2 class="adm-h">Advertências já lançadas</h2><p class="small-muted">Carregando...</p>`;
+      try{
+        const r = await Api.call({ acao:"lanc_advertencia_listar" });
+        if(r && r.ok){ st.itens = r.itens||[]; st.erro = null; } else st.erro = (r && r.erro) || "Não foi possível carregar a lista.";
+      }catch(e){ st.erro = e.message; }
+    }
+    this.advDesenhar();
+  },
+  advDesenhar(){
+    const box = document.getElementById("ad-lancadas"); if(!box) return;
+    const st = this.adv, f = (st.filtro||"").toLowerCase().trim();
+    if(st.erro){ box.innerHTML = `<h2 class="adm-h">Advertências já lançadas</h2><div class="error-box">${this.h(st.erro)}</div><button class="btn btn-outline" id="ad-l-retry">Tentar novamente</button>`; document.getElementById("ad-l-retry").addEventListener("click", ()=> this.advListar(true)); return; }
+    const lista = (st.itens||[]).filter(i=> !f || (i.mat+" "+i.nome+" "+i.motivo).toLowerCase().includes(f));
+    box.innerHTML = `<div class="adm-head"><h2 class="adm-h">Advertências já lançadas</h2>
+        <div class="adm-head-r"><input type="search" id="ad-l-busca" placeholder="Buscar matrícula, nome ou motivo" value="${this.h(st.filtro||"")}"><button class="btn btn-outline btn-sm" id="ad-l-reload">Atualizar lista</button></div></div>
+      <p class="small-muted">Errou a data ou outro dado? Clique em <strong>Editar</strong> para corrigir. Depois use <strong>Atualizar dados</strong> (menu) para os indicadores enxergarem a mudança.</p>
+      <div class="table-wrap"><table class="adm-table"><thead><tr><th>Data</th><th>Matrícula</th><th>Nome</th><th>Motivo</th><th>Aplicador</th><th>Doc.</th><th></th></tr></thead><tbody>
+      ${lista.slice(0,100).map(i=>`<tr><td>${i.data ? i.data.split("-").reverse().join("/") : "—"}</td><td><strong>${this.h(i.mat)}</strong></td><td>${this.h(i.nome)}</td><td>${this.h(i.motivo)}</td><td>${this.h(i.nomeApl||i.matApl||"—")}</td>
+        <td>${/^https?:/.test(i.anexo) ? `<a href="${this.h(i.anexo)}" target="_blank" rel="noopener">abrir</a>` : "—"}</td>
+        <td><button class="btn btn-outline btn-sm" data-adv-ed="${i.linha}">Editar</button></td></tr>`).join("") || `<tr><td colspan="7" class="small-muted">Nenhuma advertência encontrada.</td></tr>`}
+      </tbody></table></div>${lista.length>100?`<p class="small-muted">Mostrando 100 de ${lista.length}. Use a busca para filtrar.</p>`:""}`;
+    document.getElementById("ad-l-busca").addEventListener("input", e=>{ st.filtro = e.target.value; const p = e.target.selectionStart; this.advDesenhar(); const n = document.getElementById("ad-l-busca"); n.focus(); try{ n.setSelectionRange(p,p); }catch(x){} });
+    document.getElementById("ad-l-reload").addEventListener("click", ()=> this.advListar(true));
+    box.querySelectorAll("[data-adv-ed]").forEach(b=> b.addEventListener("click", ()=> this.advEditar(Number(b.dataset.advEd))));
+  },
+  advEditar(linha){
+    const it = (this.adv.itens||[]).find(x=>x.linha===linha); if(!it) return;
+    UI.openModal(`<h3 style="margin-top:0;">Editar advertência</h3>
+      <div class="adm-form">
+        <label>Data<input type="date" id="ed-data" value="${this.h(it.data)}"></label>
+        <label>Matrícula do colaborador<input type="text" id="ed-mat" inputmode="numeric" value="${this.h(it.mat)}"></label>
+        <label>Nome (automático)<input type="text" id="ed-nome" readonly value="${this.h(this.nomeDe(it.mat) || it.nome)}"></label>
+      </div>
+      <div class="adm-form">${this.motivoSelect("ed-motivo", it.motivo)}</div>
+      <div class="adm-form">
+        <label>Matrícula do aplicador<input type="text" id="ed-mat-apl" inputmode="numeric" value="${this.h(it.matApl)}"></label>
+        <label>Nome do aplicador<input type="text" id="ed-nome-apl" value="${this.h(it.nomeApl)}"></label>
+      </div>
+      <div class="adm-form"><label style="grid-column:1/-1">Resumo da advertência<textarea id="ed-resumo" rows="3" style="padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:inherit;text-transform:none;letter-spacing:0;font-weight:500;">${this.h(it.resumo)}</textarea></label></div>
+      <div class="small-muted" style="margin:6px 0">Documento atual: ${/^https?:/.test(it.anexo) ? `<a href="${this.h(it.anexo)}" target="_blank" rel="noopener">abrir</a> · <label><input type="checkbox" id="ed-rm-anexo"> remover</label>` : "nenhum"}</div>
+      ${this.anexoHtml("ed", "Trocar / anexar documento (opcional)")}
+      <div id="ed-msg"></div>
+      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="ed-salvar">Salvar alterações</button></div>`);
+    const $$ = (id)=> document.getElementById(id);
+    this.ligarAnexo("ed");
+    $$("ed-mat").addEventListener("input", ()=>{ $$("ed-nome").value = this.nomeDe(this.soDigitos($$("ed-mat").value)); });
+    $$("ed-mat-apl").addEventListener("change", ()=>{ const n = this.nomeDe($$("ed-mat-apl").value); if(n) $$("ed-nome-apl").value = n; });
+    $$("ed-salvar").addEventListener("click", async ()=>{
+      const mat = this.soDigitos($$("ed-mat").value);
+      if(!$$("ed-data").value) return this.aviso("ed-msg", "erro", "Informe a data.");
+      if(!mat) return this.aviso("ed-msg", "erro", "Informe a matrícula do colaborador.");
+      if(!$$("ed-motivo").value) return this.aviso("ed-msg", "erro", "Escolha o motivo.");
+      if(!$$("ed-resumo").value.trim()) return this.aviso("ed-msg", "erro", "Escreva o resumo.");
+      const a = this.anexos.ed, rm = $$("ed-rm-anexo");
+      const r = await this.enviar($$("ed-salvar"), { acao:"lanc_advertencia_editar", linha, matOriginal:it.mat, data:$$("ed-data").value, mat, motivo:$$("ed-motivo").value,
+        matAplicador:$$("ed-mat-apl").value, nomeAplicador:$$("ed-nome-apl").value, resumo:$$("ed-resumo").value, removerAnexo: !!(rm && rm.checked),
+        anexo: a ? { nome:a.nome, mime:a.mime, base64:a.base64 } : null });
+      if(!r || !r.ok) return this.aviso("ed-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
+      UI.closeModal(); toast("Advertência atualizada. Use Atualizar dados para refletir em Gestão.");
+      this.advListar(true);
     });
   },
 
