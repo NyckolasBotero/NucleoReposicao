@@ -207,8 +207,84 @@ const Design = {
     const nome = this.nomeCurto();
     const ola = nome ? `Olá, ${nome}!` : "Olá!";
     const h = document.getElementById("empty-hello"); if(h) h.textContent = ola;
+    const lt = document.getElementById("login-hello-t"); if(lt) lt.textContent = ola;
+    const ls = document.getElementById("login-hello-s"); if(ls) ls.textContent = this.saudacao() + "! Buscando os dados mais recentes…";
+    const tela = document.getElementById("login-screen");
+    if(tela && tela.classList.contains("carregando")){ this._saudou = nome; return; }   // a saudação já está na tela de entrada
     if(this._saudou === nome) return; this._saudou = nome;
     this.toast(ola, "welcome", { sub: `${this.saudacao()}! Buscando os dados mais recentes…` });
+  },
+
+  /* ------------------------------ carregamento discreto ------------------------------
+     barra neon correndo no topo + registro mínimo no canto inferior direito;
+     ao atualizar com o painel aberto, véu transparente em vez de tela cheia. */
+  carga: {
+    ctx: null, _linhas: [], _t: 0, _timer: 0,
+    _el(id, cls, html){ let e = document.getElementById(id); if(!e){ e = document.createElement("div"); e.id = id; if(cls) e.className = cls; document.body.appendChild(e); } if(html != null) e.innerHTML = html; return e; },
+    iniciar(ctx, nome){
+      clearTimeout(this._timer); this.ctx = ctx; this._linhas = [];
+      const barra = this._el("load-bar", "", ""); barra.classList.remove("fim"); void barra.offsetWidth; barra.classList.add("on");
+      const feed = this._el("load-feed", "", `<div class="lf-h"><span class="lf-spin"></span><span class="lf-t" id="lf-t">Conectando</span><em id="lf-n"></em></div><div class="lf-rows" id="lf-rows"></div>`);
+      feed.className = ""; feed.dataset.ctx = ctx; void feed.offsetWidth; feed.classList.add("on");
+      if(ctx === "painel"){
+        const v = this._el("load-veil", "", `<div class="lv-pill"><span class="lf-spin"></span><span>Atualizando os dados…</span></div>`);
+        void v.offsetWidth; v.classList.add("on");
+        document.body.classList.add("carregando-dados");
+      }
+    },
+    etapa(txt){ const t = document.getElementById("lf-t"); if(t) t.textContent = txt; },
+    progresso(f, tot){ const n = document.getElementById("lf-n"); if(n) n.textContent = f + "/" + tot; },
+    /** uma linha por aba que terminou de carregar: estado ok | warn */
+    item(nome, estado, detalhe){
+      const rows = document.getElementById("lf-rows"); if(!rows) return;
+      const r = document.createElement("div"); r.className = "lf-r " + (estado || "ok");
+      r.innerHTML = `<i></i><span>${escapeHtml(String(nome))}</span><em>${detalhe == null ? "" : escapeHtml(String(detalhe))}</em>`;
+      rows.appendChild(r);
+      while(rows.children.length > 5){ rows.removeChild(rows.firstChild); }
+    },
+    /** termina a barra (enche e some) e retira o véu */
+    fim(){
+      const b = document.getElementById("load-bar"); if(b){ b.classList.add("fim"); this._timer = setTimeout(()=> b.classList.remove("on"), 420); }
+      const v = document.getElementById("load-veil"); if(v){ v.classList.remove("on"); setTimeout(()=> v.remove(), 300); }
+      document.body.classList.remove("carregando-dados");
+    },
+    /** painel aberto: some o registro depois de um instante */
+    saiFeed(atraso){
+      const f = document.getElementById("load-feed"); if(!f) return;
+      setTimeout(()=>{ f.classList.remove("on"); setTimeout(()=>{ if(!f.classList.contains("on")) f.remove(); }, 350); }, atraso == null ? 700 : atraso);
+    },
+    /**
+     * tela de login: o registro vira um resumo mínimo; entra sozinho depois de `seg` segundos
+     * se ninguém clicar. `log` vem de ImportLog.buildLog(raw). Chama `pronto()` ao entrar.
+     */
+    resumo(arquivo, log, seg, pronto){
+      const feed = document.getElementById("load-feed");
+      if(!feed){ pronto(); return; }
+      const achadas = log.filter(s=> s.status !== "nao-encontrada");
+      const alertas = achadas.filter(s=> s.status === "alerta").length;
+      const linhas = achadas.reduce((n, s)=> n + (s.rowCount || 0), 0);
+      const hora = new Date().toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" });
+      const fmt = n => n.toLocaleString("pt-BR");
+      const det = achadas.map(s=>`<div class="lf-dr ${s.status}"><i></i><span>${escapeHtml(s.name.replace(" (Google Sheets)",""))}</span><em>${s.rowCount ? fmt(s.rowCount) : "—"}</em><u>${s.date ? fmtDateBR(s.date) : ""}</u></div>`).join("");
+      feed.innerHTML = `
+        <div class="lf-sum">
+          <div class="lf-sh"><span class="lf-ck">${Icons.svg("check", 14)}</span><b>Dados carregados</b><em>${hora}</em></div>
+          <div class="lf-ss">${achadas.length} abas · ${fmt(linhas)} linhas${alertas ? ` · <span class="lf-warn">${alertas} alerta${alertas > 1 ? "s" : ""}</span>` : ""}</div>
+          <div class="lf-det" id="lf-det">${det}</div>
+          <div class="lf-act"><button type="button" class="lf-lnk" id="lf-more">ver detalhes</button><button type="button" class="lf-go" id="lf-go">Entrar agora</button></div>
+          <div class="lf-count"><i style="animation-duration:${seg}s"></i></div>
+        </div>`;
+      feed.classList.add("resumo"); this.fim();
+      let feito = false, t = 0;
+      const entrar = ()=>{ if(feito) return; feito = true; clearTimeout(t); document.removeEventListener("keydown", tecla); feed.classList.remove("on"); setTimeout(()=> feed.remove(), 350); pronto(); };
+      const pausar = ()=>{ clearTimeout(t); const c = feed.querySelector(".lf-count"); if(c) c.classList.add("pausa"); };
+      const tecla = e=>{ if(e.key === "Enter") entrar(); };
+      document.addEventListener("keydown", tecla);
+      feed.querySelector("#lf-go").addEventListener("click", entrar);
+      feed.querySelector("#lf-more").addEventListener("click", e=>{ pausar(); const d = document.getElementById("lf-det"); const abriu = d.classList.toggle("on"); e.target.textContent = abriu ? "ocultar" : "ver detalhes"; });
+      feed.addEventListener("pointerdown", pausar);
+      t = setTimeout(entrar, seg * 1000);
+    }
   },
 
   /* ------------------------------ menu recolhível ------------------------------ */
