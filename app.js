@@ -6220,8 +6220,10 @@ function renderAuditoria(){
       <div class="spacer"></div>
       <button class="btn btn-outline btn-sm" id="aud-clear">Limpar filtros</button>
     </div>
+    <div id="aud-retornos"></div>
     <div id="aud-content"></div>
   `;
+  if(typeof RetornoQ!=="undefined") RetornoQ.render();
   $("#aud-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; st.atalhoSel=null; renderAuditoria(); });
   $("#aud-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; st.atalhoSel=null; renderAuditoria(); });
   $("#aud-rua").addEventListener("change", e=>{ st.rua = e.target.value||null; renderAuditoria(); });
