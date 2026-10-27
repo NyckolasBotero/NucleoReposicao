@@ -226,6 +226,7 @@ const LoginModule = {
 
   // entra, mas continua na tela de login enquanto os dados carregam (saudação + progresso discreto)
   entrar(){
+    this.entrou = true;
     document.getElementById("login-screen").classList.add("carregando");
     Nav.render();
     document.dispatchEvent(new Event("loginOk"));
@@ -241,6 +242,7 @@ const LoginModule = {
 
   mostrar(msg){
     document.body.classList.add("locked");
+    this.entrou = false;
     document.getElementById("login-screen").classList.remove("hidden","carregando","saindo");
     const box = document.getElementById("login-error");
     if(box && msg){ box.textContent = msg; box.classList.add("show"); }
@@ -3851,7 +3853,8 @@ const UI = {
 
     // ao abrir o site (já logado), busca tudo direto do Google Sheets
     const iniciar = ()=> this.carregarOnline();
-    if(document.body.classList.contains("locked")) document.addEventListener("loginOk", iniciar, { once:true });
+    // sessão salva: o login já "entrou" (e disparou loginOk) antes deste ponto — não esperar um evento que já passou
+    if(document.body.classList.contains("locked") && !LoginModule.entrou) document.addEventListener("loginOk", iniciar, { once:true });
     else iniciar();
   },
 
