@@ -329,6 +329,97 @@ const AdminUI = {
     });
     document.getElementById("ac-novo").addEventListener("click", ()=> this.editarAcesso(null));
     pane.querySelectorAll("[data-mat]").forEach(b=> b.addEventListener("click", ()=> this.editarAcesso(b.dataset.mat)));
+    // histórico de logins (abaixo da tabela de acessos)
+    const h = document.createElement("div"); h.id = "ac-hist"; pane.appendChild(h);
+    this.renderHistorico(!this.hist.eventos && !this.hist.carregando);
+  },
+
+  /* ---------------- Histórico de logins, falhas e tempo de uso ---------------- */
+  hist: { eventos:null, erro:null, carregando:false, periodo:"hoje", soFalhas:false, truncado:false, total:0, hoje:null },
+
+  async renderHistorico(buscar){
+    const box = document.getElementById("ac-hist"); if(!box) return;
+    const st = this.hist;
+    if(buscar){
+      st.carregando = true; st.erro = null; this.desenharHistorico();
+      try{
+        const r = await Api.call({ acao:"admin_historico" });
+        if(r && r.ok){ st.eventos = r.eventos||[]; st.truncado = !!r.truncado; st.total = r.total||0; st.hoje = r.hoje||null; }
+        else st.erro = (r && r.erro) || "Falha ao carregar o histórico.";
+      }catch(e){ st.erro = e.message; }
+      st.carregando = false;
+    }
+    this.desenharHistorico();
+  },
+
+  desenharHistorico(){
+    const box = document.getElementById("ac-hist"); if(!box) return;
+    const st = this.hist;
+    const cab = (extra)=>`<div class="adm-head"><h2 class="adm-h">Histórico de logins</h2><div class="adm-head-r">${extra||""}</div></div>`;
+    if(st.carregando){ box.innerHTML = `<div class="panel">${cab()}<p class="small-muted">Carregando histórico...</p></div>`; return; }
+    if(st.erro){ box.innerHTML = `<div class="panel">${cab()}<div class="error-box">${escapeHtml(st.erro)}</div><button class="btn btn-outline" id="hs-retry">Tentar novamente</button></div>`; document.getElementById("hs-retry").addEventListener("click", ()=> this.renderHistorico(true)); return; }
+    const ev = (st.eventos||[]).map(l=>({ dt:String(l[0]||""), mat:String(l[1]||"").trim(), nome:String(l[2]||""), tipo:String(l[3]||""), det:String(l[4]||""), seg:Number(l[5])||0 })).filter(e=>e.dt);
+    // período
+    const hoje = st.hoje || toInputDate(new Date());
+    const dias = st.periodo==="hoje" ? 0 : st.periodo==="7" ? 6 : 29;
+    const d0 = new Date(hoje+"T00:00:00"); d0.setDate(d0.getDate()-dias); const corte = toInputDate(d0);
+    const noPeriodo = ev.filter(e=> e.dt.slice(0,10) >= corte);
+    const hojeEv = ev.filter(e=> e.dt.slice(0,10) === hoje);
+    const nomes = {}; (this.acState.lista||[]).forEach(u=>{ if(u.nome) nomes[u.matricula] = u.nome; }); ev.forEach(e=>{ if(e.nome && !nomes[e.mat]) nomes[e.mat] = e.nome; });
+    const nomeDe = m=> nomes[m] || "—";
+    const dur = s=>{ s = Math.round(s); if(s<=0) return "—"; const h = Math.floor(s/3600), m = Math.round((s%3600)/60); return h ? `${h}h ${String(m).padStart(2,"0")}min` : (m ? `${m} min` : `${s}s`); };
+    const fmtDH = s=>{ const p = s.split(" "), d = (p[0]||"").split("-"); return `${d[2]}/${d[1]} ${(p[1]||"").slice(0,5)}`; };
+    // por usuário
+    const us = {};
+    const get = m=> us[m] = us[m] || { mat:m, logins:0, falhas:0, ultimo:"", segPeriodo:0, segHoje:0, telas:{}, pedidos:0, trocas:0 };
+    noPeriodo.forEach(e=>{
+      if(!e.mat) return; const u = get(e.mat);
+      if(e.tipo==="LOGIN_OK"){ u.logins++; if(e.dt>u.ultimo) u.ultimo = e.dt; }
+      else if(e.tipo==="LOGIN_FALHA") u.falhas++;
+      else if(e.tipo==="SENHA_SOLICITADA") u.pedidos++;
+      else if(e.tipo==="SENHA_ALTERADA") u.trocas++;
+      else if(e.tipo==="USO"){ u.segPeriodo += e.seg; u.telas[e.det] = (u.telas[e.det]||0) + e.seg; if(e.dt>u.ultimo) u.ultimo = e.dt; }
+    });
+    hojeEv.forEach(e=>{ if(e.tipo==="USO" && e.mat) get(e.mat).segHoje += e.seg; });
+    const linhasUs = Object.values(us).sort((a,b)=> (b.segPeriodo-a.segPeriodo) || (b.logins-a.logins));
+    const totLogins = noPeriodo.filter(e=>e.tipo==="LOGIN_OK").length, totFalhas = noPeriodo.filter(e=>e.tipo==="LOGIN_FALHA").length;
+    const totSeg = linhasUs.reduce((n,u)=>n+u.segPeriodo,0), ativos = linhasUs.filter(u=>u.segPeriodo>0||u.logins>0).length;
+    const totPed = noPeriodo.filter(e=>e.tipo==="SENHA_SOLICITADA").length, totTroca = noPeriodo.filter(e=>e.tipo==="SENHA_ALTERADA").length;
+    // telas mais usadas (geral)
+    const telas = {}; noPeriodo.forEach(e=>{ if(e.tipo==="USO") telas[e.det] = (telas[e.det]||0) + e.seg; });
+    const topTelas = Object.entries(telas).sort((a,b)=>b[1]-a[1]).slice(0,8), maxT = topTelas.length ? topTelas[0][1] : 1;
+    const card = (t,v,sub,cor)=>`<div class="card"><div class="card-label">${t}</div><div class="card-value" ${cor?`style="color:${cor}"`:""}>${v}</div>${sub?`<div class="card-sub">${sub}</div>`:""}</div>`;
+    const rotulo = { LOGIN_OK:["Login","acc"], LOGIN_FALHA:["Falha de login","err"], SENHA_ALTERADA:["Senha alterada","acc"], SENHA_SOLICITADA:["Pediu nova senha","rep"] };
+    const eventos = noPeriodo.filter(e=> e.tipo!=="USO" && (!st.soFalhas || e.tipo==="LOGIN_FALHA" || e.tipo==="SENHA_SOLICITADA")).sort((a,b)=> a.dt<b.dt?1:-1).slice(0,150);
+    const perLabel = st.periodo==="hoje" ? "hoje" : st.periodo==="7" ? "nos últimos 7 dias" : "nos últimos 30 dias";
+    box.innerHTML = `<div class="panel">
+      ${cab(`<select id="hs-per"><option value="hoje" ${st.periodo==="hoje"?"selected":""}>Hoje</option><option value="7" ${st.periodo==="7"?"selected":""}>Últimos 7 dias</option><option value="30" ${st.periodo==="30"?"selected":""}>Últimos 30 dias</option></select><button class="btn btn-outline btn-sm" id="hs-reload">Atualizar</button>`)}
+      <p class="small-muted">Quem entrou, quanto tempo ficou ativo e em quais abas, além de falhas de login e trocas de senha. O tempo conta só com a página aberta e com atividade (cliques, toques, rolagem); 2 min parado não conta.${st.truncado?` Mostrando os ${ev.length} registros mais recentes de ${st.total}.`:""}</p>
+      <div class="cards-grid" style="margin-bottom:14px;">
+        ${card("Logins "+perLabel, fmtNum(totLogins), fmtNum(ativos)+" usuário(s) ativo(s)")}
+        ${card("Falhas de login", fmtNum(totFalhas), totFalhas?"senha/matrícula incorretas ou bloqueio":"nenhuma falha", totFalhas?"var(--red)":"")}
+        ${card("Tempo ativo total", dur(totSeg), "soma de todos os usuários")}
+        ${card("Senhas", fmtNum(totTroca)+" alterada(s)", totPed?(totPed+" pedido(s) de redefinição — defina em Editar"):"sem pedidos", totPed?"var(--orange)":"")}
+      </div>
+      <div class="grid-2" style="grid-template-columns:1fr;">
+        <div><h3 style="margin:0 0 8px;font-size:14px;">Atividade por usuário</h3>
+          <div class="table-wrap"><table class="adm-table"><thead><tr><th>Usuário</th><th>Logins</th><th>Falhas</th><th>Ativo hoje</th><th>Ativo ${st.periodo==="hoje"?"":"no período"}</th><th>Último</th><th>Abas mais usadas</th></tr></thead><tbody>
+          ${linhasUs.map(u=>{ const top = Object.entries(u.telas).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([t,s])=>`${escapeHtml(t.split(" > ").pop())} <span class="small-muted">(${dur(s)})</span>`).join("<br>");
+            return `<tr><td><strong>${escapeHtml(u.mat)}</strong><div class="small-muted">${escapeHtml(nomeDe(u.mat))}</div></td><td>${u.logins}</td><td>${u.falhas?`<span class="adm-tag err">${u.falhas}</span>`:"0"}</td><td>${dur(u.segHoje)}</td><td>${dur(u.segPeriodo)}</td><td>${u.ultimo?fmtDH(u.ultimo):"—"}</td><td style="white-space:normal;">${top||"—"}</td></tr>`; }).join("") || `<tr><td colspan="7" class="small-muted">Sem registros ${perLabel}.</td></tr>`}
+          </tbody></table></div></div>
+        <div><h3 style="margin:0 0 8px;font-size:14px;">Abas mais usadas ${perLabel}</h3>
+          ${topTelas.length ? topTelas.map(([t,s])=>`<div style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:12.5px;gap:8px;"><span>${escapeHtml(t)}</span><strong>${dur(s)}</strong></div><div style="height:7px;background:var(--gray-100);border-radius:6px;overflow:hidden;"><div style="height:100%;width:${Math.max(3,Math.round(s/maxT*100))}%;background:var(--blue-med);border-radius:6px;"></div></div></div>`).join("") : `<p class="small-muted">Ainda sem tempo de uso registrado ${perLabel}.</p>`}
+        </div>
+      </div>
+      <div class="adm-head" style="margin-top:18px;"><h3 style="margin:0;font-size:14px;">Histórico de acessos</h3>
+        <label class="small-muted" style="display:flex;gap:6px;align-items:center;"><input type="checkbox" id="hs-falhas" ${st.soFalhas?"checked":""}> só falhas e pedidos de senha</label></div>
+      <div class="table-wrap"><table class="adm-table"><thead><tr><th>Data/hora</th><th>Matrícula</th><th>Nome</th><th>Evento</th><th>Detalhe</th></tr></thead><tbody>
+        ${eventos.map(e=>{ const r = rotulo[e.tipo]||[e.tipo,"off"]; return `<tr><td>${fmtDH(e.dt)}</td><td><strong>${escapeHtml(e.mat||"—")}</strong></td><td>${escapeHtml(nomeDe(e.mat))}</td><td><span class="adm-tag ${r[1]}">${r[0]}</span></td><td style="white-space:normal;">${escapeHtml(e.det)}</td></tr>`; }).join("") || `<tr><td colspan="5" class="small-muted">Nenhum registro ${perLabel}.</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+    document.getElementById("hs-per").addEventListener("change", e=>{ st.periodo = e.target.value; this.desenharHistorico(); });
+    document.getElementById("hs-reload").addEventListener("click", ()=> this.renderHistorico(true));
+    document.getElementById("hs-falhas").addEventListener("change", e=>{ st.soFalhas = e.target.checked; this.desenharHistorico(); });
   },
 
   editarAcesso(mat){

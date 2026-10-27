@@ -216,6 +216,45 @@ const Nav = {
   }
 };
 
+
+/* ---------------------------------------------------------------------- */
+/* MODULE: Uso (mede o tempo ativo por tela e envia ao servidor)           */
+/* ---------------------------------------------------------------------- */
+const Uso = {
+  acum: {}, ultimoTick: 0, ultimaAcao: 0, timer: null, ligado: false,
+  TICK: 10000, OCIOSO: 120000, ENVIO: 120000, ultimoEnvio: 0,
+  rotulo(){
+    const v = NAV_VIEWS.find(x=>x.id===UI.currentView);
+    const it = (UI.subnavConfig[UI.currentView]||[]).find(i=>i.id===UI.currentPane);
+    return (v && it) ? v.aba+" > "+it.label : "";
+  },
+  iniciar(){
+    if(this.ligado || !Api.configured() || !Auth.user || Auth.user.legacy) return;
+    this.ligado = true; this.ultimoTick = Date.now(); this.ultimaAcao = Date.now(); this.ultimoEnvio = Date.now();
+    const marca = ()=>{ this.ultimaAcao = Date.now(); };
+    ["pointerdown","keydown","scroll","touchstart","mousemove"].forEach(ev=> window.addEventListener(ev, marca, {passive:true, capture:true}));
+    document.addEventListener("visibilitychange", ()=>{ this.tick(); if(document.hidden) this.enviar(true); });
+    window.addEventListener("pagehide", ()=> this.enviar(true));
+    this.timer = setInterval(()=>{ this.tick(); if(Date.now()-this.ultimoEnvio >= this.ENVIO) this.enviar(); }, this.TICK);
+  },
+  // soma ao rótulo da tela atual apenas se a aba está visível e houve ação recente
+  tick(){
+    const agora = Date.now(), dt = Math.min(agora - this.ultimoTick, this.TICK*2); this.ultimoTick = agora;
+    if(document.hidden || document.body.classList.contains("locked") || agora - this.ultimaAcao > this.OCIOSO) return;
+    const r = this.rotulo(); if(!r) return;
+    this.acum[r] = (this.acum[r]||0) + dt/1000;
+  },
+  enviar(){
+    this.ultimoEnvio = Date.now();
+    const itens = Object.keys(this.acum).map(p=>({ pane:p, seg:Math.round(this.acum[p]) })).filter(i=>i.seg>0);
+    if(!itens.length || !Auth.user || !Auth.user.token) return;
+    this.acum = {};
+    const body = JSON.stringify({ acao:"uso", token:Auth.user.token, itens });
+    try{ fetch(NUCLEO_API_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" }, body, keepalive:true }).catch(()=>{}); }catch(e){}
+  }
+};
+document.addEventListener("loginOk", ()=> Uso.iniciar());
+
 /* ---------------------------------------------------------------------- */
 /* MODULE: Login (matrícula + senha; independe das libs de CDN)            */
 /* ---------------------------------------------------------------------- */
@@ -252,11 +291,62 @@ const LoginModule = {
       input.focus();
     });
 
-    const erro = (msg)=>{ errorBox.textContent = msg; errorBox.classList.add("show"); };
+    const erro = (msg)=>{ errorBox.textContent = msg; errorBox.classList.remove("ok"); errorBox.classList.add("show"); };
+
+
+    // ---- abas Entrar / Redefinir senha, olhos de mostrar senha, "esqueci minha senha" ----
+    const tabs = document.getElementById("login-tabs"), rform = document.getElementById("reset-form");
+    const forgot = document.getElementById("login-forgot");
+    if(modoApi && tabs && rform){
+      tabs.style.display = ""; if(forgot) forgot.style.display = "";
+      const rmsg = document.getElementById("reset-msg");
+      const mostrarMsg = (t, ok)=>{ rmsg.textContent = t; rmsg.classList.toggle("ok", !!ok); rmsg.classList.add("show"); };
+      const aba = (qual)=>{
+        tabs.querySelectorAll(".login-tab").forEach(b=>{ const on = b.dataset.lt===qual; b.classList.toggle("active", on); b.setAttribute("aria-selected", on?"true":"false"); });
+        form.style.display = qual==="entrar" ? "" : "none"; rform.style.display = qual==="redefinir" ? "" : "none";
+        errorBox.classList.remove("show"); rmsg.classList.remove("show");
+        const alvo = document.getElementById(qual==="entrar" ? "login-matricula" : "rs-mat");
+        if(alvo){ if(qual==="redefinir" && matInput && matInput.value && !alvo.value) alvo.value = matInput.value; alvo.focus(); }
+      };
+      tabs.querySelectorAll(".login-tab").forEach(b=> b.addEventListener("click", ()=> aba(b.dataset.lt)));
+      if(forgot) forgot.addEventListener("click", ()=> aba("redefinir"));
+      rform.querySelectorAll("[data-eye]").forEach(btn=> btn.addEventListener("click", ()=>{
+        const inp = document.getElementById(btn.dataset.eye), vis = inp.type==="text";
+        inp.type = vis ? "password" : "text";
+        btn.querySelector(".eye-o").style.display = vis ? "block" : "none"; btn.querySelector(".eye-c").style.display = vis ? "none" : "block";
+        btn.setAttribute("aria-label", vis ? "Mostrar senha" : "Ocultar senha"); inp.focus();
+      }));
+      document.getElementById("reset-forgot").addEventListener("click", async ()=>{
+        const mat = (document.getElementById("rs-mat").value||"").trim();
+        if(!mat){ mostrarMsg("Digite sua matrícula acima para avisar o administrador."); return; }
+        try{
+          await Api.call({ acao:"senha_solicitar", matricula:mat });
+          mostrarMsg("Pedido enviado. O administrador vai definir uma senha nova para você em Administração > Acessos.", true);
+        }catch(err){ mostrarMsg(err.message || "Não foi possível enviar o pedido."); }
+      });
+      rform.addEventListener("submit", async (e)=>{
+        e.preventDefault(); rmsg.classList.remove("show");
+        const mat = (document.getElementById("rs-mat").value||"").trim(), atual = document.getElementById("rs-atual").value,
+              nova = document.getElementById("rs-nova").value, conf = document.getElementById("rs-conf").value;
+        if(!mat || !atual || !nova){ mostrarMsg("Preencha matrícula, senha atual e a nova senha."); return; }
+        if(nova.length < 4){ mostrarMsg("A nova senha precisa ter ao menos 4 caracteres."); return; }
+        if(nova !== conf){ mostrarMsg("A confirmação não confere com a nova senha."); return; }
+        const btn = document.getElementById("reset-submit"), t0 = btn.textContent; btn.disabled = true; btn.textContent = "Salvando...";
+        try{
+          const r = await Api.call({ acao:"senha_redefinir", matricula:mat, senhaAtual:atual, novaSenha:nova });
+          if(r && r.ok){
+            rform.reset(); aba("entrar"); matInput.value = mat; input.value = ""; input.focus();
+            erro("Senha alterada! Entre com a nova senha."); errorBox.classList.add("ok");
+          } else mostrarMsg((r && r.erro) || "Não foi possível alterar a senha.");
+        }catch(err){ mostrarMsg(err.message || "Não foi possível alterar a senha."); }
+        finally{ btn.disabled = false; btn.textContent = t0; }
+      });
+      // a mensagem verde de "senha alterada" some no próximo erro
+    }
 
     form.addEventListener("submit", async (e)=>{
       e.preventDefault();
-      errorBox.classList.remove("show");
+      errorBox.classList.remove("show","ok");
       const senha = input.value;
       if(!modoApi){
         if(senha === LOGIN_PASSWORD){

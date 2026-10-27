@@ -21,6 +21,7 @@ const PERMISSOES_SHEET_ID = '1_BamBhG9JaLcwCJumEB7oQg-kKLWGGwcP56xzbcGsW8';
 const ABA_PERMISSOES = 'Logins e Permissões';
 const DADOS_SHEET_ID = '1KCLXuzpf6j4yvd6e5ALcthyW483TOMk5rzJ7XJaLmhQ';
 const ABA_LOG_BASES = 'Bases_Log';
+const ABA_LOG_ACESSOS = 'Acessos_Log';   // histórico de logins, falhas, trocas de senha e tempo de uso
 const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
@@ -73,14 +74,18 @@ function doPost(e) {
   try { d = JSON.parse(e.postData.contents); } catch (err) { return resposta({ ok: false, erro: 'Dados inválidos.' }); }
   try {
     if (d.acao === 'login') return resposta(login(d.matricula, d.senha));
+    if (d.acao === 'senha_redefinir') return resposta(senhaRedefinir(d));
+    if (d.acao === 'senha_solicitar') return resposta(senhaSolicitar(d));
 
     const s = validarToken(d.token);
     if (!s.ok) return resposta({ ok: false, erro: s.erro, login: true });
     if (d.acao === 'sessao') return resposta(s);
+    if (d.acao === 'uso') return resposta(usoRegistrar(d, s));
 
     const lk = LockService.getScriptLock(); lk.waitLock(30000);
     try {
       if (d.acao === 'admin_listar') { exigir(s, PERM_ACESSOS); return resposta(adminListar()); }
+      if (d.acao === 'admin_historico') { exigir(s, PERM_ACESSOS); return resposta(historicoAcessos(d)); }
       if (d.acao === 'admin_salvar') { exigir(s, PERM_ACESSOS); return resposta(adminSalvar(d, s)); }
       if (d.acao === 'bases_status') { exigir(s, PERM_BASES); return resposta(basesStatus()); }
       if (d.acao === 'bases_enviar') { exigir(s, PERM_BASES); return resposta(basesEnviar(d)); }
@@ -157,12 +162,90 @@ function login(matricula, senha) {
   if (!mat || !sen) return { ok: false, erro: 'Informe matrícula e senha.' };
   const u = lerUsuarios().usuarios[mat];
   if (!u || !u.senha || u.senha !== sen) {
-    if (u && !u.senha) return { ok: false, erro: 'Senha ainda não definida. Fale com o administrador.' };
+    if (u && !u.senha) { logAcesso(mat, 'LOGIN_FALHA', 'Senha ainda não definida'); return { ok: false, erro: 'Senha ainda não definida. Fale com o administrador.' }; }
+    logAcesso(mat, 'LOGIN_FALHA', u ? 'Senha incorreta' : 'Matrícula não cadastrada');
     return { ok: false, erro: 'Matrícula ou senha inválidas.' };
   }
-  if (u.bloqueado) return { ok: false, erro: 'Acesso bloqueado. Fale com o administrador.' };
-  if (!u.perms.length) return { ok: false, erro: 'Matrícula sem nenhuma aba liberada.' };
+  if (u.bloqueado) { logAcesso(mat, 'LOGIN_FALHA', 'Acesso bloqueado'); return { ok: false, erro: 'Acesso bloqueado. Fale com o administrador.' }; }
+  if (!u.perms.length) { logAcesso(mat, 'LOGIN_FALHA', 'Sem nenhuma aba liberada'); return { ok: false, erro: 'Matrícula sem nenhuma aba liberada.' }; }
+  logAcesso(mat, 'LOGIN_OK', '');
   return { ok: true, matricula: mat, nome: nomeDaMatricula(mat), perms: u.perms, token: gerarToken(mat) };
+}
+
+/* ===================== Histórico de acessos / uso / redefinição de senha ===================== */
+
+/** Grava uma linha em Acessos_Log. Nunca pode impedir login ou uso. */
+function logAcesso(mat, evento, detalhe, segundos) {
+  try {
+    const ss = dadosSS();
+    let sh = ss.getSheetByName(ABA_LOG_ACESSOS);
+    if (!sh) {
+      sh = ss.insertSheet(ABA_LOG_ACESSOS);
+      sh.getRange(1, 1, 1, 6).setValues([['DataHora', 'Matricula', 'Nome', 'Evento', 'Detalhe', 'Segundos']]).setFontWeight('bold');
+      sh.getRange('A:B').setNumberFormat('@');
+      sh.setFrozenRows(1);
+    }
+    const q = Utilities.formatDate(new Date(), tzDados(), 'yyyy-MM-dd HH:mm:ss');
+    let nome = '';
+    if (evento !== 'USO') { try { nome = nomeDaMatricula(String(mat)); } catch (e) {} }
+    const lin = sh.getLastRow() + 1;
+    sh.getRange(lin, 1, 1, 6).setNumberFormat('@').setValues([[q, String(mat || ''), nome, evento, detalhe || '', segundos || '']]);
+    if (segundos) sh.getRange(lin, 6).setNumberFormat('0').setValue(Number(segundos));
+  } catch (e) { /* o log nunca pode atrapalhar */ }
+}
+
+/** O site envia, a cada poucos minutos, quantos segundos o usuário ficou ativo em cada tela. */
+function usoRegistrar(d, s) {
+  const itens = (Array.isArray(d.itens) ? d.itens : []).slice(0, 30);
+  itens.forEach(function (it) {
+    const seg = Math.max(0, Math.min(3600, Math.round(Number(it && it.seg) || 0)));
+    const pane = String((it && it.pane) || '').slice(0, 80);
+    if (seg > 0 && pane) logAcesso(s.matricula, 'USO', pane, seg);
+  });
+  return { ok: true };
+}
+
+/** Troca de senha feita pelo próprio usuário na tela de login (exige a senha atual). */
+function senhaRedefinir(d) {
+  const mat = String(d.matricula || '').trim(), atual = String(d.senhaAtual || '').trim(), nova = String(d.novaSenha || '').trim();
+  if (!mat || !atual || !nova) return { ok: false, erro: 'Preencha matrícula, senha atual e a nova senha.' };
+  if (nova.length < 4) return { ok: false, erro: 'A nova senha precisa ter ao menos 4 caracteres.' };
+  if (nova === atual) return { ok: false, erro: 'A nova senha precisa ser diferente da atual.' };
+  const lk = LockService.getScriptLock(); lk.waitLock(30000);
+  try {
+    const r = lerUsuarios(), u = r.usuarios[mat], T = r.T;
+    if (!u || !u.senha || u.senha !== atual) { logAcesso(mat, 'LOGIN_FALHA', 'Redefinição: senha atual incorreta'); return { ok: false, erro: 'Matrícula ou senha atual inválidas.' }; }
+    if (u.bloqueado) { logAcesso(mat, 'LOGIN_FALHA', 'Redefinição: acesso bloqueado'); return { ok: false, erro: 'Acesso bloqueado. Fale com o administrador.' }; }
+    T.linhas.forEach(function (l, i) {
+      if (String(l[T.iMat]).trim() === mat) T.sh.getRange(i + 2, T.iSen + 1).setNumberFormat('@').setValue(nova);
+    });
+    logAcesso(mat, 'SENHA_ALTERADA', 'Pelo próprio usuário');
+    return { ok: true };
+  } finally { lk.releaseLock(); }
+}
+
+/** "Esqueci a senha": registra um pedido para o administrador definir uma senha nova em Acessos. */
+function senhaSolicitar(d) {
+  const mat = String(d.matricula || '').trim();
+  if (!mat) return { ok: false, erro: 'Informe a matrícula.' };
+  const cache = CacheService.getScriptCache(), chave = 'pedsenha_' + mat;
+  if (!cache.get(chave)) {
+    cache.put(chave, '1', 600);
+    let existe = false;
+    try { existe = !!lerUsuarios().usuarios[mat]; } catch (e) {}
+    logAcesso(mat, 'SENHA_SOLICITADA', existe ? 'Pediu ao administrador para redefinir' : 'Matrícula não cadastrada');
+  }
+  return { ok: true }; // resposta igual exista ou não a matrícula
+}
+
+/** Últimos registros do log (o site agrega por dia, usuário e tela). */
+function historicoAcessos(d) {
+  const sh = dadosSS().getSheetByName(ABA_LOG_ACESSOS);
+  if (!sh || sh.getLastRow() < 2) return { ok: true, eventos: [], total: 0 };
+  const max = Math.min(Number(d.max) || 6000, 15000);
+  const total = sh.getLastRow() - 1, qtd = Math.min(total, max), ini = sh.getLastRow() - qtd + 1;
+  const v = sh.getRange(ini, 1, qtd, 6).getDisplayValues();
+  return { ok: true, eventos: v, total: total, truncado: total > qtd, hoje: Utilities.formatDate(new Date(), tzDados(), 'yyyy-MM-dd') };
 }
 
 function segredo() {
