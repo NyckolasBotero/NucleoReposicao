@@ -781,6 +781,16 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
   .subnav-btn{ padding:12px 14px; font-size:13.5px; min-height:44px; }
 
   #app-body{ padding:14px 12px 24px; }
+  /* nada pode ser mais largo que a tela: grades, painéis e gráficos encolhem; só as tabelas rolam por dentro */
+  html, body{ max-width:100%; overflow-x:hidden; }
+  #app-body{ max-width:100vw; min-width:0; }
+  #app-body .grid-2, #app-body .grid-3{ grid-template-columns:minmax(0,1fr); }
+  #app-body .cards-grid{ grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr)); }
+  #app-body .view, #app-body .pane, #app-body .panel, #app-body .grid-2 > *, #app-body .grid-3 > *, #app-body .cards-grid > *{ min-width:0; max-width:100%; }
+  #app-body .chart-wrap, #app-body .cap-chart-box{ min-width:0 !important; max-width:100%; }
+  #app-body canvas{ max-width:100% !important; }
+  #app-body .table-wrap{ max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  #app-body .toolbar, #app-body .panel-header, #app-body .panel-actions{ max-width:100%; }
   /* tabelas largas rolam na horizontal em vez de estourar a tela */
   #app-body table{ display:block; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
   #app-body input, #app-body select, #app-body textarea{ font-size:16px; } /* evita o zoom automático do iPhone */
