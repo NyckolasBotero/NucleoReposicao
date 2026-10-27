@@ -13,6 +13,8 @@
   --ease-decel:    cubic-bezier(0, 0, .2, 1);       /* entradas (chegam e desaceleram) */
   --ease-accel:    cubic-bezier(.4, 0, 1, 1);       /* saídas */
   --ease-spring:   cubic-bezier(.34, 1.45, .64, 1); /* destaque leve (avisos, switch) */
+  --ease-expand:   cubic-bezier(.16, 1, .3, 1);     /* expansão do menu (sai rápido, assenta devagar) */
+  --duration-expand:  460ms;
   --duration-instant: 80ms;
   --duration-fast:    140ms;
   --duration-base:    220ms;
@@ -154,15 +156,14 @@ html.theme-switching *, html.theme-switching *::before, html.theme-switching *::
 
 /* ============================ 5. MENU LATERAL ============================ */
 @media (min-width:900px){
-  body{ --sb-w:var(--sb-w-open); transition:padding-left var(--duration-base) var(--ease-standard), background-color var(--duration-base) var(--ease-standard); }
+  body{ --sb-w:var(--sb-w-open); transition:padding-left var(--duration-expand) var(--ease-expand), background-color var(--duration-base) var(--ease-standard); }
   body.sb-collapsed{ --sb-w:var(--sb-w-closed); }
   #sidebar{
     background:var(--sb-bg); width:var(--sb-w); overflow:hidden; white-space:nowrap;
-    transition:width var(--duration-base) var(--ease-standard), box-shadow var(--duration-base) var(--ease-standard);
+    transition:width var(--duration-expand) var(--ease-expand), box-shadow var(--duration-base) var(--ease-standard);
     box-shadow:1px 0 0 rgba(255,255,255,.04), 2px 0 16px rgba(5,18,40,.25);
   }
   /* recolhido: ao passar o mouse, o menu abre por cima do conteúdo (sem empurrar a tela) */
-  body.sb-collapsed #sidebar:hover{ width:var(--sb-w-open); box-shadow:var(--shadow-lg); }
 
   .sb-brand{ position:relative; display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; padding:18px 14px 12px 18px; border-bottom:1px solid rgba(255,255,255,.08); min-height:74px; }
   .sb-brand .sb-logo{ width:136px; height:auto; display:block; transition:opacity var(--duration-base) var(--ease-standard); }
@@ -171,11 +172,11 @@ html.theme-switching *, html.theme-switching *::before, html.theme-switching *::
   .sb-icbtn{ margin-left:auto; width:30px; height:30px; border-radius:8px; border:none; background:transparent; color:rgba(255,255,255,.65); display:flex; align-items:center; justify-content:center; padding:5px; transition:background-color var(--duration-fast), color var(--duration-fast), transform var(--duration-base) var(--ease-standard); }
   .sb-icbtn:hover{ background:rgba(255,255,255,.1); color:#fff; }
   .sb-icbtn svg{ width:100%; height:100%; }
-  body.sb-collapsed #sidebar:not(:hover) .sb-logo{ opacity:0; }
-  body.sb-collapsed #sidebar:not(:hover) .sb-mark{ opacity:1; }
-  body.sb-collapsed #sidebar:not(:hover) .sb-icbtn{ opacity:0; pointer-events:none; }
+  body.sb-collapsed #sidebar .sb-logo{ opacity:0; }
+  body.sb-collapsed #sidebar .sb-mark{ opacity:1; }
+  body.sb-collapsed #sidebar .sb-icbtn{ opacity:0; pointer-events:none; }
   body.sb-collapsed .sb-icbtn{ transform:rotate(180deg); }
-  body.sb-collapsed #sidebar:not(:hover) .sb-app{ opacity:0; }
+  body.sb-collapsed #sidebar .sb-app{ opacity:0; }
 
   #sb-groups{ padding:10px 12px 6px; }
   .sb-group{ margin-bottom:2px; }
@@ -206,7 +207,7 @@ html.theme-switching *, html.theme-switching *::before, html.theme-switching *::
   .sb-foot-btn:active{ transform:scale(.98); }
   .sb-foot-btn .ic{ font-size:20px; width:20px; height:20px; }
   .sb-foot-btn .alert-badge{ margin-left:auto; }
-  body.sb-collapsed #sidebar:not(:hover) .sb-foot-btn .alert-badge{ position:absolute; left:26px; top:3px; margin:0; font-size:9.5px; min-width:16px; padding:0 4px; }
+  body.sb-collapsed #sidebar .sb-foot-btn .alert-badge{ position:absolute; left:26px; top:3px; margin:0; font-size:9.5px; min-width:16px; padding:0 4px; }
   .sb-theme{ display:flex; align-items:center; gap:12px; padding:9px 12px; border-radius:10px; color:rgba(255,255,255,.82); font-size:13px; cursor:pointer; background:transparent; border:none; width:100%; text-align:left; transition:background-color var(--duration-fast); }
   .sb-theme:hover{ background:rgba(255,255,255,.09); }
   .sb-theme .ic{ font-size:20px; width:20px; height:20px; }
@@ -221,12 +222,12 @@ html.theme-switching *, html.theme-switching *::before, html.theme-switching *::
   .sb-out svg{ width:100%; height:100%; }
 
   /* recolhido (e sem mouse em cima): só os ícones */
-  body.sb-collapsed #sidebar:not(:hover) .sb-gl, body.sb-collapsed #sidebar:not(:hover) .sb-lbl, body.sb-collapsed #sidebar:not(:hover) .sb-user-tx,
-  body.sb-collapsed #sidebar:not(:hover) .sb-caret, body.sb-collapsed #sidebar:not(:hover) .sw{ opacity:0; pointer-events:none; }
-  body.sb-collapsed #sidebar:not(:hover) .sb-items{ grid-template-rows:0fr; }
-  body.sb-collapsed #sidebar:not(:hover) .sb-group.current > .sb-group-btn{ background:rgba(255,255,255,.14); }
-  body.sb-collapsed #sidebar:not(:hover) .sb-user{ padding-left:2px; }
-  body.sb-collapsed #sidebar:not(:hover) .sb-out{ opacity:0; pointer-events:none; }
+  body.sb-collapsed #sidebar .sb-gl, body.sb-collapsed #sidebar .sb-lbl, body.sb-collapsed #sidebar .sb-user-tx,
+  body.sb-collapsed #sidebar .sb-caret, body.sb-collapsed #sidebar .sw{ opacity:0; pointer-events:none; }
+  body.sb-collapsed #sidebar .sb-items{ grid-template-rows:0fr; }
+  body.sb-collapsed #sidebar .sb-group.current > .sb-group-btn{ background:rgba(255,255,255,.14); }
+  body.sb-collapsed #sidebar .sb-user{ padding-left:2px; }
+  body.sb-collapsed #sidebar .sb-out{ opacity:0; pointer-events:none; }
 }
 
 /* ============================ 6. BOTÕES, CARDS E TABELAS ============================ */
@@ -352,3 +353,101 @@ textarea{ background:var(--white); color:var(--ink); }
   #header-logo{ height:22px; }
   @media (max-width:420px){ #header-logo{ display:none; } }
 }
+
+/* ============================ 10. MOVIMENTO EXPRESSIVO ============================
+   hover com vida, clique com onda, menu que expande, rolagem suave, janelas em "pop" */
+
+/* --- botões: elevação, brilho que passa e ícone que reage --- */
+.btn, .sb-group-btn, .sb-foot-btn, .sb-theme, .toggle-group button, .subnav-btn, .nav-btn, .icon-btn, .sb-icbtn{ position:relative; overflow:hidden; isolation:isolate; -webkit-tap-highlight-color:transparent; }
+.btn{ transition:transform var(--duration-slow) var(--ease-spring), box-shadow var(--duration-base) var(--ease-standard),
+  background-color var(--duration-base) var(--ease-standard), border-color var(--duration-base), color var(--duration-base), filter var(--duration-base); }
+.btn::after{ content:""; position:absolute; inset:0; z-index:-1; pointer-events:none; opacity:0;
+  background:linear-gradient(105deg, transparent 25%, rgba(255,255,255,.42) 50%, transparent 75%); transform:translateX(-130%); }
+.btn:hover:not(:disabled)::after{ opacity:1; transform:translateX(130%); transition:transform 700ms var(--ease-standard); }
+.btn:hover:not(:disabled){ transform:translateY(-2px); box-shadow:0 10px 22px -8px rgba(16,32,64,.35); }
+.btn-primary:hover:not(:disabled){ filter:brightness(1.07) saturate(1.1); box-shadow:0 12px 24px -8px color-mix(in srgb, var(--brand) 70%, transparent); }
+.btn-outline:hover:not(:disabled){ background:var(--blue-light); border-color:var(--blue-med); color:var(--blue-med); }
+.btn-ghost:hover:not(:disabled){ box-shadow:0 8px 18px -8px rgba(16,32,64,.3); }
+.btn .ic, .btn svg{ transition:transform var(--duration-slow) var(--ease-spring); }
+.btn:hover:not(:disabled) .ic{ transform:scale(1.14) rotate(-6deg); }
+.btn:active:not(:disabled){ transform:translateY(0) scale(.94); box-shadow:none; transition-duration:var(--duration-instant), var(--duration-fast); }
+.btn:focus-visible, .sb-group-btn:focus-visible, .sb-item:focus-visible, .sb-foot-btn:focus-visible{ outline:none; box-shadow:var(--focus); }
+
+/* onda do clique (criada pelo JS no ponto exato do toque) */
+.rpl{ position:absolute; z-index:-1; border-radius:50%; pointer-events:none; background:currentColor; opacity:.28; transform:scale(0); animation:ripple 720ms var(--ease-decel) forwards; }
+@keyframes ripple{ to{ transform:scale(1); opacity:0; } }
+
+/* chips, abas e botões menores também respondem */
+.toggle-group button, .subnav-btn, .nav-btn, .icon-btn{ transition:transform var(--duration-slow) var(--ease-spring), background-color var(--duration-base) var(--ease-standard), color var(--duration-base), box-shadow var(--duration-base); }
+.toggle-group button:hover:not(.active), .subnav-btn:hover:not(.active), .icon-btn:hover{ transform:translateY(-1px); }
+.toggle-group button:active, .subnav-btn:active, .icon-btn:active{ transform:scale(.93); transition-duration:var(--duration-instant); }
+.icon-btn:hover svg, .sb-icbtn:hover svg{ transform:scale(1.12); }
+.icon-btn svg, .sb-icbtn svg{ transition:transform var(--duration-slow) var(--ease-spring); }
+table.data-table tbody tr:hover{ background:var(--blue-light); }
+.card:hover .card-value{ transform:scale(1.03); transform-origin:left center; }
+.card .card-value{ transition:transform var(--duration-slow) var(--ease-spring); display:inline-block; }
+
+/* --- barra de rolagem da página (progresso) e cabeçalho que ganha sombra --- */
+#scroll-prog{ position:fixed; left:0; top:0; height:3px; width:100%; z-index:60; pointer-events:none; transform-origin:left; transform:scaleX(0);
+  background:linear-gradient(90deg, var(--blue-med), var(--brand)); border-radius:0 3px 3px 0; opacity:0; transition:opacity var(--duration-base); }
+#scroll-prog.on{ opacity:1; }
+#app-header{ transition:box-shadow var(--duration-base) var(--ease-standard), background-color var(--duration-base); }
+#app-header.scrolled{ box-shadow:0 8px 24px -12px rgba(16,32,64,.35); }
+@media (min-width:900px){ body:not(.locked) #scroll-prog{ left:var(--sb-w); width:calc(100% - var(--sb-w)); transition:opacity var(--duration-base), left var(--duration-expand) var(--ease-expand), width var(--duration-expand) var(--ease-expand); } }
+
+/* --- menu lateral: expansão e retração --- */
+@media (min-width:900px){
+  /* retraído: só os símbolos, centralizados */
+  body.sb-collapsed .sb-group-btn, body.sb-collapsed .sb-foot-btn, body.sb-collapsed .sb-theme{ gap:0; }
+  /* textos entram deslizando e em sequência quando o menu expande; somem na hora quando retrai */
+  .sb-gl, .sb-lbl, .sb-user-tx, .sb-caret{ transition:opacity var(--duration-base) var(--ease-standard) 140ms, transform var(--duration-expand) var(--ease-expand) 80ms; }
+  body.sb-collapsed #sidebar .sb-gl, body.sb-collapsed #sidebar .sb-lbl, body.sb-collapsed #sidebar .sb-user-tx, body.sb-collapsed #sidebar .sb-caret{
+    transform:translateX(-10px); transition-delay:0ms; transition-duration:var(--duration-fast), var(--duration-base); }
+  #sb-groups > .sb-group:nth-child(2) .sb-gl, #sb-groups > .sb-group:nth-child(2) .sb-caret{ transition-delay:calc(140ms + 1*var(--stagger)), calc(80ms + 1*var(--stagger)); }
+  #sb-groups > .sb-group:nth-child(3) .sb-gl, #sb-groups > .sb-group:nth-child(3) .sb-caret{ transition-delay:calc(140ms + 2*var(--stagger)), calc(80ms + 2*var(--stagger)); }
+  #sb-groups > .sb-group:nth-child(4) .sb-gl, #sb-groups > .sb-group:nth-child(4) .sb-caret{ transition-delay:calc(140ms + 3*var(--stagger)), calc(80ms + 3*var(--stagger)); }
+  #sb-groups > .sb-group:nth-child(n+5) .sb-gl, #sb-groups > .sb-group:nth-child(n+5) .sb-caret{ transition-delay:calc(140ms + 4*var(--stagger)), calc(80ms + 4*var(--stagger)); }
+  body.sb-collapsed #sidebar .sb-group .sb-gl, body.sb-collapsed #sidebar .sb-group .sb-caret{ transition-delay:0ms; }
+
+ body.sb-collapsed #sidebar .sb-items{ visibility:hidden; transition:grid-template-rows var(--duration-slow) var(--ease-expand), visibility 0s linear var(--duration-slow); }
+  body.sb-collapsed #sidebar .sb-items-in{ padding:0; margin:0; border-left-color:transparent; }
+  /* ícones: leve "pulo" ao passar o mouse e ao selecionar */
+  .sb-ic, .sb-ii{ transition:transform var(--duration-slow) var(--ease-spring); }
+  .sb-group-btn:hover .sb-ic, .sb-foot-btn:hover .ic, .sb-theme:hover .ic{ transform:scale(1.18); }
+  .sb-group-btn:active, .sb-foot-btn:active, .sb-theme:active{ transform:scale(.96); transition-duration:var(--duration-instant); }
+  .sb-group-btn, .sb-foot-btn, .sb-theme{ transition:background-color var(--duration-base) var(--ease-standard), color var(--duration-base), transform var(--duration-slow) var(--ease-spring); }
+  .sb-group-btn:hover{ transform:translateX(3px); }
+  body.sb-collapsed .sb-group-btn:hover{ transform:none; }
+  .sb-group.open > .sb-group-btn .sb-ic{ transform:scale(1.06); }
+
+  /* seta gira com mola; lista de itens abre com altura animada e itens em cascata */
+  .sb-caret{ transition:opacity var(--duration-base) var(--ease-standard) 140ms, transform var(--duration-slow) var(--ease-spring); }
+  .sb-items{ transition:grid-template-rows var(--duration-slow) var(--ease-expand); }
+  .sb-group.open .sb-item{ animation:itemIn var(--duration-slow) var(--ease-decel) both; }
+  .sb-group.open .sb-item:nth-child(1){ animation-delay:40ms; }  .sb-group.open .sb-item:nth-child(2){ animation-delay:80ms; }
+  .sb-group.open .sb-item:nth-child(3){ animation-delay:120ms; } .sb-group.open .sb-item:nth-child(4){ animation-delay:160ms; }
+  .sb-group.open .sb-item:nth-child(5){ animation-delay:200ms; } .sb-group.open .sb-item:nth-child(n+6){ animation-delay:240ms; }
+  .sb-item{ transition:background-color var(--duration-base) var(--ease-standard), color var(--duration-base), transform var(--duration-slow) var(--ease-spring); }
+  .sb-item:hover{ transform:translateX(4px); }
+  .sb-item:active{ transform:translateX(4px) scale(.97); transition-duration:var(--duration-instant); }
+  .sb-item.active{ box-shadow:inset 0 0 0 1px rgba(255,255,255,.08); }
+  #sb-groups{ scroll-behavior:smooth; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
+  /* ao expandir/retrair, o conteúdo se acomoda sem pulo */
+  #app-body, #app-header{ will-change:auto; }
+}
+@keyframes itemIn{ from{ opacity:0; transform:translateX(-10px); } to{ opacity:1; transform:none; } }
+
+/* --- janelas e painéis: "pop" ao abrir e ao fechar --- */
+@keyframes popIn{ 0%{ opacity:0; transform:scale(.86) translateY(14px); } 55%{ opacity:1; transform:scale(1.03) translateY(-2px); } 100%{ opacity:1; transform:none; } }
+@keyframes popOut{ 0%{ opacity:1; transform:none; } 100%{ opacity:0; transform:scale(.9) translateY(10px); } }
+@keyframes fadeOut{ to{ opacity:0; } }
+.modal-overlay.show{ animation:fadeIn var(--duration-base) var(--ease-standard) both; -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px); }
+.modal-overlay.show .modal-box{ animation:popIn 460ms var(--ease-standard) both; transform-origin:center; }
+.modal-overlay.show.fechando{ animation:fadeOut 200ms var(--ease-accel) both; pointer-events:none; }
+.modal-overlay.show.fechando .modal-box{ animation:popOut 200ms var(--ease-accel) both; }
+.modal-close{ transition:transform var(--duration-slow) var(--ease-spring), color var(--duration-fast); border-radius:50%; width:32px; height:32px; }
+.modal-close:hover{ transform:rotate(90deg) scale(1.1); color:var(--red); }
+.pop-in{ animation:fadeIn var(--duration-base) var(--ease-standard) both; }
+.pop-in > *:first-child{ animation:popIn 460ms var(--ease-standard) both; }
+#flow-overlay-root.show .flow-backdrop{ animation:fadeIn var(--duration-slow) var(--ease-standard) both; }
+.tst{ animation-timing-function:var(--ease-standard); }

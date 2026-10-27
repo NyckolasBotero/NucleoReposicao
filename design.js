@@ -237,6 +237,81 @@ const Design = {
     chip.classList.remove("flash"); void chip.offsetWidth; chip.classList.add("flash");
   },
 
+  /* ------------------------------ movimento expressivo ------------------------------ */
+  reduzirMovimento(){ try{ return matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){ return false; } },
+  movimento(){
+    // 1) onda no ponto do clique
+    const alvos = ".btn, .sb-group-btn, .sb-foot-btn, .sb-theme, .toggle-group button, .subnav-btn, .nav-btn, .icon-btn";
+    document.addEventListener("pointerdown", e=>{
+      if(this.reduzirMovimento() || e.button > 0) return;
+      const el = e.target.closest && e.target.closest(alvos);
+      if(!el || el.disabled) return;
+      const r = el.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2.2;
+      const o = document.createElement("span"); o.className = "rpl";
+      o.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d/2}px;top:${e.clientY - r.top - d/2}px`;
+      el.appendChild(o); setTimeout(()=> o.remove(), 760);
+    }, { passive:true });
+
+    // 2) menu recolhido: clicar numa aba expande o menu (com o efeito) e já abre o grupo
+    const grupos = document.getElementById("sb-groups");
+    if(grupos) grupos.addEventListener("click", e=>{
+      const b = e.target.closest && e.target.closest(".sb-group-btn");
+      if(!b || !this.menuRecolhido()) return;
+      b.parentElement.classList.remove("open");      // o app.js alterna em seguida e deixa aberto
+      this.recolherMenu(false, true);
+    }, true);
+
+    // 3) barra de progresso da página + sombra no cabeçalho
+    let prog = document.getElementById("scroll-prog");
+    if(!prog){ prog = document.createElement("div"); prog.id = "scroll-prog"; document.body.appendChild(prog); }
+    const hdr = document.getElementById("app-header"); let tick = false;
+    const atualizar = ()=>{
+      tick = false;
+      const max = document.documentElement.scrollHeight - innerHeight, y = window.scrollY;
+      prog.style.transform = `scaleX(${max > 0 ? Math.min(1, y / max) : 0})`;
+      prog.classList.toggle("on", y > 24 && max > 120);
+      if(hdr) hdr.classList.toggle("scrolled", y > 6);
+    };
+    addEventListener("scroll", ()=>{ if(!tick){ tick = true; requestAnimationFrame(atualizar); } }, { passive:true });
+    atualizar();
+
+    // 4) rolagem suave com inércia (roda do mouse): a página desce aos poucos
+    if(!this.reduzirMovimento() && !matchMedia("(pointer: coarse)").matches){
+      let alvo = 0, atual = 0, raf = 0;
+      const passo = ()=>{
+        atual += (alvo - atual) * 0.14;
+        if(Math.abs(alvo - atual) < 0.6){ atual = alvo; scrollTo(0, atual); raf = 0; return; }
+        scrollTo(0, atual); raf = requestAnimationFrame(passo);
+      };
+      addEventListener("wheel", e=>{
+        if(e.ctrlKey || e.defaultPrevented || e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+        if(document.body.classList.contains("locked") || document.querySelector(".modal-overlay.show, #flow-overlay-root.show")) return;
+        // deixa rolar sozinho o que tem rolagem própria (tabelas, listas, menu lateral, janelas)
+        for(let el = e.target; el && el !== document.body && el.nodeType === 1; el = el.parentElement){
+          const oy = getComputedStyle(el).overflowY;
+          if((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1){
+            const sobe = e.deltaY < 0;
+            if((sobe && el.scrollTop > 0) || (!sobe && el.scrollTop + el.clientHeight < el.scrollHeight - 1)) return;
+          }
+          if(getComputedStyle(el).position === "fixed") return;
+        }
+        let dy = e.deltaY; if(e.deltaMode === 1) dy *= 32; else if(e.deltaMode === 2) dy *= innerHeight;
+        if(!raf){ atual = window.scrollY; alvo = atual; }
+        alvo = Math.max(0, Math.min(document.documentElement.scrollHeight - innerHeight, alvo + dy));
+        e.preventDefault();
+        if(!raf) raf = requestAnimationFrame(passo);
+      }, { passive:false });
+      // barra de rolagem arrastada / teclado: abandona a animação em curso
+      addEventListener("keydown", ()=>{ if(raf){ cancelAnimationFrame(raf); raf = 0; } }, true);
+      addEventListener("pointerdown", ()=>{ if(raf){ cancelAnimationFrame(raf); raf = 0; } }, true);
+    }
+
+    // 5) janelas criadas pelo código (fora do modal padrão) também entram em "pop"
+    new MutationObserver(ms=> ms.forEach(m=> m.addedNodes.forEach(n=>{
+      if(n.nodeType === 1 && n.parentNode === document.body && n.style && /position:\s*fixed/.test(n.style.cssText) && /inset:\s*0/.test(n.style.cssText) && /z-index:\s*(9999|2500)/.test(n.style.cssText)) n.classList.add("pop-in");
+    }))).observe(document.body, { childList:true });
+  },
+
   /* ------------------------------ inicialização ------------------------------ */
   iniciar(){
     Icons.hidratar();
@@ -256,6 +331,7 @@ const Design = {
     }catch(e){}
     document.addEventListener("loginOk", ()=> this.boasVindas());
     if(typeof Auth !== "undefined" && Auth.user && !document.body.classList.contains("locked")) this.boasVindas();
+    this.movimento();
     this.ligarApp();
   },
   /** liga o que depende de objetos do app.js (carregado depois deste arquivo) */
@@ -273,6 +349,19 @@ const Design = {
         const g = FeedbackDoc.generateMultiple;
         FeedbackDoc.generateMultiple = function(){ const a = arguments; return Design.emTemaClaro(()=> g.apply(FeedbackDoc, a)); };
       }
+      // janela padrão: "pop" ao abrir e ao fechar (espera a animação de saída antes de esconder)
+      const ov = ()=> document.getElementById("modal-overlay");
+      const abrir = UI.openModal, fechar = UI.closeModal; let tFecha = 0;
+      UI.openModal = function(){
+        clearTimeout(tFecha); const o = ov(); if(o) o.classList.remove("fechando");
+        return abrir.apply(UI, arguments);
+      };
+      UI.closeModal = function(){
+        const o = ov();
+        if(!o || !o.classList.contains("show") || o.classList.contains("fechando") || Design.reduzirMovimento()) return fechar.apply(UI, arguments);
+        o.classList.add("fechando");
+        tFecha = setTimeout(()=>{ o.classList.remove("fechando"); fechar.call(UI); }, 190);
+      };
       // botões de atualizar mostram "Atualizando…" durante qualquer carga
       const imp = UI.importar;
       UI.importar = async function(){
