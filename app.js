@@ -7756,6 +7756,8 @@ function computeFerias(){
   const processed = window.APP_STATE.processed;
   const tv = processed.turnover || [];
   const hoje = Production.maxDataDate() || new Date();
+  const hojeReal = dateOnly(new Date());
+  const agend = (processed.feriasAgendadas||[]).filter(f=>!f.cancelada);
 
   const ativos = tv.filter(r=>r.ativo && r.dtAdm);
 
@@ -7771,19 +7773,35 @@ function computeFerias(){
     // presume-se tirados → para no ciclo 2026 (11/10/2026), ainda não vencido.
     while((hoje - dataFerias) / 86400000 > 120){ dataFerias = addMonths(dataFerias, 12); }
 
-    const diffDias = Math.round((dataFerias - hoje) / 86400000);
+    // férias lançadas em Lançamentos > Lançar Férias mandam no status: quem está de férias (ou já tem
+    // férias marcadas) não é "vencido" — a situação está em vigor / resolvida.
+    const k = r.matric ? normStr(String(r.matric)) : null;
+    const mine = k ? agend.filter(f=>f.codKey===k) : [];
+    // lançamentos deste ciclo: começam de ~5 meses antes até ~11 meses depois da data prevista
+    const doCiclo = ()=> mine.filter(f=>{ const di = (dateOnly(f.ini) - dateOnly(dataFerias)) / 86400000; return di >= -150 && di <= 330; });
+    let lanc = doCiclo();
+    // 30 dias ou mais já gozados neste ciclo → o ciclo está cumprido; vale o próximo
+    if(lanc.filter(f=>dateOnly(f.fim) < hojeReal).reduce((n,f)=>n+(f.dias||0),0) >= 30){ dataFerias = addMonths(dataFerias, 12); lanc = doCiclo(); }
+    const emGozo = lanc.find(f=> dateOnly(f.ini) <= hojeReal && dateOnly(f.fim) >= hojeReal);
+    const futura = lanc.filter(f=> dateOnly(f.ini) > hojeReal).sort((x,y)=> x.ini - y.ini)[0];
 
+    let diffDias = Math.round((dataFerias - hoje) / 86400000);
     let bucket, bucketLabel, cor;
-    if(diffDias < 0){ bucket='vencida'; bucketLabel='🚨 Vencida'; cor='#d64545'; }
+    if(emGozo){ bucket='emgozo'; bucketLabel='🏖️ Em férias'; cor='#7a3fc4'; diffDias = Math.round((dateOnly(emGozo.fim) - hojeReal) / 86400000) + 1; }
+    else if(futura){ bucket='agendada'; bucketLabel='📅 Agendada'; cor='#7a3fc4'; diffDias = Math.round((dateOnly(futura.ini) - hojeReal) / 86400000); }
+    else if(diffDias < 0){ bucket='vencida'; bucketLabel='🚨 Vencida'; cor='#d64545'; }
     else if(diffDias <= 90){ bucket='prox3'; bucketLabel='⏰ Próx. 3 meses'; cor='#e08a1f'; }
     else if(diffDias <= 180){ bucket='ate6'; bucketLabel='🕐 Até 6 meses'; cor='#c99a1f'; }
     else if(diffDias <= 270){ bucket='ate9'; bucketLabel='📅 Até 9 meses'; cor='#2f6fce'; }
     else { bucket='mais9'; bucketLabel='✅ +9 meses'; cor='#1a9c62'; }
 
     return { ...r, dataFerias, diffDias, bucket, bucketLabel, cor };
-  }).sort((a,b)=> a.diffDias - b.diffDias);
+  }).sort((a,b)=>{
+    const fim = x=> (x.bucket==='emgozo' || x.bucket==='agendada') ? 100000 : 0;   // em férias / agendadas: depois das pendências
+    return (fim(a) + a.diffDias) - (fim(b) + b.diffDias);
+  });
 
-  const counts = { vencida:0, prox3:0, ate6:0, ate9:0, mais9:0 };
+  const counts = { vencida:0, emgozo:0, agendada:0, prox3:0, ate6:0, ate9:0, mais9:0 };
   linhas.forEach(l=>{ counts[l.bucket] = (counts[l.bucket]||0)+1; });
 
   const semData = tv.filter(r=>r.ativo && !r.dtAdm);
@@ -7835,6 +7853,8 @@ function renderFerias(){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         ${mc('vencida','Vencidas', d.counts.vencida, '#d64545', FeriasState.filtro==='vencida')}
+        ${mc('emgozo','Em férias', d.counts.emgozo, '#7a3fc4', FeriasState.filtro==='emgozo')}
+        ${mc('agendada','Agendadas', d.counts.agendada, '#7a3fc4', FeriasState.filtro==='agendada')}
         ${mc('prox3','Próximas 3 meses', d.counts.prox3, '#e08a1f', FeriasState.filtro==='prox3')}
         ${mc('ate6','Até 6 meses', d.counts.ate6, '#c99a1f', FeriasState.filtro==='ate6')}
         ${mc('ate9','Até 9 meses', d.counts.ate9, '#2f6fce', FeriasState.filtro==='ate9')}
@@ -7847,7 +7867,7 @@ function renderFerias(){
     <div class="panel">
       <div class="panel-header">
         <h3>Funcionários ${FeriasState.filtro ? '— filtro: '+escapeHtml(d.linhas.find(l=>l.bucket===FeriasState.filtro)?.bucketLabel||'') : '(todos)'}</h3>
-        <span class="panel-note">${linhasFiltradas.length} de ${d.total} · ordenado por urgência (vencidas primeiro)</span>
+        <span class="panel-note">${linhasFiltradas.length} de ${d.total} · ordenado por urgência (vencidas primeiro; em férias e agendadas por último)</span>
         ${FeriasState.filtro ? `<button onclick="FeriasState.filtro=null;renderFerias();" style="padding:5px 12px;font-size:11px;font-weight:700;border-radius:6px;border:1.5px solid #7a8798;background:#fff;color:#7a8798;cursor:pointer;">Limpar filtro</button>` : ''}
       </div>
       <div class="table-wrap">
@@ -7866,7 +7886,7 @@ function renderFerias(){
                 <td>${fmtDateBR(l.dtAdm)}</td>
                 <td style="font-weight:700;color:${l.cor};">${fmtDateBR(l.dataFerias)}</td>
                 <td>${pill(l.bucketLabel, l.cor)}</td>
-                <td style="text-align:right;color:${l.cor};font-weight:700;">${l.diffDias<0? (Math.abs(l.diffDias)+'d vencida') : (l.diffDias+'d')}</td>
+                <td style="text-align:right;color:${l.cor};font-weight:700;">${l.bucket==='emgozo' ? ('volta em '+l.diffDias+'d') : l.bucket==='agendada' ? ('começa em '+l.diffDias+'d') : l.diffDias<0 ? (Math.abs(l.diffDias)+'d vencida') : (l.diffDias+'d')}</td>
                 <td>${fx.prox ? `<strong style="color:#7a3fc4">${fmtDateBR(fx.prox.ini)} a ${fmtDateBR(fx.prox.fim)}</strong> <span class="small-muted">(${fx.prox.dias}d)</span>` : '<span class="small-muted">não agendada</span>'}</td>
                 <td style="text-align:right">${fx.tiradas||'—'}</td>
               </tr>`; }).join('') : `<tr><td colspan="9" style="text-align:center;color:#7a8798;padding:16px;">Nenhum funcionário neste filtro.</td></tr>`}
