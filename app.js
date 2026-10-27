@@ -703,12 +703,13 @@ const ImportLog = {
   // efetivamente veio em raw
   buildLog(raw){
     // "AUDITORIA REP" saiu do log: as bases de auditoria agora são Auditoria_Ruas e Auditoria_Retorno (+ apoio)
-    const allSheets = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]).filter(n=>n!=="AUDITORIA REP");
+    // abas exibidas no log, na ordem pedida (8457 e Tipo não aparecem)
+    const allSheets = ["FEEDBACK REP","ADVERTÊNCIAS","FÉRIAS AGENDADAS","QUADRO REP","CRONOGRAMA","TURNOVER","MISSÕES","REP.AVARIA","Capacidade Realizada","9712","1707","8271","8460","8022","8022 Nova"];
     const oi0 = OnlineSheets.info;
     return allSheets.map(name0=>{
       const rows = raw[name0];
       const oi = oi0 && oi0.abas ? oi0.abas[name0] : null;
-      const name = oi && oi.status==="ok" ? name0+" (Google Sheets)" : name0;
+      const name = this.rotulo(name0) + (oi && oi.status==="ok" ? " (Google Sheets)" : "");
       if(oi && oi.status==="erro"){
         return { name, status:"alerta", statusLabel:"⚠️ Falha ao ler (online)", date:null, msg:`Aba ${name0}: ${oi.motivo}`, rowCount:0 };
       }
@@ -731,10 +732,17 @@ const ImportLog = {
     }).concat(this.logAuditoria());
   },
 
+  // nome exibido no log: só a primeira letra de cada palavra maiúscula
+  ROTULOS: { "FEEDBACK REP":"Feedbacks", "QUADRO REP":"Quadro Reposição", "REP.AVARIA":"Relações Ava. Repositores", "Capacidade Realizada":"Validação Capacidade" },
+  rotulo(n){
+    const base = this.ROTULOS[n] || n;
+    return String(base).replace(/_/g," ").toLowerCase().replace(/(^|\s|\.)(\S)/g,(m,a,b)=>a+b.toUpperCase());
+  },
+
   // bases de auditoria lidas direto do Google Sheets de auditoria (fora do Excel/planilha principal)
   logAuditoria(){
     const mk = (nome, rows, erro, carregou)=>{
-      const name = nome+" (Google Sheets)";
+      const name = this.rotulo(nome)+" (Google Sheets)";
       if(erro) return { name, status:"alerta", statusLabel:"⚠️ Falha ao ler (online)", date:null, msg:`Aba ${nome}: ${erro}`, rowCount:0 };
       if(!carregou) return { name, status:"alerta", statusLabel:"⚠️ Não carregada", date:null, msg:`Aba ${nome} não foi lida nesta carga.`, rowCount:0 };
       if(!rows.length) return { name, status:"vazia", statusLabel:"Sem dados", date:null, msg:"A aba foi encontrada, mas não contém nenhuma linha de dados.", rowCount:0 };
