@@ -224,16 +224,24 @@ const LoginModule = {
     (matInput && modoApi ? matInput : input).focus();
   },
 
+  // entra, mas continua na tela de login enquanto os dados carregam (saudação + progresso discreto)
   entrar(){
-    document.body.classList.remove("locked");
-    document.getElementById("login-screen").classList.add("hidden");
+    document.getElementById("login-screen").classList.add("carregando");
     Nav.render();
     document.dispatchEvent(new Event("loginOk"));
   },
 
+  // libera o painel: a tela de entrada some suavemente
+  liberar(){
+    document.body.classList.remove("locked");
+    const tela = document.getElementById("login-screen");
+    tela.classList.add("saindo");
+    setTimeout(()=>{ tela.classList.add("hidden"); tela.classList.remove("saindo","carregando"); }, 460);
+  },
+
   mostrar(msg){
     document.body.classList.add("locked");
-    document.getElementById("login-screen").classList.remove("hidden");
+    document.getElementById("login-screen").classList.remove("hidden","carregando","saindo");
     const box = document.getElementById("login-error");
     if(box && msg){ box.textContent = msg; box.classList.add("show"); }
   },
@@ -494,55 +502,19 @@ function avg(arr){ return arr.length ? sum(arr)/arr.length : 0; }
 /* MODULE: LoadingScreen (tela de carregamento do arquivo)                 */
 /* ---------------------------------------------------------------------- */
 const LoadingScreen = {
-  root(){ return document.getElementById("flow-overlay-root"); },
-  steps: [
-    { id:"recebido", label:"Arquivo recebido" },
-    { id:"lendo", label:"Lendo arquivo..." },
-    { id:"validando", label:"Validando estrutura..." },
-    { id:"sheets", label:"Identificando sheets..." },
-    { id:"processando", label:"Processando dados..." },
-    { id:"finalizando", label:"Finalizando..." }
-  ],
-  show(filename){
-    const root = this.root();
-    root.innerHTML = `
-      <div class="flow-backdrop">
-        <div class="flow-card">
-          <div class="flow-spinner"></div>
-          <div class="flow-title">Carregando arquivo</div>
-          <div class="flow-filename">📄 ${escapeHtml(filename)}</div>
-          <div class="flow-progress-track" style="margin-top:18px;"><div class="flow-progress-bar" id="flow-progress-bar" style="width:2%;"></div></div>
-          <div class="flow-steps" id="flow-steps">
-            ${this.steps.map(s=>`<div class="flow-step" id="flow-step-${s.id}"><span class="flow-step-icon">•</span><span>${s.label}</span></div>`).join("")}
-          </div>
-        </div>
-      </div>`;
-    root.classList.add("show");
+  rotulos: { recebido:"Conectando", lendo:"Lendo planilhas", validando:"Validando", sheets:"Organizando abas", processando:"Processando", finalizando:"Finalizando" },
+  steps: [ { id:"recebido" }, { id:"lendo" }, { id:"validando" }, { id:"sheets" }, { id:"processando" }, { id:"finalizando" } ],
+  /** ctx: "login" (tela de entrada) ou "painel" (atualização com o painel aberto) */
+  show(filename, ctx){
+    this.ctx = ctx || "painel";
+    Design.carga.iniciar(this.ctx, filename);
   },
-  // marca um passo como ativo (spinner) e todos os anteriores como concluídos (✓),
-  // avança a barra de progresso. pct opcional (0-100); se omitido, calcula pela posição do passo.
-  async step(stepId, pct){
-    const idx = this.steps.findIndex(s=>s.id===stepId);
-    if(idx===-1) return;
-    this.steps.forEach((s,i)=>{
-      const el = document.getElementById("flow-step-"+s.id);
-      if(!el) return;
-      el.classList.remove("active","done");
-      if(i<idx){ el.classList.add("done"); el.querySelector(".flow-step-icon").textContent = "✓"; }
-      else if(i===idx){ el.classList.add("active"); el.querySelector(".flow-step-icon").textContent = "•"; }
-      else { el.querySelector(".flow-step-icon").textContent = "•"; }
-    });
-    const bar = document.getElementById("flow-progress-bar");
-    if(bar) bar.style.width = (pct!==undefined ? pct : Math.round((idx+1)/this.steps.length*100)) + "%";
-    // pequena pausa proposital para o usuário perceber a etapa (processamento real
-    // costuma ser rápido demais pra "ver" as etapas sem isso)
-    await new Promise(res=>setTimeout(res, 260));
+  async step(stepId){ Design.carga.etapa(this.rotulos[stepId] || ""); },
+  progresso(feitas, total, nome, info){
+    Design.carga.progresso(feitas, total);
+    if(nome) Design.carga.item(nome, info && info.status === "ok" ? "ok" : "warn", info && info.status === "ok" ? (info.linhas||0).toLocaleString("pt-BR") : "sem dados");
   },
-  hide(){
-    const root = this.root();
-    root.classList.remove("show");
-    root.innerHTML = "";
-  }
+  hide(){ Design.carga.fim(); Design.carga.saiFeed(500); }
 };
 
 /* ---------------------------------------------------------------------- */
@@ -781,7 +753,7 @@ const OnlineSheets = {
         info.abas[nome] = { status:"erro", linhas:0, motivo: e && e.message ? e.message : String(e) };
         return { nome, aoa:null };
       }finally{
-        feitas++; if(onProgress) onProgress(feitas, nomes.length);
+        feitas++; if(onProgress) onProgress(feitas, nomes.length, nome, info.abas[nome]);
       }
     }));
     const erros = nomes.filter(n=>info.abas[n].status==="erro");
@@ -3894,17 +3866,15 @@ const UI = {
     this._carregandoOnline = true;
     try{
       await this.importar({ name:"Google Sheets (online)", online:true }, ()=>{
-        return ExcelLoader.loadOnline((feitas,total)=>{
-          const bar = document.getElementById("flow-progress-bar");
-          if(bar) bar.style.width = (20 + Math.round(feitas/total*25)) + "%";
-        });
+        return ExcelLoader.loadOnline((feitas,total,nome,info)=> LoadingScreen.progresso(feitas,total,nome,info));
       });
     } finally { this._carregandoOnline = false; }
   },
 
   async importar(file, lerRaw){
     $("#empty-error").innerHTML = "";
-    LoadingScreen.show(file.name);
+    const naLogin = document.body.classList.contains("locked");   // 1º carregamento, ainda na tela de entrada
+    LoadingScreen.show(file.name, naLogin ? "login" : "painel");
     let stage = file.online ? "leitura da planilha online (Google Sheets)" : "leitura do arquivo (Excel Loader)";
     try{
       await LoadingScreen.step("recebido", 5);
@@ -3952,7 +3922,7 @@ const UI = {
 
       await LoadingScreen.step("finalizando", 100);
       stage = "montagem do log de importação";
-      LoadingScreen.hide();
+      if(!naLogin) LoadingScreen.hide();
 
       // Só revela o dashboard quando o usuário clicar em "Acessar Dashboard" na
       // tela de log — até lá, a interface continua na tela de boas-vindas por trás
@@ -3978,10 +3948,16 @@ const UI = {
           else this.switchView(Nav.firstView()||"indicadores", true);
           $("#file-input").value = "";
       };
-      // online sem nenhum alerta: entra direto no painel; com alertas, mostra o log antes
       const temAlerta = file.online && ImportLog.buildLog(raw).some(s=>s.status==="alerta" && !/nenhuma coluna de data/.test(s.msg||""));
-      if(file.online && !temAlerta){
-        abrirPainel();
+      const avisarAlerta = ()=>{ if(temAlerta) toast("Alguns dados vieram com alerta", "info", { sub:"Algumas abas não carregaram como esperado.", duracao:9000,
+        acao:{ rotulo:"Ver detalhes", fn:()=> ImportLog.show(file, raw, ()=>{}, ()=>{ $("#file-input").value=""; $("#file-input").click(); }) } }); };
+      if(naLogin){
+        // tela de entrada: resumo mínimo no canto e entra sozinho (3 s; 5 s se houver alertas) se ninguém clicar
+        await new Promise(res=> Design.carga.resumo(file, ImportLog.buildLog(raw), temAlerta ? 5 : 3, res));
+        LoginModule.liberar();
+        abrirPainel(); avisarAlerta();
+      } else if(file.online){
+        abrirPainel(); avisarAlerta();
       } else {
         ImportLog.show(file, raw, abrirPainel,
           /* onLoadAnother */ () => {
@@ -3993,6 +3969,7 @@ const UI = {
     }catch(err){
       console.error("[Central de Reposição] Erro na etapa:", stage, err);
       LoadingScreen.hide();
+      if(naLogin) LoginModule.liberar();
       const msg = (err && err.message) ? err.message : String(err);
       const stackHint = (err && err.stack) ? err.stack.split("\n").slice(0,4).join("\n") : "";
       $("#empty-error").innerHTML = `<div class="error-box" style="text-align:left;margin-top:18px;white-space:pre-line;">` +
