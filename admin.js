@@ -162,6 +162,7 @@ const AdminUI = {
         if(faltam.length) throw new Error("Este arquivo não parece ser a base "+base.base+": faltam as colunas "+faltam.join(", ")+".");
         if(cab.some(c=>!c)) aviso.push("Há colunas sem título; elas serão enviadas em branco.");
       }
+      if(dados.length >= 65535 && /\.xls$/i.test(file.name)) aviso.push("Este arquivo .xls tem "+dados.length.toLocaleString("pt-BR")+" linhas, exatamente o limite do formato .xls (65.536 contando o título). Ele pode ter sido cortado na exportação e estar sem as linhas finais. Exporte de novo em .xlsx ou em períodos menores.");
       const largura = cab ? cab.length : Math.max.apply(null, dados.map(l=>l.length));
       const linhas = dados.map(l=>{ const o = new Array(largura); for(let i=0;i<largura;i++) o[i] = this.celula(l[i]); return o; });
 
@@ -173,7 +174,10 @@ const AdminUI = {
       }
       st.arq = { nome:file.name, aba:nomeAba, base, cab, linhas, maxD, aviso, sim:null };
       this.desenharPreview();
-      toast("Arquivo lido", "success", { sub:`${linhas.length.toLocaleString("pt-BR")} linhas · base ${base.base}${aviso.length?" · confira os avisos":""}` });
+      const alvoBox = document.getElementById("bases-envio");
+      if(alvoBox) alvoBox.scrollIntoView({ behavior:"smooth", block:"start" });
+      toast("Arquivo lido — ainda não foi gravado", "info", { sub:`${linhas.length.toLocaleString("pt-BR")} linhas · base ${base.base}. Falta verificar e gravar${aviso.length?" · confira os avisos":""}.`, duracao:7000,
+        acao:{ rotulo:"Ir para a conferência", fn:()=>{ const b = document.getElementById("bases-envio"); if(b) b.scrollIntoView({ behavior:"smooth", block:"start" }); } } });
     }catch(e){
       st.arq = null;
       box.innerHTML = `<div class="panel"><div class="error-box">${escapeHtml(e.message||String(e))}</div></div>`;
@@ -189,6 +193,7 @@ const AdminUI = {
     box.innerHTML = `
       <div class="panel">
         <h3 class="adm-h2">Conferir antes de enviar — ${escapeHtml(a.base.base)}</h3>
+        <div class="hint-box" style="margin-bottom:12px;"><strong>Nada foi gravado no Google Sheets ainda.</strong> Passos: <strong>1.</strong> arquivo lido ✓ &nbsp;→&nbsp; <strong>2.</strong> ${a.sim?"verificação feita ✓":"clique em “Verificar duplicidade”"} &nbsp;→&nbsp; <strong>3.</strong> clique em “Gravar na base”.</div>
         <div class="adm-grid">
           <div><span class="small-muted">Arquivo</span><br><strong>${escapeHtml(a.nome)}</strong><br><span class="small-muted">aba lida: ${escapeHtml(a.aba)}</span></div>
           <div><span class="small-muted">Linhas no arquivo</span><br><strong>${this.fmtNum(a.linhas.length)}</strong></div>
