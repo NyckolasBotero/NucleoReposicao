@@ -213,8 +213,8 @@ html.theme-switching *, html.theme-switching *::before, html.theme-switching *::
   .sb-theme .ic{ font-size:20px; width:20px; height:20px; }
   .sw{ margin-left:auto; position:relative; width:34px; height:20px; border-radius:20px; background:rgba(255,255,255,.22); flex:none; transition:background-color var(--duration-base) var(--ease-standard); }
   .sw::after{ content:""; position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:#fff; transition:transform var(--duration-base) var(--ease-spring); }
-  [data-theme-sw][aria-checked="true"] .sw{ background:var(--blue-med); }
-  [data-theme-sw][aria-checked="true"] .sw::after{ transform:translateX(14px); }
+  [data-theme-sw][aria-checked="true"] .sw, [data-mov-sw][aria-checked="true"] .sw{ background:var(--blue-med); }
+  [data-theme-sw][aria-checked="true"] .sw::after, [data-mov-sw][aria-checked="true"] .sw::after{ transform:translateX(14px); }
   .sb-user{ padding:8px 6px 0 8px; gap:10px; }
   .sb-avatar{ background:var(--brand); width:32px; height:32px; font-size:13px; }
   .sb-out{ width:34px; height:34px; padding:7px; display:flex; align-items:center; justify-content:center; border-radius:9px; border:none; background:transparent; color:rgba(255,255,255,.75); }
