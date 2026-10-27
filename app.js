@@ -4266,16 +4266,12 @@ function atalhoProducao(tipo){
 }
 function atalhoQuadro(tipo){
   const {ini,fim}=periodoAtalho(tipo);
-  const st=window._quadroState||{};
-  st.dataInicial=ini; st.dataFinal=fim;
-  window._quadroState=st;
+  QuadroState.dataInicial=ini; QuadroState.dataFinal=fim;
   renderQuadro();
 }
 function atalhoComissao(tipo){
   const {ini,fim}=periodoAtalho(tipo);
-  const st=window._comissaoState||{};
-  st.dataInicial=ini; st.dataFinal=fim;
-  window._comissaoState=st;
+  CommissionState.dataInicial=ini; CommissionState.dataFinal=fim; CommissionState.padraoAplicado=true;
   renderComissao();
 }
 function atalhoOp8457(tipo){
@@ -6459,18 +6455,20 @@ function showAuditLegend(){
 let commissionQuadroAtual = "SIM"; // começa filtrado pelo quadro atual
 let commissionOnlyRepositor = true; // filtro "apenas Cargo = REPOSITOR" — inicia SIM
 let commissionConsiderarMissoes = "SIM"; // se missões entram no cálculo de Pontos/Comissão Total
-let commissionShowMissoes = true; // visibilidade da coluna Missões
+let commissionShowMissoes = false; // visibilidade da coluna Missões (começa oculta)
 let commissionShowValorPonto = true; // visibilidade da coluna Valor/Ponto
 let commissionShowComissaoTotal = true; // visibilidade da coluna Comissão Total
-let commissionShowRegra = true; // visibilidade da coluna Regra
+let commissionShowRegra = false; // visibilidade da coluna Regra (começa oculta)
 let commissionAplicarDesconto = "SIM"; // se o desconto por % Qualidade é aplicado na Comissão Total exibida/exportada
-const CommissionState = { dataInicial: null, dataFinal: null };
+const CommissionState = { dataInicial: null, dataFinal: null, padraoAplicado: false };
 
 function renderComissao(){
   const pane = $("#pane-comissao");
   const cfg = window.APP_STATE.commissionConfig;
   const currentTeam = window.APP_STATE.currentTeam;
   const st = CommissionState;
+  // abre já filtrado pelo mês atual (só na primeira vez; "Tudo" ou datas manuais depois valem)
+  if(!st.padraoAplicado){ const p = periodoAtalho('mes_atual'); st.dataInicial = p.ini; st.dataFinal = p.fim; st.padraoAplicado = true; }
 
   // % Qualidade (coluna + modelo por qualidade) vem do AuditOnline (Gestão > Auditoria) —
   // carrega em background se ainda não tiver sido carregado nesta sessão.
@@ -6537,6 +6535,11 @@ function renderComissao(){
         <div id="exceptions-editor"></div>
         <p class="panel-note">Exceções vinculadas ao código têm prioridade sobre a faixa normal.</p>
       </div>
+    </div>
+
+    <div class="panel" id="comissao-hist-panel">
+      <div class="panel-header"><h3>Histórico do Valor de Comissão</h3><span class="small-muted">mês a mês · os meses do período filtrado ficam destacados</span></div>
+      <div class="chart-wrap"><canvas id="chart-comissao-hist"></canvas></div>
     </div>
 
     <div class="panel" id="comissao-calculada-panel">
@@ -6723,10 +6726,11 @@ function renderMissionsEditor(){
 
 // Centraliza a lógica de "quais linhas mostrar" — reutilizada pela tabela E pela exportação Excel,
 // garantindo que o Excel exportado reflita exatamente os mesmos filtros/toggles da tela.
-function getComissaoTableData(){
+function getComissaoTableData(ini, fim){
   const currentTeam = window.APP_STATE.currentTeam;
   const st = CommissionState;
-  let data = Commission.computeAll(st.dataInicial, st.dataFinal, commissionConsiderarMissoes==="SIM");
+  if(ini===undefined && fim===undefined){ ini = st.dataInicial; fim = st.dataFinal; }
+  let data = Commission.computeAll(ini, fim, commissionConsiderarMissoes==="SIM");
   if(commissionQuadroAtual === "SIM"){
     data = data.filter(e=> currentTeam.codes.has(e.codKey));
   }
@@ -6737,7 +6741,49 @@ function getComissaoTableData(){
   return data;
 }
 
+// total de comissão de cada mês (mesmos filtros de quadro/cargo/missões/desconto da tela)
+function comissaoHistoricoMensal(){
+  const rows = window.APP_STATE.processed.p8460.filter(r=>r.tipoos===58 && r.dtinicio);
+  if(!rows.length) return [];
+  let min = null; rows.forEach(r=>{ const d = r.dtinicio; if(!min || d<min) min = d; });
+  const h = new Date(); let y = min.getFullYear(), m = min.getMonth();
+  const limite = new Date(h.getFullYear(), h.getMonth()-23, 1); if(new Date(y,m,1) < limite){ y = limite.getFullYear(); m = limite.getMonth(); }
+  const nomes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"], out = [];
+  while(y < h.getFullYear() || (y===h.getFullYear() && m<=h.getMonth())){
+    const ini = new Date(y,m,1), fim = new Date(y,m+1,0,23,59,59);
+    const d = getComissaoTableData(ini, fim);
+    out.push({ ini, fim, label: nomes[m]+"/"+String(y).slice(2), n:d.length, sem:sum(d.map(e=>e.comissaoBase)), com:sum(d.map(e=>e.comissaoComDesconto)) });
+    m++; if(m>11){ m=0; y++; }
+  }
+  return out;
+}
+
+function renderComissaoHistorico(){
+  if(!document.getElementById("chart-comissao-hist")) return;
+  const hist = comissaoHistoricoMensal(), st = CommissionState;
+  const dentro = h=> (!st.dataInicial || h.fim >= dateOnly(st.dataInicial)) && (!st.dataFinal || h.ini <= dateOnly(st.dataFinal));
+  const aplicado = commissionAplicarDesconto==="SIM" ? "com" : "sem";
+  Charts.make("chart-comissao-hist", {
+    type:"line",
+    data:{ labels: hist.map(h=>h.label), datasets:[
+      { label:"Total sem desconto", data:hist.map(h=>h.sem), borderColor:Charts.colors.blue, backgroundColor:"rgba(47,111,206,.10)", fill:true, tension:.3,
+        pointRadius:hist.map(h=>dentro(h)?6:3), pointBackgroundColor:hist.map(h=>dentro(h)?Charts.colors.blue:"#fff"), pointBorderColor:Charts.colors.blue, pointHoverRadius:8,
+        datalabels:{ display: aplicado==="sem", align:"top", anchor:"end", color:Charts.colors.blue, font:{size:11,weight:"700"}, formatter:v=>fmtBRL(v) } },
+      { label:"Total com desconto de qualidade", data:hist.map(h=>h.com), borderColor:Charts.colors.green, backgroundColor:Charts.colors.green, borderDash:[5,4], tension:.3,
+        pointRadius:hist.map(h=>dentro(h)?6:3), pointBackgroundColor:hist.map(h=>dentro(h)?Charts.colors.green:"#fff"), pointBorderColor:Charts.colors.green, pointHoverRadius:8,
+        datalabels:{ display: aplicado==="com", align:"top", anchor:"end", color:Charts.colors.green, font:{size:11,weight:"700"}, formatter:v=>fmtBRL(v) } }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, layout:{ padding:{ top:22, bottom:6, left:4, right:14 } },
+      interaction:{ mode:"index", intersect:false },
+      plugins:{ legend:{ labels:{font:{size:11}} },
+        tooltip:{ callbacks:{ label:c=> c.dataset.label+": "+fmtBRL(c.parsed.y), afterBody:items=>{ const h = hist[items[0].dataIndex]; return h ? ["", h.n+" repositor(es)"] : []; } } } },
+      scales:{ y:{ beginAtZero:true, grid:{color:"rgba(128,140,160,.18)"}, ticks:{ callback:v=>fmtBRL(v) } }, x:{ grid:{display:false} } }
+    }
+  });
+}
+
 function renderCommissionTable(){
+  renderComissaoHistorico();
   const data = getComissaoTableData();
   const st = CommissionState;
   const qualClass = (v) => v===null||v===undefined ? '' : v>=90 ? 'cell-pos' : v>=70 ? 'cell-warn' : 'cell-neg';
