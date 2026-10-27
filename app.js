@@ -391,6 +391,15 @@ function toDate(v){
     if(!d) return null;
     return new Date(d.y, d.m-1, d.d, d.H||0, d.M||0, d.S||0);
   }
+  if(typeof v === "string"){
+    // dd/mm/aa ou dd/mm/aaaa (padrão brasileiro). Nunca deixar o navegador adivinhar: "12/08/26" viraria 8 de dezembro.
+    const m = v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if(m){
+      const ano = m[3].length===2 ? 2000+Number(m[3]) : Number(m[3]);
+      const d = new Date(ano, Number(m[2])-1, Number(m[1]), Number(m[4]||0), Number(m[5]||0), Number(m[6]||0));
+      return isNaN(d.getTime()) || d.getMonth()!==Number(m[2])-1 ? null : d;
+    }
+  }
   const parsed = new Date(v);
   return isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -714,8 +723,8 @@ const OnlineSheets = {
   coerce(raw){
     const s = raw==null ? "" : String(raw).trim();
     if(s==="") return null;
-    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
-    if(m) return this.serial(+m[3], +m[2], +m[1], +(m[4]||0), +(m[5]||0), +(m[6]||0));
+    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if(m) return this.serial(m[3].length===2 ? 2000+(+m[3]) : +m[3], +m[2], +m[1], +(m[4]||0), +(m[5]||0), +(m[6]||0));
     if(/^-?\d+$/.test(s)){
       if(/^-?0\d/.test(s) || s.replace("-","").length>15) return s; // zeros à esquerda / códigos longos (EAN) ficam texto
       return Number(s);
@@ -2455,8 +2464,8 @@ const AuditOnline = {
     const s = trimStr(v);
     if(!s) return null;
     // formato exportado pelo Google Sheets em locale BR: DD/MM/YYYY
-    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if(m) return new Date(+m[3], +m[2]-1, +m[1]);
+    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)/);
+    if(m) return new Date(m[3].length===2 ? 2000+(+m[3]) : +m[3], +m[2]-1, +m[1]);
     // fallback ISO: YYYY-MM-DD
     m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
     if(m) return new Date(+m[1], +m[2]-1, +m[3]);
