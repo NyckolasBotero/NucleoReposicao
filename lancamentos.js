@@ -877,6 +877,7 @@ const LancUI = {
           <label>Data do desligamento<input type="date" id="qd-desl"></label>
           <label>Data da transferência<input type="date" id="qd-transf"></label>
         </div>
+        ${this.novoItem("TIPO_DESLIGAMENTO", "qd-tipo", "novo tipo")}
         ${this.novoItem("MOTIVO_DESLIGAMENTO", "qd-motivo", "novo motivo")}
       </fieldset>
       <div class="adm-form"><label style="grid-column:1/-1">Outras observações<input type="text" id="qd-obs"></label></div>
