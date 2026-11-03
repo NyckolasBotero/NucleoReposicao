@@ -42,17 +42,20 @@ const PASTA_FEEDBACK = 'Núcleo Reposição - Feedbacks';
  *   modo 'acumular'   → só entram linhas que ainda NÃO existem (compara a linha inteira); nada é apagado.
  *   modo 'substituir' → a aba inteira é trocada pelo arquivo novo (foto do momento: saldos, cadastros).
  *   semCabecalho      → a aba não tem linha de títulos (lida por posição de coluna).
+ *   data              → título da coluna de data. Habilita a CONFERÊNCIA RÁPIDA (só o último mês da base, por dia).
+ *                       Sem "data", a base só tem a verificação completa (linha a linha, mais lenta).
+ *   os                → título da coluna do número da O.S. (opcional): a conferência rápida também compara O.S. distintas por dia.
  */
 const BASES = {
-  '8460':               { modo: 'acumular',   desc: 'Produção por O.S. (separação / reposição)' },
-  '8271':               { modo: 'acumular',   desc: 'O.S. por rua' },
-  '8457':               { modo: 'acumular',   desc: 'Produção de operadores (endereços)' },
-  '9712':               { modo: 'acumular',   desc: 'Lançamentos de avaria / baixas' },
+  '8460':               { modo: 'acumular',   desc: 'Produção por O.S. (separação / reposição)', data: 'DTFIMSEPARACAO', os: 'NUMOS' },
+  '8271':               { modo: 'acumular',   desc: 'O.S. por rua', data: 'DATA', os: 'NUMOS' },
+  '8457':               { modo: 'acumular',   desc: 'Produção de operadores (endereços)', data: 'DATA' },
+  '9712':               { modo: 'acumular',   desc: 'Lançamentos de avaria / baixas', data: 'Data' },
   'REP.AVARIA':         { modo: 'acumular',   desc: 'Avarias de reposição' },
-  'QUADRO REP':         { modo: 'acumular',   desc: 'Quadro diário de repositores' },
-  'FEEDBACK REP':       { modo: 'acumular',   desc: 'Feedbacks dos repositores' },
-  'AUDITORIA REP':      { modo: 'acumular',   desc: 'Auditoria por rua e dia' },
-  'MISSÕES':            { modo: 'acumular',   desc: 'Missões' },
+  'QUADRO REP':         { modo: 'acumular',   desc: 'Quadro diário de repositores', data: 'DATA' },
+  'FEEDBACK REP':       { modo: 'acumular',   desc: 'Feedbacks dos repositores', data: 'Data' },
+  'AUDITORIA REP':      { modo: 'acumular',   desc: 'Auditoria por rua e dia', data: 'DATA' },
+  'MISSÕES':            { modo: 'acumular',   desc: 'Missões', data: 'DATA' },
   'TURNOVER':           { modo: 'substituir', desc: 'Turnover' },
   'CRONOGRAMA':         { modo: 'substituir', desc: 'Cronograma de atividades' },
   '8022':               { modo: 'substituir', desc: 'Cadastro de produtos / ruas' },
@@ -88,6 +91,7 @@ function doPost(e) {
       if (d.acao === 'admin_historico') { exigir(s, PERM_ACESSOS); return resposta(historicoAcessos(d)); }
       if (d.acao === 'admin_salvar') { exigir(s, PERM_ACESSOS); return resposta(adminSalvar(d, s)); }
       if (d.acao === 'bases_status') { exigir(s, PERM_BASES); return resposta(basesStatus()); }
+      if (d.acao === 'bases_resumo') { exigir(s, PERM_BASES); return resposta(basesResumo(d)); }
       if (d.acao === 'bases_enviar') { exigir(s, PERM_BASES); return resposta(basesEnviar(d)); }
       if (d.acao === 'bases_concluir') { exigir(s, PERM_BASES); return resposta(basesConcluir(d, s)); }
       if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
@@ -366,7 +370,8 @@ function basesStatus() {
   const bases = Object.keys(BASES).map(function (nome) {
     const cfg = BASES[nome], sh = ss.getSheetByName(nome);
     const lin = sh ? Math.max(0, sh.getLastRow() - (cfg.semCabecalho ? 0 : 1)) : 0;
-    return { base: nome, modo: cfg.modo, desc: cfg.desc, semCabecalho: !!cfg.semCabecalho, existe: !!sh, linhasAtuais: lin, ultimaCarga: ultimas[nome] || null };
+    return { base: nome, modo: cfg.modo, desc: cfg.desc, semCabecalho: !!cfg.semCabecalho, existe: !!sh, linhasAtuais: lin, ultimaCarga: ultimas[nome] || null,
+             colData: cfg.data || null, colOS: cfg.os || null };
   });
   return { ok: true, bases: bases };
 }
@@ -402,6 +407,123 @@ function garantirTamanho(sh, linhasTotal, colunas) {
   if (sh.getMaxColumns() < colunas) sh.insertColumnsAfter(sh.getMaxColumns(), colunas - sh.getMaxColumns());
 }
 
+/* ----- Conferência rápida: só o último mês da base, comparado por dia ----- */
+
+/** Dia (aaaa-MM-dd) de uma célula de data: Date, texto dd/MM/aaaa [hh:mm:ss] ou número serial do Excel. '' se não for data. */
+function diaChave(v, tz) {
+  if (v instanceof Date) return (isNaN(v.getTime()) || v.getFullYear() < 1902) ? '' : Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+  if (typeof v === 'string') {
+    const m = v.trim().match(RE_DATA);
+    return m ? m[3] + '-' + m[2] + '-' + m[1] : '';
+  }
+  if (typeof v === 'number' && v > 36526 && v < 80000) return Utilities.formatDate(new Date(Math.round((v - 25569) * 86400000)), 'UTC', 'yyyy-MM-dd');
+  return '';
+}
+
+/** Posição (0 = primeira coluna) da coluna pelo título, ignorando acento/maiúscula/pontuação. -1 se não existir. */
+function colunaPorTitulo(sh, titulo) {
+  if (!titulo || !sh || sh.getLastColumn() < 1) return -1;
+  return sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(normalizar).indexOf(normalizar(titulo));
+}
+
+/**
+ * Resumo do ÚLTIMO MÊS da base: quantas linhas (e quantas O.S. distintas, se a base tem coluna de O.S.) há em cada dia.
+ * Lê só a coluna de data (e a de O.S.), nunca a base inteira. O site compara isso com o arquivo novo.
+ */
+function basesResumo(d) {
+  const nome = String(d.base || ''), cfg = BASES[nome];
+  if (!cfg) throw new Error('Base desconhecida: ' + nome);
+  if (cfg.modo !== 'acumular' || !cfg.data) throw new Error('A base "' + nome + '" não tem conferência rápida por data. Use a verificação completa.');
+  const sh = dadosSS().getSheetByName(nome);
+  if (!sh || sh.getLastRow() < 2) return { ok: true, vazia: true, linhasTotal: sh ? sh.getLastRow() : 0 };
+  const iD = colunaPorTitulo(sh, cfg.data);
+  if (iD < 0) throw new Error('A coluna "' + cfg.data + '" não existe na base "' + nome + '".');
+  const iO = cfg.os ? colunaPorTitulo(sh, cfg.os) : -1;
+  const n = sh.getLastRow() - 1, tz = tzPadrao();
+  const datas = sh.getRange(2, iD + 1, n, 1).getValues();
+  const os = iO >= 0 ? sh.getRange(2, iO + 1, n, 1).getValues() : null;
+  const chaves = new Array(n);
+  let max = '', semData = 0;
+  for (let i = 0; i < n; i++) {
+    const k = diaChave(datas[i][0], tz);
+    chaves[i] = k;
+    if (!k) { semData++; continue; }
+    if (k > max) max = k;
+  }
+  if (!max) return { ok: true, vazia: true, semData: semData, linhasTotal: sh.getLastRow() };
+  const mes = max.slice(0, 7), dias = {}, setsOS = {};
+  for (let i = 0; i < n; i++) {
+    const k = chaves[i];
+    if (!k || k.slice(0, 7) !== mes) continue;
+    const x = dias[k] || (dias[k] = { l: 0, o: 0 });
+    x.l++;
+    if (os) { const v = String(os[i][0]).trim(); if (v) (setsOS[k] || (setsOS[k] = {}))[v] = 1; }
+  }
+  if (os) Object.keys(setsOS).forEach(function (k) { dias[k].o = Object.keys(setsOS[k]).length; });
+  return { ok: true, linhasTotal: sh.getLastRow(), ultimaData: max, mes: mes, dias: dias, semData: semData, temOS: !!os };
+}
+
+/** Chaves das linhas que a aba já tem num dia (lê só o trecho desse dia, não a base inteira). */
+function chavesDoDia(sh, iD, corte, tz, largura) {
+  const n = sh.getLastRow() - 1, set = new Set();
+  const datas = sh.getRange(2, iD + 1, n, 1).getValues();
+  let ini = -1, fim = -1;
+  for (let i = 0; i < n; i++) if (diaChave(datas[i][0], tz) === corte) { if (ini < 0) ini = i; fim = i; }
+  if (ini < 0) return set;
+  sh.getRange(2 + ini, 1, fim - ini + 1, largura).getValues().forEach(function (l) { set.add(chaveLinha(l, tz)); });
+  return set;
+}
+
+/**
+ * Gravação rápida (modo acumular). O site já conferiu o último mês e manda só as linhas do último dia da base
+ * (diaCorte) em diante, sem repetições dentro do arquivo.
+ *  - 1ª parte: confere que a base não mudou desde a conferência (mesmo número de linhas).
+ *  - linhas do próprio dia de corte: só entram se ainda não existirem naquele dia (completa um dia parcial, sem duplicar).
+ *  - linhas dos dias seguintes: apenas acrescentadas ao fim.
+ */
+function basesEnviarRapido(d, nome, cfg) {
+  if (cfg.modo !== 'acumular' || !cfg.data) throw new Error('A base "' + nome + '" não aceita gravação rápida. Use a verificação completa.');
+  const corte = String(d.diaCorte || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(corte)) throw new Error('Dia de corte inválido.');
+  const parte = Number(d.parte) || 1, tz = tzPadrao();
+  const cab = (Array.isArray(d.cabecalho) ? d.cabecalho : []).map(function (s) { return String(s == null ? '' : s).trim(); });
+  const entrada = (Array.isArray(d.linhas) ? d.linhas : []).map(function (l) { return l.map(converter); });
+  const sh = dadosSS().getSheetByName(nome);
+  if (!sh || sh.getLastRow() < 2) throw new Error('A base "' + nome + '" está vazia. Use a verificação completa.');
+  if (parte === 1 && Number(d.linhasTotal) !== sh.getLastRow())
+    throw new Error('A base mudou desde a conferência (outra carga foi gravada?). Confira o arquivo de novo antes de gravar.');
+
+  const shCab = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(function (s) { return String(s).trim(); });
+  while (shCab.length && !shCab[shCab.length - 1]) shCab.pop();
+  const novasCols = cab.filter(function (c) { return c && shCab.indexOf(c) < 0; });
+  if (novasCols.length) throw new Error('O arquivo tem colunas que não existem na base "' + nome + '": ' + novasCols.join(', ') + '. Confira se é o arquivo certo.');
+  const mapa = shCab.map(function (c) { return cab.indexOf(c); });
+  const iD = shCab.map(normalizar).indexOf(normalizar(cfg.data));
+  if (iD < 0 || mapa[iD] < 0) throw new Error('A coluna "' + cfg.data + '" não está no arquivo / na base "' + nome + '".');
+
+  let existentes = null, ignoradas = 0;
+  const novas = [];
+  entrada.forEach(function (l) {
+    const linha = mapa.map(function (i) { return i < 0 ? '' : (l[i] === undefined ? '' : l[i]); });
+    if (linha.every(function (v) { return v === '' || v === null; })) return;
+    const k = diaChave(l[mapa[iD]], tz);
+    if (!k || k < corte) { ignoradas++; return; }       // o site não manda isso; proteção extra
+    if (k === corte) {
+      if (!existentes) existentes = chavesDoDia(sh, iD, corte, tz, shCab.length);
+      const ch = chaveLinha(linha, tz);
+      if (existentes.has(ch)) return;
+      existentes.add(ch);
+    }
+    novas.push(linha);
+  });
+  if (novas.length) {
+    const ini = Math.max(sh.getLastRow(), 1) + 1;
+    garantirTamanho(sh, ini + novas.length - 1, shCab.length);
+    sh.getRange(ini, 1, novas.length, shCab.length).setValues(novas);
+  }
+  return { ok: true, rapido: true, modo: cfg.modo, recebidas: entrada.length, novas: novas.length, duplicadas: entrada.length - novas.length - ignoradas, ignoradas: ignoradas };
+}
+
 /**
  * Recebe uma parte do arquivo. simular=true só confere (nada é gravado).
  * substituir: na parte 1 limpa a aba e grava; nas demais acrescenta.
@@ -410,6 +532,7 @@ function garantirTamanho(sh, linhasTotal, colunas) {
 function basesEnviar(d) {
   const nome = String(d.base || ''), cfg = BASES[nome];
   if (!cfg) throw new Error('Base desconhecida: ' + nome);
+  if (d.rapido === true) return basesEnviarRapido(d, nome, cfg);
   const simular = d.simular === true, parte = Number(d.parte) || 1;
   const tz = tzPadrao();
   const cab = cfg.semCabecalho ? null : (Array.isArray(d.cabecalho) ? d.cabecalho.map(function (s) { return String(s == null ? '' : s).trim(); }) : []);
