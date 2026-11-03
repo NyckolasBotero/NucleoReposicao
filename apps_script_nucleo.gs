@@ -642,7 +642,8 @@ const CONFIG_PADRAO = {
 const LISTAS_EDITAVEIS = ['STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAMENTO', 'TIPO_DESLIGAMENTO', 'TIPO_MISSAO', 'MOTIVO_FEEDBACK'];
 const SUB_DA_ACAO = {
   lanc_init: null, lanc_config_add: null,
-  lanc_feedback_salvar: 'Lançar Feedback', lanc_advertencia_salvar: 'Lançar Advertência',
+  lanc_feedback_salvar: 'Lançar Feedback', lanc_feedback_listar: 'Lançar Feedback', lanc_feedback_editar: 'Lançar Feedback', lanc_feedback_anexar: 'Lançar Feedback',
+  lanc_advertencia_salvar: 'Lançar Advertência',
   lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
   lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712',
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
@@ -661,6 +662,9 @@ function lancamento(d, s) {
     case 'lanc_init': return lancInit(s);
     case 'lanc_config_add': return lancConfigAdd(d, s);
     case 'lanc_feedback_salvar': return feedbackSalvar(d, s);
+    case 'lanc_feedback_listar': return feedbackListar(d);
+    case 'lanc_feedback_editar': return feedbackEditar(d, s);
+    case 'lanc_feedback_anexar': return feedbackAnexar(d, s);
     case 'lanc_advertencia_salvar': return advertenciaSalvar(d, s);
     case 'lanc_advertencia_listar': return advertenciaListar(d);
     case 'lanc_advertencia_editar': return advertenciaEditar(d, s);
@@ -962,7 +966,89 @@ function feedbackSalvar(d, s) {
   info.sh.getRange(n, 1, 1, info.ult).setValues([linha]);
   formatarDatas(info.sh, c.data, n, 1);
   registrarLog(s, 'Feedback', mat + ' ' + nome + ' · ' + motivo + ' · nota ' + nG + (link ? ' · com anexo' : ''));
-  return { ok: true, nome: nome, desempenho: linha[c.desemp], classificacao: linha[c.classif], anexo: link, semFeedback: semFeedbackLista(mat) };
+  return { ok: true, nome: nome, desempenho: linha[c.desemp], classificacao: linha[c.classif], anexo: link, linha: n, data: d.data, semFeedback: semFeedbackLista(mat) };
+}
+
+/* ---------- Feedbacks já lançados: listar, editar e anexar documento depois ---------- */
+
+function colunasFeedback() {
+  const info = infoAba('FEEDBACK REP');
+  return { info: info, c: {
+    data: garantirCol(info, ['DATA'], 'Data'), mat: garantirCol(info, ['COD', 'MATRICULA', 'CODIGO'], 'Cod'), nome: garantirCol(info, ['NOME'], 'Nome'),
+    matApl: garantirCol(info, ['COD APLICADOR', 'MATRICULA APLICADOR'], 'Cod Aplicador'), nomeApl: garantirCol(info, ['NOME APLICADOR'], 'Nome Aplicador'),
+    motivo: garantirCol(info, ['MOTIVO'], 'Motivo'),
+    resumo: garantirCol(info, ['RESUMO ASSUNTO'], 'Resumo Assunto'), avP: garantirCol(info, ['AVALIACAO PESSOAL'], 'Avaliação Pessoal'),
+    avG: garantirCol(info, ['AVALIACAO GESTOR'], 'Avaliação Gestor'), desemp: garantirCol(info, ['DESEMPENHO'], 'Desempenho'),
+    classif: garantirCol(info, ['CLASSIFICACAO'], 'Classificação'), anexo: garantirCol(info, ['ANEXO', 'LINK ANEXO'], 'Anexo') } };
+}
+
+/** Feedbacks lançados, na ordem da planilha (linha crescente). Filtra por matrícula se informada. */
+function feedbackListar(d) {
+  const X = colunasFeedback(), info = X.info, c = X.c, filtro = soDigitos(d.mat);
+  const ult = info.sh.getLastRow();
+  if (ult < 2) return { ok: true, itens: [] };
+  const v = info.sh.getRange(2, 1, ult - 1, info.ult).getValues(), itens = [];
+  for (let i = 0; i < v.length; i++) {
+    const l = v[i], mat = soDigitos(l[c.mat]);
+    if (!mat || (filtro && mat !== filtro)) continue;
+    itens.push({ linha: i + 2, data: chaveData(l[c.data]), mat: mat, nome: texto(l[c.nome]), motivo: texto(l[c.motivo]), resumo: texto(l[c.resumo]),
+      avPessoal: l[c.avP] === '' ? null : Number(l[c.avP]), avGestor: l[c.avG] === '' ? null : Number(l[c.avG]),
+      matApl: soDigitos(l[c.matApl]), nomeApl: texto(l[c.nomeApl]), anexo: texto(l[c.anexo]) });
+  }
+  return { ok: true, itens: filtro ? itens : itens.slice(-400) };
+}
+
+/** Confere que a linha ainda é o registro que o site mostrou (a planilha pode ter mudado). */
+function feedbackLinhaConfere(X, d) {
+  const info = X.info, c = X.c, linha = Number(d.linha) || 0;
+  if (linha < 2 || linha > info.sh.getLastRow()) throw new Error('Registro não encontrado. Recarregue os dados e tente de novo.');
+  const atual = info.sh.getRange(linha, 1, 1, info.ult).getValues()[0];
+  if (soDigitos(atual[c.mat]) !== soDigitos(d.matOriginal)) throw new Error('A planilha mudou desde que a lista foi carregada. Atualize os dados e tente de novo.');
+  if (d.dataOriginal && chaveData(atual[c.data]) !== String(d.dataOriginal)) throw new Error('A planilha mudou desde que a lista foi carregada. Atualize os dados e tente de novo.');
+  return { linha: linha, atual: atual };
+}
+
+/** Corrige um feedback já lançado (data, colaborador, motivo, resumo, notas, aplicador e documento). */
+function feedbackEditar(d, s) {
+  const X = colunasFeedback(), info = X.info, c = X.c, ch = feedbackLinhaConfere(X, d), linha = ch.linha, atual = ch.atual;
+  const mat = soDigitos(d.mat);
+  if (!mat) throw new Error('Informe a matrícula do colaborador.');
+  const nome = nomePorMatricula(mat) || (mat === soDigitos(atual[c.mat]) ? texto(atual[c.nome]) : '');
+  if (!nome) throw new Error('Matrícula não encontrada. Confira o número.');
+  const motivo = texto(d.motivo);
+  if (!motivo) throw new Error('Escolha o motivo do feedback.');
+  const resumo = texto(d.resumo);
+  if (!resumo) throw new Error('Escreva o resumo do assunto.');
+  const nP = Number(d.avPessoal), nG = Number(d.avGestor);
+  if (isNaN(nP) || nP < 0 || nP > 10) throw new Error('Avaliação pessoal deve ser de 0 a 10.');
+  if (isNaN(nG) || nG < 0 || nG > 10) throw new Error('Avaliação do gestor deve ser de 0 a 10.');
+  const data = isoParaData(d.data);
+  const matApl = soDigitos(d.matAplicador) || soDigitos(atual[c.matApl]);
+  let anexo = texto(atual[c.anexo]);
+  if (d.anexo && d.anexo.base64) anexo = salvarAnexo(d.anexo, 'Feedback', mat, d.data);
+  else if (d.removerAnexo) anexo = '';
+  const l = atual.slice();
+  l[c.data] = data; l[c.mat] = mat; l[c.nome] = nome; l[c.motivo] = motivo; l[c.resumo] = resumo; l[c.avP] = nP; l[c.avG] = nG;
+  l[c.matApl] = matApl; l[c.nomeApl] = texto(d.nomeAplicador) || nomePorMatricula(matApl) || texto(atual[c.nomeApl]); l[c.anexo] = anexo;
+  // Desempenho/Classificação acompanham a nota do gestor (só recalcula se a nota mudou ou se estavam vazios)
+  if (String(atual[c.avG]) !== String(nG) || !texto(atual[c.desemp]) || !texto(atual[c.classif])) {
+    l[c.desemp] = desempenhoDaNota(nG); l[c.classif] = mapaClassificacao()[faixaNota(nG)];
+  }
+  info.sh.getRange(linha, 1, 1, info.ult).setValues([l]);
+  formatarDatas(info.sh, c.data, linha, 1);
+  registrarLog(s, 'Feedback (edição)', mat + ' ' + nome + ' · ' + motivo + ' · nota ' + nG + ' · ' + d.data);
+  return { ok: true, nome: nome, desempenho: l[c.desemp], classificacao: l[c.classif], anexo: anexo, aplicador: l[c.nomeApl] };
+}
+
+/** Anexa (ou troca) só o documento de um feedback já lançado — usado para escanear a foto depois. */
+function feedbackAnexar(d, s) {
+  if (!d.anexo || !d.anexo.base64) throw new Error('Nenhum documento recebido.');
+  const X = colunasFeedback(), info = X.info, c = X.c, ch = feedbackLinhaConfere(X, d), linha = ch.linha, atual = ch.atual;
+  const mat = soDigitos(atual[c.mat]), iso = chaveData(atual[c.data]) || hoje();
+  const link = salvarAnexo(d.anexo, 'Feedback', mat, iso);
+  info.sh.getRange(linha, c.anexo + 1).setValue(link);
+  registrarLog(s, 'Feedback (documento)', mat + ' ' + texto(atual[c.nome]) + ' · ' + iso);
+  return { ok: true, anexo: link };
 }
 
 /* ---------- Advertências (aba ADVERTÊNCIAS) ---------- */

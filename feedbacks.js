@@ -396,6 +396,7 @@ const FeedbackAdv = {
     const serie = this.serieMensal(e.feedbacks, e.adv, 12);
     const mg = e.feedbacks.filter(r=>r.avGestor!==null).map(r=>r.avGestor);
     const ultAdvComDoc = e.adv.find(r=>r.anexo);
+    const podeEditarFb = Auth.can("lancamentos","lfeedback");
     const lancar = (pane, rot)=> `<button type="button" class="btn btn-primary btn-sm" onclick="LancUI.prefill={mat:'${escapeHtml(e.cod||"")}'};UI.goTo('lancamentos','${pane}')">${rot}</button>`;
     $("#fb-content").innerHTML = `
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
@@ -435,14 +436,16 @@ const FeedbackAdv = {
       <div class="panel">
         <div class="panel-header"><h3>Feedbacks (${e.feedbacks.length})</h3></div>
         <div class="table-wrap"><table class="data-table">
-          <thead><tr><th>Data</th><th>Motivo</th><th>Av. Pessoal</th><th>Av. Gestor</th><th>Desempenho</th><th>Resumo</th><th>Aplicador</th><th>Documento</th></tr></thead>
-          <tbody>${e.feedbacks.length ? e.feedbacks.map(r=>`<tr>
+          <thead><tr><th>Data</th><th>Motivo</th><th>Av. Pessoal</th><th>Av. Gestor</th><th>Desempenho</th><th>Resumo</th><th>Aplicador</th><th>Documento</th><th>Ações</th></tr></thead>
+          <tbody>${e.feedbacks.length ? e.feedbacks.map((r,i)=>`<tr>
             <td>${fmtDateBR(r.data)}</td><td>${escapeHtml(this.motivoTxt(r.motivo))}</td>
             <td>${r.avPessoal!==null?r.avPessoal:'-'}</td><td>${r.avGestor!==null?r.avGestor:'-'}</td>
             <td>${escapeHtml(r.desempenho||"-")}</td><td style="min-width:200px">${escapeHtml(r.resumo||"")}</td>
             <td>${escapeHtml(r.aplicador||"-")}</td>
             <td style="white-space:nowrap">${this.botoesAnexo(r.anexo, "Feedback — "+e.nome+" — "+fmtDateBR(r.data))}</td>
-          </tr>`).join("") : '<tr><td colspan="8" class="small-muted">Nenhum feedback.</td></tr>'}</tbody>
+            <td style="white-space:nowrap">${podeEditarFb ? `<button type="button" class="btn btn-outline btn-sm" data-fb-ed="${i}" title="Editar este feedback">✏️ Editar</button>
+              <button type="button" class="btn ${r.anexo?'btn-outline':'btn-primary'} btn-sm" data-fb-doc="${i}" title="${r.anexo?'Trocar o documento escaneando de novo':'Escanear o documento deste feedback'}">📷 ${r.anexo?'Reescanear':'Escanear'}</button>` : '<span class="small-muted">—</span>'}</td>
+          </tr>`).join("") : '<tr><td colspan="9" class="small-muted">Nenhum feedback.</td></tr>'}</tbody>
         </table></div>
       </div>
 
@@ -470,6 +473,33 @@ const FeedbackAdv = {
       options: Charts.baseOptions({ scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } })
     });
     if(ultAdvComDoc) this.carregarPrevia(ultAdvComDoc.anexo);
+    const alvo = document.getElementById("fb-content");
+    alvo.querySelectorAll("[data-fb-ed]").forEach(b=> b.addEventListener("click", ()=> this.editarFeedback(e, Number(b.dataset.fbEd))));
+    alvo.querySelectorAll("[data-fb-doc]").forEach(b=> b.addEventListener("click", ()=> this.escanearFeedback(e, Number(b.dataset.fbDoc))));
+  },
+
+  /* ------------------------------------------------------------------ */
+  /* editar feedback já lançado / escanear o documento depois             */
+  /* ------------------------------------------------------------------ */
+  /** Como achar este feedback na planilha: matrícula + data + resumo (repetidos: pela ordem). */
+  _refFeedback(e, i){
+    const r = e.feedbacks[i], iso = LancUI.isoDe(r.data), chave = normStr(r.resumo||"");
+    const iguais = this.feedbacks().filter(x=> x.codKey===r.codKey && x.data && LancUI.isoDe(x.data)===iso && normStr(x.resumo||"")===chave).sort((a,b)=>a._row-b._row);
+    return { mat:LancUI.soDigitos(r.cod), data:iso, resumo:r.resumo||"", ordem:Math.max(0, iguais.indexOf(r)) };
+  },
+  /** Reflete a mudança na tela na hora (os indicadores completos se atualizam com "Atualizar dados"). */
+  _aplicarNoFeedback(r, patch){ Object.assign(r, patch); if(this.sel) this.renderDetalhe(this.sel); },
+  editarFeedback(e, i){
+    const r = e.feedbacks[i]; if(!r) return;
+    LancUI.fbEditar(this._refFeedback(e, i), (patch, matMudou)=>{
+      if(matMudou){ toast("A matrícula foi trocada: use Atualizar dados (menu) para o feedback aparecer na pessoa certa."); return; }
+      this._aplicarNoFeedback(r, patch);
+      toast("Feedback atualizado. Use Atualizar dados (menu) para refletir nos indicadores.");
+    });
+  },
+  escanearFeedback(e, i){
+    const r = e.feedbacks[i]; if(!r) return;
+    LancUI.fbDocModal(this._refFeedback(e, i), "Feedback — "+e.nome+" — "+fmtDateBR(r.data), (patch)=> this._aplicarNoFeedback(r, patch), true);
   },
 
   async carregarPrevia(url){

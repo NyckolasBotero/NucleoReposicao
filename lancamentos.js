@@ -128,8 +128,14 @@ const LancUI = {
       if(!a){ el.innerHTML = "Nenhum documento anexado."; return; }
       el.innerHTML = `<div style="display:flex;gap:12px;align-items:center">${a.preview ? `<img src="${a.preview}" alt="" style="height:90px;border:1px solid var(--gray-200);border-radius:6px">` : ""}
         <div><strong>${this.h(a.nome)}</strong><div>${a.paginas ? a.paginas + " página(s) · " : ""}${Math.round(a.base64.length*0.75/1024)} KB</div>
-        <button type="button" class="btn btn-outline btn-sm" id="${p}-rm" style="margin-top:6px">Remover</button></div></div>`;
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+          ${a.original ? `<button type="button" class="btn btn-primary btn-sm" id="${p}-dig">✂️ Digitalizar como scanner (recortar e endireitar)</button>` : ""}
+          <button type="button" class="btn btn-outline btn-sm" id="${p}-rm">Remover</button></div></div></div>`;
       $$(p + "-rm").addEventListener("click", ()=>{ this.anexos[p] = null; mostrar(); });
+      if(a.original) $$(p + "-dig").addEventListener("click", async ()=>{
+        const n = await DocScanner.iniciar(a.original);
+        if(n){ this.anexos[p] = n; mostrar(); }
+      });
     };
     $$(p + "-foto").addEventListener("click", ()=> $$(p + "-foto-in").click());
     $$(p + "-foto-in").addEventListener("change", async (e)=>{
@@ -142,7 +148,8 @@ const LancUI = {
       const f = e.target.files[0]; e.target.value = ""; if(!f) return;
       if(f.size > 12*1024*1024){ toast("Arquivo muito grande (máximo 12 MB).", "error"); return; }
       const b64 = await new Promise((res, rej)=>{ const r = new FileReader(); r.onload = ()=> res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(f); });
-      this.anexos[p] = { nome:f.name, mime:f.type || "application/octet-stream", base64:b64, paginas:0, preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : "" };
+      this.anexos[p] = { nome:f.name, mime:f.type || "application/octet-stream", base64:b64, paginas:0, preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : "",
+        original: f.type.startsWith("image/") ? f : null };   // foto crua: dá para digitalizar depois
       mostrar();
     });
     return mostrar;
@@ -195,8 +202,10 @@ const LancUI = {
       <div id="fb-msg"></div>
       <div class="adm-actions"><button type="button" class="btn btn-primary" id="fb-salvar">Salvar feedback</button></div>
       ${this.rodapeAtualizar()}
-    </div>`;
+    </div>
+    <div class="panel" id="fb-pend"></div>`;
     const $$ = (id)=> document.getElementById(id);
+    this.fbPendentes(true);
     const atualizarNome = ()=>{
       const n = this.nomeDe($$("fb-mat").value);
       $$("fb-nome").value = n; $$("fb-nome").placeholder = $$("fb-mat").value ? "matrícula não encontrada" : "—";
@@ -244,7 +253,156 @@ const LancUI = {
       if((r.semFeedback||[]).length) this.aviso("fb-msg", "ok", $$("fb-msg").firstElementChild.innerHTML + `<br>⚠️ Ainda há <strong>${r.semFeedback.length}</strong> colaborador(es) sem feedback há mais de ${this.ctx.diasSemFeedback||30} dias (veja a lista acima).`);
       $$("fb-mat").value = ""; $$("fb-nome").value = ""; $$("fb-resumo").value = ""; $$("fb-ap").value = ""; $$("fb-ag").value = ""; $$("fb-motivo").value = "";
       atualizarNota(); this.anexos.fb = null; mostrarAnexo();
+      // sem documento agora? dá para escanear logo em seguida (ou depois, pela lista abaixo)
+      if(!r.anexo && r.linha){
+        const caixa = $$("fb-msg"), nomeColab = r.nome;
+        const b = document.createElement("button"); b.type = "button"; b.className = "btn btn-primary btn-sm"; b.style.marginTop = "8px";
+        b.textContent = "📷 Escanear o documento deste feedback agora";
+        b.onclick = ()=> this.fbDocModal({ linha:r.linha, mat, data:r.data }, "Feedback — " + nomeColab + " — " + this.br(r.data), ()=>{ b.remove(); toast("Documento anexado."); this.fbPendentes(true); }, true);
+        if(caixa) caixa.appendChild(b);
+      }
+      this.fbPendentes(true);
     });
+  },
+
+  /* ================================================================== */
+  /* FEEDBACK JÁ LANÇADO — editar, e escanear/anexar o documento depois   */
+  /* ================================================================== */
+  async garantirCtx(){
+    if(this.ctx) return;
+    const r = await Api.call({ acao:"lanc_init" });
+    if(!r || !r.ok) throw new Error((r && r.erro) || "Falha ao carregar.");
+    this.ctx = r; this.nomes = {};
+    (r.pessoas||[]).forEach(p=>{ if(p.mat) this.nomes[p.mat] = p.nome; });
+  },
+  _norm(t){ return String(t||"").replace(/\s+/g, " ").trim().toLowerCase(); },
+  /** Acha na planilha a linha do feedback. ref: { item } | { linha, mat, data } | { mat, data(iso), resumo, ordem }. */
+  async fbLocalizar(ref){
+    if(ref.item) return ref.item;
+    const r = await Api.call({ acao:"lanc_feedback_listar", mat:ref.mat });
+    if(!r || !r.ok) throw new Error((r && r.erro) || "Não foi possível consultar a planilha.");
+    let c = (r.itens||[]).filter(i=> i.data === ref.data);
+    const igual = c.filter(i=> this._norm(i.resumo) === this._norm(ref.resumo));
+    if(igual.length) c = igual;
+    if(!c.length) throw new Error("Não achei este feedback na planilha. Use Atualizar dados e tente de novo.");
+    if(c.length > 1 && !igual.length) throw new Error("Há mais de um feedback desta pessoa nesta data. Edite pela tela Lançar Feedback (lista de feedbacks).");
+    return c[Math.min(ref.ordem || 0, c.length-1)];
+  },
+
+  /** Edita um feedback já lançado. aoSalvar(patch, matMudou) recebe o que mudou, no formato da tela de Gestão. */
+  async fbEditar(ref, aoSalvar){
+    let it;
+    try{ await this.garantirCtx(); it = await this.fbLocalizar(ref); }catch(e){ toast(e.message, "error"); return; }
+    const notas = Array.from({length:11}, (_, i)=>i);
+    const motivos = Array.from(new Set(((this.ctx.listas||{}).MOTIVO_FEEDBACK||[]).concat(it.motivo ? [it.motivo] : [])));
+    UI.openModal(`<h3 style="margin-top:0;">Editar feedback</h3>
+      <div class="adm-form">
+        <label>Data<input type="date" id="fx-data" value="${this.h(it.data)}"></label>
+        <label>Matrícula do colaborador<input type="text" id="fx-mat" inputmode="numeric" value="${this.h(it.mat)}"></label>
+        <label>Nome (automático)<input type="text" id="fx-nome" readonly value="${this.h(this.nomeDe(it.mat) || it.nome)}"></label>
+      </div>
+      <div class="adm-form"><label>Motivo<select id="fx-motivo">${this.options(motivos, it.motivo, "Selecione")}</select></label></div>
+      <div class="adm-form">
+        <label>Matrícula do aplicador<input type="text" id="fx-mat-apl" inputmode="numeric" value="${this.h(it.matApl)}"></label>
+        <label>Nome do aplicador<input type="text" id="fx-nome-apl" value="${this.h(it.nomeApl)}"></label>
+      </div>
+      <div class="adm-form"><label style="grid-column:1/-1">Resumo do assunto<textarea id="fx-resumo" rows="3" style="padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:inherit;text-transform:none;width:100%">${this.h(it.resumo)}</textarea></label></div>
+      <div class="adm-form">
+        <label>Avaliação pessoal<select id="fx-ap">${this.options(notas, it.avPessoal, "Selecione")}</select></label>
+        <label>Avaliação do gestor (0 a 10)<select id="fx-ag">${this.options(notas, it.avGestor, "Selecione")}</select></label>
+        <label>Desempenho (automático)<input type="text" id="fx-desemp" readonly></label>
+        <label>Classificação (automática)<input type="text" id="fx-classif" readonly></label>
+      </div>
+      <div class="small-muted" style="margin:6px 0">Documento atual: ${/^https?:/.test(it.anexo) ? `sim · <label><input type="checkbox" id="fx-rm-anexo"> remover</label>` : "nenhum"}</div>
+      ${this.anexoHtml("fx", "Trocar / anexar documento (opcional)")}
+      <div id="fx-msg"></div>
+      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="fx-salvar">Salvar alterações</button></div>`);
+    const $$ = (id)=> document.getElementById(id);
+    this.ligarAnexo("fx");
+    const nota = ()=>{
+      const v = $$("fx-ag").value;
+      if(v === ""){ $$("fx-desemp").value = ""; $$("fx-classif").value = ""; return; }
+      $$("fx-desemp").value = this.desempenho(Number(v));
+      $$("fx-classif").value = (this.ctx.classificacao||["Negativo","Neutro","Positivo"])[this.faixa(Number(v))];
+    };
+    nota();
+    $$("fx-ag").addEventListener("change", nota);
+    $$("fx-mat").addEventListener("input", ()=>{ $$("fx-nome").value = this.nomeDe(this.soDigitos($$("fx-mat").value)); });
+    $$("fx-mat-apl").addEventListener("change", ()=>{ const n = this.nomeDe($$("fx-mat-apl").value); if(n) $$("fx-nome-apl").value = n; });
+    $$("fx-salvar").addEventListener("click", async ()=>{
+      const mat = this.soDigitos($$("fx-mat").value);
+      if(!$$("fx-data").value) return this.aviso("fx-msg", "erro", "Informe a data.");
+      if(!mat) return this.aviso("fx-msg", "erro", "Informe a matrícula do colaborador.");
+      if(!$$("fx-motivo").value) return this.aviso("fx-msg", "erro", "Escolha o motivo.");
+      if(!$$("fx-resumo").value.trim()) return this.aviso("fx-msg", "erro", "Escreva o resumo do assunto.");
+      if($$("fx-ap").value === "" || $$("fx-ag").value === "") return this.aviso("fx-msg", "erro", "Informe as duas avaliações (0 a 10).");
+      const a = this.anexos.fx, rm = $$("fx-rm-anexo");
+      const r = await this.enviar($$("fx-salvar"), { acao:"lanc_feedback_editar", linha:it.linha, matOriginal:it.mat, dataOriginal:it.data, data:$$("fx-data").value, mat,
+        motivo:$$("fx-motivo").value, matAplicador:$$("fx-mat-apl").value, nomeAplicador:$$("fx-nome-apl").value, resumo:$$("fx-resumo").value,
+        avPessoal:Number($$("fx-ap").value), avGestor:Number($$("fx-ag").value), removerAnexo: !!(rm && rm.checked),
+        anexo: a ? { nome:a.nome, mime:a.mime, base64:a.base64 } : null });
+      if(!r || !r.ok) return this.aviso("fx-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
+      UI.closeModal(); toast("Feedback atualizado.");
+      const patch = { data:this.isoParaData($$("fx-data").value), motivo:$$("fx-motivo").value, resumo:$$("fx-resumo").value.trim(), avPessoal:Number($$("fx-ap").value),
+        avGestor:Number($$("fx-ag").value), desempenho:r.desempenho||"", classificacao:r.classificacao||"", aplicador:r.aplicador||"", anexo:r.anexo||"" };
+      if(aoSalvar) aoSalvar(patch, mat !== it.mat);
+    });
+  },
+
+  /** Tira a foto/escolhe o arquivo e anexa a um feedback já lançado. camera=true abre a câmera/seletor na hora. */
+  fbDocModal(ref, titulo, aoSalvar, camera){
+    UI.openModal(`<h3 style="margin-top:0;">Documento do feedback</h3><p class="small-muted">${this.h(titulo||"")}</p>
+      ${this.anexoHtml("fy", "Foto digitalizada ou PDF")}
+      <div id="fy-msg"></div>
+      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="fy-salvar">Salvar documento</button></div>`);
+    const $$ = (id)=> document.getElementById(id);
+    this.ligarAnexo("fy");
+    if(camera) $$("fy-foto-in").click();   // ainda dentro do toque do usuário → abre a câmera
+    $$("fy-salvar").addEventListener("click", async ()=>{
+      const a = this.anexos.fy;
+      if(!a) return this.aviso("fy-msg", "erro", "Tire a foto (ou escolha o arquivo) primeiro.");
+      let it;
+      try{ it = ref.linha ? { linha:ref.linha, mat:ref.mat, data:ref.data } : await this.fbLocalizar(ref); }
+      catch(e){ return this.aviso("fy-msg", "erro", this.h(e.message)); }
+      const r = await this.enviar($$("fy-salvar"), { acao:"lanc_feedback_anexar", linha:it.linha, matOriginal:it.mat, dataOriginal:it.data,
+        anexo:{ nome:a.nome, mime:a.mime, base64:a.base64 } });
+      if(!r || !r.ok) return this.aviso("fy-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar o documento."));
+      UI.closeModal(); toast("Documento anexado ao feedback.");
+      if(aoSalvar) aoSalvar({ anexo:r.anexo });
+    });
+  },
+
+  /* ---- feedbacks lançados sem documento (para escanear depois) ---- */
+  fbPend: { itens:null, erro:null },
+  async fbPendentes(recarregar){
+    const box = document.getElementById("fb-pend"); if(!box) return;
+    const st = this.fbPend;
+    if(recarregar || !st.itens){
+      box.innerHTML = `<h2 class="adm-h">Feedbacks sem documento</h2><p class="small-muted">Carregando...</p>`;
+      try{
+        const r = await Api.call({ acao:"lanc_feedback_listar" });
+        if(r && r.ok){ st.itens = r.itens||[]; st.erro = null; } else st.erro = (r && r.erro) || "Não foi possível carregar a lista.";
+      }catch(e){ st.erro = e.message; }
+    }
+    const b = document.getElementById("fb-pend"); if(!b) return;
+    if(st.erro){ b.innerHTML = `<h2 class="adm-h">Feedbacks sem documento</h2><div class="error-box">${this.h(st.erro)}</div>`; return; }
+    const lista = (st.itens||[]).filter(i=>!/^https?:/.test(i.anexo)).reverse();
+    b.innerHTML = `<div class="adm-head"><h2 class="adm-h">Feedbacks sem documento</h2><div class="adm-head-r"><button class="btn btn-outline btn-sm" id="fp-reload">Atualizar lista</button></div></div>
+      <p class="small-muted">Lançou o feedback sem a foto? Escaneie depois aqui (ou em Gestão &gt; Feedbacks e Advertências, no detalhe da pessoa). Mostrando os mais recentes.</p>
+      <div class="table-wrap"><table class="adm-table"><thead><tr><th>Data</th><th>Matrícula</th><th>Nome</th><th>Motivo</th><th></th></tr></thead><tbody>
+      ${lista.slice(0,40).map(i=>`<tr><td>${this.br(i.data)||"—"}</td><td><strong>${this.h(i.mat)}</strong></td><td>${this.h(i.nome)}</td><td>${this.h(i.motivo)}</td>
+        <td style="white-space:nowrap"><button class="btn btn-primary btn-sm" data-fp-doc="${i.linha}">📷 Escanear</button> <button class="btn btn-outline btn-sm" data-fp-ed="${i.linha}">Editar</button></td></tr>`).join("") || `<tr><td colspan="5" class="small-muted">Todos os feedbacks recentes têm documento. 👍</td></tr>`}
+      </tbody></table></div>${lista.length>40?`<p class="small-muted">Mostrando 40 de ${lista.length}.</p>`:""}`;
+    document.getElementById("fp-reload").addEventListener("click", ()=> this.fbPendentes(true));
+    const achar = (linha)=> (st.itens||[]).find(x=>x.linha === linha);
+    b.querySelectorAll("[data-fp-doc]").forEach(x=> x.addEventListener("click", ()=>{
+      const i = achar(Number(x.dataset.fpDoc)); if(!i) return;
+      this.fbDocModal({ linha:i.linha, mat:i.mat, data:i.data }, "Feedback — " + i.nome + " — " + this.br(i.data), ()=> this.fbPendentes(true), true);
+    }));
+    b.querySelectorAll("[data-fp-ed]").forEach(x=> x.addEventListener("click", ()=>{
+      const i = achar(Number(x.dataset.fpEd)); if(!i) return;
+      this.fbEditar({ item:i }, ()=> this.fbPendentes(true));
+    }));
   },
 
 
