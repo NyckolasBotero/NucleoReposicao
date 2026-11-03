@@ -6,8 +6,9 @@
    API: DocScanner.iniciar(file) → Promise<{nome,mime,base64,paginas,preview}|null>
    ========================================================================= */
 const DocScanner = {
-  MAX_ORIGEM: 2400,   // lado maior da imagem de trabalho
-  SAIDA_LONGO: 1754,  // lado maior do resultado (A4 a ~150 dpi)
+  MAX_ORIGEM: 3200,   // lado maior da imagem de trabalho (a foto do celular é mantida quase inteira)
+  SAIDA_LONGO: 2800,  // lado maior do resultado (A4 a ~240 dpi — texto pequeno fica legível)
+  LIMITE_BYTES: 4.5*1024*1024, // acima disso o documento é recomprimido (limite de envio ao servidor)
 
   /* ---------------- imagem ---------------- */
   async carregarImagem(file){
@@ -131,6 +132,108 @@ const DocScanner = {
     return q.map(p=>({ x: Math.min(W-1, Math.max(0, p.x)), y: Math.min(H-1, Math.max(0, p.y)) }));
   },
 
+  /** Detecta as pontas e já as encosta na borda real do papel (se der). */
+  detectarFino(canvas){
+    const q = this.detectar(canvas);
+    return this.refinar(canvas, q) || q;
+  },
+
+  /* ---------------- ajuste fino das pontas ---------------- */
+  /** Reta ajustada por mínimos quadrados totais, descartando pontos fora da reta (robusta a ruído/texto). */
+  _ajustarReta(pts){
+    const ajustar = (arr)=>{
+      let mx = 0, my = 0; arr.forEach(p=>{ mx += p.x; my += p.y; }); mx /= arr.length; my /= arr.length;
+      let sxx = 0, sxy = 0, syy = 0; arr.forEach(p=>{ const a = p.x-mx, b = p.y-my; sxx += a*a; sxy += a*b; syy += b*b; });
+      const th = 0.5*Math.atan2(2*sxy, sxx-syy);
+      return { x:mx, y:my, dx:Math.cos(th), dy:Math.sin(th) };
+    };
+    let cur = pts.slice(), r = ajustar(cur);
+    for(let it=0; it<4; it++){
+      const res = cur.map(p=> Math.abs((p.x-r.x)*r.dy - (p.y-r.y)*r.dx));
+      const ord = res.slice().sort((a,b)=>a-b), med = ord[(ord.length/2)|0], lim = Math.max(1.2, 2.5*med);
+      const nx = cur.filter((p,i)=> res[i] <= lim);
+      if(nx.length === cur.length || nx.length < 6) break;
+      cur = nx; r = ajustar(cur);
+    }
+    return r;
+  },
+  _cruzar(r1, r2){
+    const det = r1.dx*(-r2.dy) - r1.dy*(-r2.dx);
+    if(Math.abs(det) < 1e-6) return null;
+    const bx = r2.x-r1.x, by = r2.y-r1.y;
+    const t = (bx*(-r2.dy) - by*(-r2.dx)) / det;
+    return { x: r1.x + t*r1.dx, y: r1.y + t*r1.dy };
+  },
+  /** Encosta cada lado do recorte na borda real do papel (maior contraste perto do lado marcado).
+   *  Devolve as 4 pontas ajustadas ou null se não deu para confiar (aí vale o que foi marcado). */
+  refinar(canvas, quad){
+    try{
+      const W = canvas.width, H = canvas.height, k = Math.min(1, 1600/Math.max(W,H));
+      const w = Math.max(8, Math.round(W*k)), h = Math.max(8, Math.round(H*k));
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const cx = c.getContext("2d"); cx.drawImage(canvas, 0, 0, w, h);
+      const px = cx.getImageData(0, 0, w, h).data;
+      let g = new Float32Array(w*h);
+      for(let i=0;i<w*h;i++) g[i] = 0.299*px[i*4] + 0.587*px[i*4+1] + 0.114*px[i*4+2];
+      g = this._blur(g, w, h, 1);
+      const amostra = (x, y)=>{
+        x = Math.min(w-1.001, Math.max(0, x)); y = Math.min(h-1.001, Math.max(0, y));
+        const x0 = x|0, y0 = y|0, fx = x-x0, fy = y-y0, i = y0*w + x0;
+        return (g[i]*(1-fx) + g[i+1]*fx)*(1-fy) + (g[i+w]*(1-fx) + g[i+w+1]*fx)*fy;
+      };
+      const q = quad.map(p=>({ x:p.x*k, y:p.y*k }));
+      const R = Math.max(6, Math.round(0.035*Math.max(w,h)));
+      const retas = [];
+      for(let i=0;i<4;i++){
+        const a = q[i], b = q[(i+1)%4], dx = b.x-a.x, dy = b.y-a.y, len = Math.hypot(dx, dy);
+        if(len < 30) return null;
+        const nx = -dy/len, ny = dx/len, N = 56, pts = [];
+        for(let s=0;s<N;s++){
+          const t = 0.08 + 0.84*(s+0.5)/N, ox = a.x + dx*t, oy = a.y + dy*t;
+          // perfil de contraste ao longo da normal (d<0 = para fora do papel)
+          const perfil = [];
+          let melhor = 0;
+          for(let d=-R; d<=R; d+=0.5){
+            const m = Math.abs(amostra(ox + nx*(d+1.5), oy + ny*(d+1.5)) - amostra(ox + nx*(d-1.5), oy + ny*(d-1.5)));
+            perfil.push(m); if(m > melhor) melhor = m;
+          }
+          if(melhor < 10) continue;
+          // pega a borda mais EXTERNA que seja forte (a do papel, e não uma moldura impressa dentro dele)
+          let escolhido = -1;
+          for(let j=1; j<perfil.length-1; j++){
+            if(perfil[j] >= 0.55*melhor && perfil[j] >= perfil[j-1] && perfil[j] >= perfil[j+1]){ escolhido = j; break; }
+          }
+          if(escolhido < 0) continue;
+          const dEsc = -R + escolhido*0.5;
+          pts.push({ x: ox + nx*dEsc, y: oy + ny*dEsc });
+        }
+        if(pts.length < N*0.4) return null;
+        retas.push(this._ajustarReta(pts));
+      }
+      const novo = [];
+      for(let i=0;i<4;i++){
+        const p = this._cruzar(retas[(i+3)%4], retas[i]);
+        if(!p) return null;
+        novo.push({ x: p.x/k, y: p.y/k });
+      }
+      // sanidade: pontas perto das marcadas, forma convexa e área parecida
+      const maxMove = 0.07*Math.max(W,H);
+      for(let i=0;i<4;i++) if(this._dist(novo[i], quad[i]) > maxMove) return null;
+      for(let i=0;i<4;i++){
+        const a = novo[i], b = novo[(i+1)%4], c2 = novo[(i+2)%4];
+        if(((b.x-a.x)*(c2.y-b.y) - (b.y-a.y)*(c2.x-b.x)) <= 0) return null;
+      }
+      const r = this._areaQuad(novo)/this._areaQuad(quad);
+      if(r < 0.8 || r > 1.25) return null;
+      return novo.map(p=>({ x: Math.min(W-1, Math.max(0, p.x)), y: Math.min(H-1, Math.max(0, p.y)) }));
+    }catch(e){ return null; }
+  },
+  /** Puxa as pontas um pouco para dentro (sobra de sombra/borda do papel não entra no resultado). */
+  encolher(q, f){
+    const cx = (q[0].x+q[1].x+q[2].x+q[3].x)/4, cy = (q[0].y+q[1].y+q[2].y+q[3].y)/4;
+    return q.map(p=>({ x: cx + (p.x-cx)*(1-f), y: cy + (p.y-cy)*(1-f) }));
+  },
+
   /* ---------------- perspectiva ---------------- */
   _homografia(dst, src){
     // resolve h tal que (u,v) de dst → (x,y) de src
@@ -210,18 +313,30 @@ const DocScanner = {
       const a = fx-x0, b = fy-y0;
       return (bgPeq[y0*sw+x0]*(1-a) + bgPeq[y0*sw+x1]*a)*(1-b) + (bgPeq[y1*sw+x0]*(1-a) + bgPeq[y1*sw+x1]*a)*b;
     };
+    // realce de nitidez leve (só no gray): devolve o contraste que a foto perde e evita engordar o traço
+    let nit = gray;
+    if(modo === "scanner" || modo === "pb"){
+      const emb = this._blur(gray, w, h, 2);
+      nit = new Float32Array(N);
+      for(let i=0;i<N;i++) nit[i] = gray[i] + 1.1*(gray[i] - emb[i]);
+    }
+    const suave = (t)=> t*t*(3 - 2*t);
     for(let y=0;y<h;y++) for(let x=0;x<w;x++){
       const i = y*w + x, p = i*4;
-      const bg = Math.max(40, fundo(x, y)*1.07);
+      const bgf = Math.max(40, fundo(x, y));
       if(modo === "cor"){
-        const f = Math.min(1.6, 238/bg);
-        d[p] = Math.min(255, d[p]*f); d[p+1] = Math.min(255, d[p+1]*f); d[p+2] = Math.min(255, d[p+2]*f);
+        // fundo vira branco; as cores da tinta (caneta azul/vermelha, carimbo) ficam
+        const f = Math.min(1.7, 252/bgf);
+        for(let c=0;c<3;c++){
+          const v = d[p+c]*f/255, t = Math.min(1, Math.max(0, (v - 0.06)/0.9));
+          d[p+c] = 255*(0.7*t + 0.3*suave(t));
+        }
         continue;
       }
-      const v = Math.min(1, gray[i]/bg);
+      const v = Math.min(1.2, Math.max(0, nit[i]/(bgf*1.02)));
       let s;
-      if(modo === "pb") s = v < 0.82 ? 0 : 255;
-      else { const t = Math.min(1, Math.max(0, (v - 0.5)/0.42)); s = 255*t*t*(3 - 2*t); }
+      if(modo === "pb") s = v < 0.8 ? 0 : 255;
+      else { const t = Math.min(1, Math.max(0, (v - 0.36)/0.54)); s = 255*(0.6*t + 0.4*suave(t)); }
       d[p] = d[p+1] = d[p+2] = s;
     }
     ctx.putImageData(img, 0, 0);
@@ -238,6 +353,13 @@ const DocScanner = {
   },
 
   /* ---------------- PDF ---------------- */
+  /** JPEG da página, opcionalmente reduzida (k<1) — usado só para caber no limite de envio. */
+  _jpeg(cv, q, k){
+    if(!k || k >= 1) return cv.toDataURL("image/jpeg", q);
+    const m = document.createElement("canvas"); m.width = Math.max(1, Math.round(cv.width*k)); m.height = Math.max(1, Math.round(cv.height*k));
+    const x = m.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(cv, 0, 0, m.width, m.height);
+    return m.toDataURL("image/jpeg", q);
+  },
   async montarAnexo(paginas){
     const J = window.jspdf && window.jspdf.jsPDF;
     const miniatura = (()=>{
@@ -245,21 +367,28 @@ const DocScanner = {
       m.width = Math.round(c.width*k); m.height = Math.round(c.height*k); m.getContext("2d").drawImage(c, 0, 0, m.width, m.height);
       return m.toDataURL("image/jpeg", 0.7);
     })();
-    if(J){
-      let doc = null;
-      paginas.forEach((cv, i)=>{
-        const paisagem = cv.width > cv.height;
-        if(i === 0) doc = new J({ orientation: paisagem ? "l" : "p", unit:"mm", format:"a4", compress:true });
-        else doc.addPage("a4", paisagem ? "l" : "p");
-        const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
-        const k = Math.min(pw/cv.width, ph/cv.height), w = cv.width*k, h = cv.height*k;
-        doc.addImage(cv.toDataURL("image/jpeg", 0.82), "JPEG", (pw-w)/2, (ph-h)/2, w, h, undefined, "FAST");
-      });
-      const b64 = doc.output("datauristring").split(",")[1];
-      return { nome:"feedback_digitalizado.pdf", mime:"application/pdf", base64:b64, paginas:paginas.length, preview:miniatura };
+    // começa na melhor qualidade e só reduz se o arquivo passar do limite de envio
+    const tentativas = [{ q:0.92, k:1 }, { q:0.86, k:1 }, { q:0.8, k:0.85 }, { q:0.75, k:0.7 }];
+    let ultimo = null;
+    for(const t of tentativas){
+      if(J){
+        let doc = null;
+        paginas.forEach((cv, i)=>{
+          const paisagem = cv.width > cv.height;
+          if(i === 0) doc = new J({ orientation: paisagem ? "l" : "p", unit:"mm", format:"a4", compress:true });
+          else doc.addPage("a4", paisagem ? "l" : "p");
+          const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+          const k = Math.min(pw/cv.width, ph/cv.height), w = cv.width*k, h = cv.height*k;
+          doc.addImage(this._jpeg(cv, t.q, t.k), "JPEG", (pw-w)/2, (ph-h)/2, w, h, undefined, "FAST");
+        });
+        ultimo = { nome:"feedback_digitalizado.pdf", mime:"application/pdf", base64:doc.output("datauristring").split(",")[1], paginas:paginas.length, preview:miniatura };
+      } else {
+        // sem a biblioteca de PDF: segue com a 1ª página em JPEG
+        ultimo = { nome:"feedback_digitalizado.jpg", mime:"image/jpeg", base64:this._jpeg(paginas[0], t.q, t.k).split(",")[1], paginas:1, preview:miniatura };
+      }
+      if(ultimo.base64.length*0.75 <= this.LIMITE_BYTES) break;
     }
-    // sem a biblioteca de PDF: segue com a 1ª página em JPEG
-    return { nome:"feedback_digitalizado.jpg", mime:"image/jpeg", base64: paginas[0].toDataURL("image/jpeg", 0.82).split(",")[1], paginas:1, preview:miniatura };
+    return ultimo;
   },
 
   /* ---------------- tela do scanner ---------------- */
@@ -275,7 +404,10 @@ const DocScanner = {
 #scan-overlay .sc-wrap{ position:relative; touch-action:none; line-height:0; }
 #scan-overlay .sc-wrap canvas, #scan-overlay .sc-res{ max-width:100%; display:block; box-shadow:0 4px 24px rgba(0,0,0,.5); background:#fff; }
 #scan-overlay .sc-svg{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
-#scan-overlay .sc-h{ position:absolute; width:34px; height:34px; margin:-17px 0 0 -17px; border-radius:50%; background:rgba(245,166,35,.9); border:3px solid #fff; touch-action:none; cursor:grab; box-shadow:0 2px 8px rgba(0,0,0,.5); }
+#scan-overlay .sc-h{ position:absolute; width:34px; height:34px; margin:-17px 0 0 -17px; border-radius:50%; background:rgba(245,166,35,.12); border:3px solid #F5A623; touch-action:none; cursor:grab; box-shadow:0 0 0 2px #fff, 0 2px 8px rgba(0,0,0,.5); }
+#scan-overlay .sc-h::after{ content:""; position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px; border-radius:50%; background:#fff; box-shadow:0 0 0 1px #F5A623; }
+#scan-overlay .sc-lupa{ position:absolute; top:8px; width:132px; height:132px; border-radius:50%; border:3px solid #F5A623; box-shadow:0 4px 18px rgba(0,0,0,.6); background:#000; z-index:5; display:none; pointer-events:none; }
+#scan-overlay .sc-chk{ display:flex; align-items:center; gap:6px; font-size:13px; color:#cfe3fb; flex:1 1 100%; justify-content:center; cursor:pointer; }
 #scan-overlay .sc-foot{ padding:10px 12px calc(12px + env(safe-area-inset-bottom)); background:#0d2547; display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
 #scan-overlay .sc-foot .btn{ flex:1 1 auto; min-width:120px; justify-content:center; }
 #scan-overlay .sc-dica{ font-size:12.5px; color:#cfe3fb; text-align:center; padding:6px 12px 0; }
@@ -293,7 +425,7 @@ const DocScanner = {
     return new Promise((resolve)=>{
       const S = this;
       const paginas = [];
-      let origem = null, quad = null, saida = null, modo = "scanner", base = null;
+      let origem = null, quad = null, saida = null, modo = "scanner", base = null, alinhar = true;
       const ov = document.createElement("div"); ov.id = "scan-overlay";
       ov.innerHTML = `
         <div class="sc-top"><h3 id="sc-titulo">Digitalizar documento</h3><button class="sc-x" id="sc-x" aria-label="Fechar">×</button></div>
@@ -316,11 +448,10 @@ const DocScanner = {
       /* --- passo 1: ajustar as pontas --- */
       const ajustar = ()=>{
         titulo.textContent = "Ajuste as pontas da folha" + (paginas.length ? ` · página ${paginas.length+1}` : "");
-        dica.textContent = "Arraste as 4 bolinhas laranja até os cantos do papel.";
+        dica.textContent = "Arraste as 4 bolinhas até os cantos do papel (a lupa mostra o canto). Depois toque em Recortar.";
         modos.style.display = "none"; foot.innerHTML = ""; stage.innerHTML = "";
         const wrap = document.createElement("div"); wrap.className = "sc-wrap";
-        const cv = document.createElement("canvas"); cv.width = origem.width; cv.height = origem.height;
-        cv.getContext("2d").drawImage(origem, 0, 0);
+        const cv = origem;   // mostra a própria imagem de trabalho (sem cópia extra na memória)
         const maxW = stage.clientWidth - 20, maxH = stage.clientHeight - 20;
         const esc = Math.min(maxW/origem.width, maxH/origem.height, 1);
         cv.style.width = Math.round(origem.width*esc) + "px"; cv.style.height = Math.round(origem.height*esc) + "px";
@@ -330,17 +461,28 @@ const DocScanner = {
         const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
         poly.setAttribute("fill", "rgba(245,166,35,.15)"); poly.setAttribute("stroke", "#F5A623");
         poly.setAttribute("stroke-width", Math.max(2, origem.width/300)); svg.appendChild(poly); wrap.appendChild(svg);
+        // lupa: mostra a região do canto que está sendo arrastado
+        const lupa = document.createElement("canvas"); lupa.className = "sc-lupa"; lupa.width = 264; lupa.height = 264; stage.appendChild(lupa);
+        const mostrarLupa = (i)=>{
+          const p = quad[i], janela = 80/esc;   // ~80px de tela ao redor do canto, ampliados
+          const lx = lupa.getContext("2d");
+          lx.fillStyle = "#000"; lx.fillRect(0, 0, 264, 264);
+          lx.drawImage(origem, p.x - janela/2, p.y - janela/2, janela, janela, 0, 0, 264, 264);
+          lx.strokeStyle = "#F5A623"; lx.lineWidth = 2; lx.beginPath(); lx.moveTo(132, 0); lx.lineTo(132, 264); lx.moveTo(0, 132); lx.lineTo(264, 132); lx.stroke();
+          lupa.style.display = "block";
+          lupa.style[p.x < origem.width/2 ? "right" : "left"] = "8px"; lupa.style[p.x < origem.width/2 ? "left" : "right"] = "auto";
+        };
         const hs = quad.map((p, i)=>{
           const h = document.createElement("div"); h.className = "sc-h"; h.dataset.i = i; wrap.appendChild(h);
           h.addEventListener("pointerdown", (e)=>{
-            h.setPointerCapture(e.pointerId); e.preventDefault();
+            h.setPointerCapture(e.pointerId); e.preventDefault(); mostrarLupa(i);
             const mover = (ev)=>{
               const r = cv.getBoundingClientRect();
               quad[i] = { x: Math.min(origem.width, Math.max(0, (ev.clientX - r.left)/r.width*origem.width)),
                           y: Math.min(origem.height, Math.max(0, (ev.clientY - r.top)/r.height*origem.height)) };
-              desenhar();
+              desenhar(); mostrarLupa(i);
             };
-            const fim = ()=>{ h.removeEventListener("pointermove", mover); h.removeEventListener("pointerup", fim); h.removeEventListener("pointercancel", fim); };
+            const fim = ()=>{ lupa.style.display = "none"; h.removeEventListener("pointermove", mover); h.removeEventListener("pointerup", fim); h.removeEventListener("pointercancel", fim); };
             h.addEventListener("pointermove", mover); h.addEventListener("pointerup", fim); h.addEventListener("pointercancel", fim);
           });
           return h;
@@ -350,13 +492,19 @@ const DocScanner = {
           hs.forEach((h, i)=>{ h.style.left = (quad[i].x/origem.width*100) + "%"; h.style.top = (quad[i].y/origem.height*100) + "%"; });
         };
         desenhar(); stage.appendChild(wrap);
-        btn("↻ Detectar de novo", "btn-ghost", ()=>{ quad = S.detectar(origem); desenhar(); });
+        const chk = document.createElement("label"); chk.className = "sc-chk";
+        chk.innerHTML = `<input type="checkbox" id="sc-alinhar" ${alinhar?"checked":""}> Encostar nas bordas do papel automaticamente (corta sobras e deixa reto)`;
+        foot.appendChild(chk);
+        chk.querySelector("input").onchange = (e)=>{ alinhar = e.target.checked; };
+        btn("↻ Detectar de novo", "btn-ghost", ()=>{ quad = S.detectarFino(origem); desenhar(); });
         btn("Cancelar", "btn-ghost", ()=>{ if(!paginas.length) fechar(null); else resultado(); });
         btn("✂️ Recortar e digitalizar", "btn-primary", ()=>{
           carregando("Digitalizando...");
           setTimeout(()=>{ try{
-            const { w, h } = S.tamanhoSaida(quad);
-            base = S.warp(origem, quad, w, h); modo = "scanner"; saida = S.melhorar(S.clonar(base), modo); resultado();
+            let q = quad.map(p=>({ x:p.x, y:p.y }));
+            if(alinhar){ const r = S.refinar(origem, q); q = S.encolher(r || q, r ? 0.006 : 0.003); }
+            const { w, h } = S.tamanhoSaida(q);
+            base = S.warp(origem, q, w, h); modo = "scanner"; saida = S.melhorar(S.clonar(base), modo); resultado();
           }catch(e){ stage.innerHTML = ""; toast("Não foi possível digitalizar: " + e.message, "error"); ajustar(); } }, 40);
         });
       };
@@ -400,7 +548,7 @@ const DocScanner = {
         try{
           const img = await S.carregarImagem(f);
           origem = S.paraCanvas(img, S.MAX_ORIGEM);
-          quad = S.detectar(origem);
+          quad = S.detectarFino(origem);
           ajustar();
         }catch(e){ toast(e.message, "error"); if(paginas.length){ saida = null; resultado(); } else fechar(null); }
       };
