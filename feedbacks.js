@@ -4,6 +4,7 @@
    ========================================================================= */
 const FB_A_CADA = 3;               // a cada 3 feedbacks por motivo → 1 advertência
 const FB_DIAS_SEM_FEEDBACK = 30;   // "sem feedback há mais de N dias"
+const FB_DIAS_DESISTENTE = 7;     // faltas seguidas (da 1ª à última) que classificam como desistente
 const FB_PROBATORIO_DIAS = 90;     // período probatório
 const FB_PROBATORIO_AVISO = 15;    // avisa quando faltam até N dias para acabar o probatório
 const FB_SEM_MOTIVO = "SEM MOTIVO";
@@ -106,11 +107,31 @@ const FeedbackAdv = {
     return grupos;
   },
 
+  /** Quem fica de fora dos alertas: ENCOSTADO / FALTANTES (TIPO no Quadro) e DESISTENTE (falta na chamada por mais de 1 semana seguida, sem voltar). */
+  dispensados(){
+    const p = this.proc(), out = new Map(); if(!p) return out;
+    (p.turnover||[]).forEach(t=>{
+      const tp = normStr(t.tipo||"");
+      if(t.codKey && t.ativo && (tp.includes("encost") || tp.includes("faltante"))) out.set(t.codKey, tp.includes("encost") ? "Encostado" : "Faltante");
+    });
+    const porPessoa = new Map();
+    (p.quadro||[]).forEach(r=>{ if(r.codKey && r.data){ if(!porPessoa.has(r.codKey)) porPessoa.set(r.codKey, []); porPessoa.get(r.codKey).push(r); } });
+    porPessoa.forEach((rows, k)=>{
+      if(out.has(k)) return;
+      rows.sort((a,b)=>b.data-a.data);
+      if(rows[0].bucket!=="FALTA") return;
+      let i = 0; while(i+1<rows.length && rows[i+1].bucket==="FALTA") i++;
+      if(this.diasEntre(rows[i].data, rows[0].data) >= FB_DIAS_DESISTENTE) out.set(k, "Desistente");
+    });
+    return out;
+  },
+
   alertas(){
     const p = this.proc(), ct = window.APP_STATE && window.APP_STATE.currentTeam;
     if(!p) return { probatorio:[], advertir:[], semFeedback:[], ferias:[], total:0 };
     const hoje = this.hoje();
-    const probatorio = (p.turnover||[]).filter(t=>t.ativo && t.dtAdm).map(t=>{
+    const fora = this.dispensados();
+    const probatorio = (p.turnover||[]).filter(t=>t.ativo && t.dtAdm && !fora.has(t.codKey)).map(t=>{
       const dias = this.diasEntre(t.dtAdm, hoje), restam = FB_PROBATORIO_DIAS - dias;
       const fim = new Date(t.dtAdm.getFullYear(), t.dtAdm.getMonth(), t.dtAdm.getDate()+FB_PROBATORIO_DIAS);
       return { nome:t.nome, codKey:t.codKey, restam, fim };
@@ -121,6 +142,7 @@ const FeedbackAdv = {
     const advertir = [], semFeedback = [];
     func.forEach(e=>{
       if(ativos && !ativos.has(e.codKey)) return;
+      if(fora.has(e.codKey)) return;
       e.motivos.filter(m=>m.pend>0).forEach(m=> advertir.push({ codKey:e.codKey, nome:e.nome, motivo:m.motivo, fb:m.fb, adv:m.adv, pend:m.pend }));
       if(e.diasSemFb===null || e.diasSemFb>FB_DIAS_SEM_FEEDBACK) semFeedback.push({ codKey:e.codKey, nome:e.nome, dias:e.diasSemFb });
     });
@@ -347,7 +369,8 @@ const FeedbackAdv = {
   insights(func){
     const lista = Array.from(func.values());
     const ct = window.APP_STATE.currentTeam, ativos = ct ? ct.codes : null;
-    const equipe = lista.filter(e=>!ativos || ativos.has(e.codKey));
+    const foraI = this.dispensados();
+    const equipe = lista.filter(e=>(!ativos || ativos.has(e.codKey)) && !foraI.has(e.codKey));
     const top = (arr, fn)=> arr.filter(e=>fn(e)>0).sort((a,b)=>fn(b)-fn(a)).slice(0,5);
     const motivosTot = new Map();
     lista.forEach(e=> e.feedbacks.forEach(r=>{ const k = this.motivoTxt(r.motivo); motivosTot.set(k,(motivosTot.get(k)||0)+1); }));

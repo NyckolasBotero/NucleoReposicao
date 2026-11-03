@@ -634,7 +634,7 @@ const CONFIG_PADRAO = {
   TIPO_REP_AVARIA: ['Recuperado Repositor', 'Relação Repositor'],
   MOTIVO_DESLIGAMENTO: ['BAIXO DESEMPENHO', 'BAIXA QUALIDADE', 'TRABALHO INFORMAL', 'OUTRA OPORTUNIDADE',
     'SOLICITAÇÃO RECEBIMENTO', 'SOLICITAÇÃO ARMAZENAGEM', 'SOLICITAÇÃO EXPEDIÇÃO'],
-  TIPO_DESLIGAMENTO: ['DESLIGAMENTO S. JUSTA', 'PEDIU DESLIGAMENTO', 'TRANSFERENCIA'],
+  TIPO_DESLIGAMENTO: ['DESLIGAMENTO S. JUSTA', 'PEDIU DESLIGAMENTO', 'TRANSFERENCIA', 'ENCOSTADO', 'FALTANTES'],
   TIPO_MISSAO: [],
   MOTIVO_FEEDBACK: ['Má Conduta', 'Insubordinação', 'Ausência Injustificada', 'Atrasos Frequentes', 'Desrespeito às Regras',
     'Violação Política Moral da Empresa', 'Baixa Produção', 'Desempenho Geral', 'Desídia']
@@ -905,6 +905,29 @@ function anexoLer(d, s) {
   return { ok: true, nome: f.getName(), mime: blob.getContentType(), base64: Utilities.base64Encode(blob.getBytes()) };
 }
 
+/** Matrículas fora das cobranças de feedback: TIPO ENCOSTADO/FALTANTES no quadro, ou DESISTENTE (falta na chamada por 7+ dias seguidos, sem voltar). */
+function dispensadosFeedback() {
+  const out = {};
+  lerTurnover().pessoas.forEach(function (p) {
+    const t = normalizar(p.tipo);
+    if (p.ativo && p.mat && (t.indexOf('ENCOST') >= 0 || t.indexOf('FALTANTE') >= 0)) out[p.mat] = 'ESPECIAL';
+  });
+  try {
+    const q = infoQuadro(), por = {};
+    lerLinhas(q.info).forEach(function (l) {
+      const m = soDigitos(l[q.c.cod]), dt = chaveData(l[q.c.data]);
+      if (m && dt) (por[m] = por[m] || []).push({ dt: dt, falta: normalizar(l[q.c.status]) === 'FALTA' });
+    });
+    Object.keys(por).forEach(function (m) {
+      const r = por[m].sort(function (a, b) { return a.dt < b.dt ? 1 : a.dt > b.dt ? -1 : 0; });
+      if (!r[0].falta || out[m]) return;
+      let i = 0; while (i + 1 < r.length && r[i + 1].falta) i++;
+      if (Math.round((isoParaData(r[0].dt).getTime() - isoParaData(r[i].dt).getTime()) / 864e5) >= 7) out[m] = 'DESISTENTE';
+    });
+  } catch (e) {}
+  return out;
+}
+
 /** Colaboradores ativos sem feedback há mais de DIAS_SEM_FEEDBACK dias (ou nunca). Líderes ficam de fora (se houver CARGO). */
 function semFeedbackLista(ignorarMat) {
   try {
@@ -920,9 +943,9 @@ function semFeedbackLista(ignorarMat) {
       if (q.c.cargo >= 0) lerLinhas(q.info).forEach(function (l) { lideres[soDigitos(l[q.c.cod])] = /LIDER/.test(normalizar(l[q.c.cargo])); });
     } catch (e) {}
     const ms = function (iso) { return isoParaData(iso).getTime(); };
-    const out = [];
+    const out = [], fora = dispensadosFeedback();
     funcionariosAtivos().forEach(function (p) {
-      if (lideres[p.mat] || p.mat === ignorarMat) return;
+      if (lideres[p.mat] || p.mat === ignorarMat || fora[p.mat]) return;
       const u = ultimo[p.mat];
       const dias = u ? Math.round((ms(hojeIso) - ms(u)) / 864e5) : null;
       if (dias === null || dias > DIAS_SEM_FEEDBACK) out.push({ mat: p.mat, nome: p.nome, dias: dias, ultimo: u || '' });
