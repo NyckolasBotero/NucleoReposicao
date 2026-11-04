@@ -3037,15 +3037,17 @@ const Commission = {
   valorRep(e, pts, P, fatFat){
     const minimo = Number(P.pontosMinimos)||0;
     const qualidade = e.qualidade, aplicar = P.aplicarDesconto==="SIM";
+    let valorPonto, regra, regraTipo, band = null, comissaoBase;
     if(minimo>0 && pts < minimo){
-      const v = Number(P.valorFixoAbaixo)||0;
-      return { valorPonto:0, regra:`Abaixo de ${fmtNum(minimo)} pts — R$ ${fmtNum(v,2)} fixo`, regraTipo:"Abaixo da pontuação mínima (fixo)", band:null, comissaoBase:v, comissaoComDesconto:v, posQualidade:v, comissaoTotal:v };
+      // abaixo da pontuação mínima: R$ fixo (que também recebe o desconto de qualidade e o ajuste de faturamento)
+      comissaoBase = Number(P.valorFixoAbaixo)||0; valorPonto = 0;
+      regra = `Abaixo de ${fmtNum(minimo)} pts — R$ ${fmtNum(comissaoBase,2)} fixo`; regraTipo = "Abaixo da pontuação mínima (fixo)";
+    } else {
+      const exc = this.findException(e.codKey, e.cod, P.exceptions);
+      if(exc){ valorPonto = exc.valuePerPoint; regra = "Exceção Individual"; regraTipo = regra; }
+      else { band = this.findBand(pts, P.bands); valorPonto = band ? band.value : 0; regra = band ? "Regra Normal" : "Sem faixa aplicável"; regraTipo = band ? `Regra Normal (${fmtNum(band.min)}–${fmtNum(band.max)} pts · ${fmtBRL(band.value)}/pt)` : regra; }
+      comissaoBase = pts * valorPonto;
     }
-    const exc = this.findException(e.codKey, e.cod, P.exceptions);
-    let valorPonto, regra, regraTipo, band = null;
-    if(exc){ valorPonto = exc.valuePerPoint; regra = "Exceção Individual"; regraTipo = regra; }
-    else { band = this.findBand(pts, P.bands); valorPonto = band ? band.value : 0; regra = band ? "Regra Normal" : "Sem faixa aplicável"; regraTipo = band ? `Regra Normal (${fmtNum(band.min)}–${fmtNum(band.max)} pts · ${fmtBRL(band.value)}/pt)` : regra; }
-    const comissaoBase = pts * valorPonto;
     const fator = this.qualityFactor(qualidade);
     const comissaoComDesconto = fator===null ? comissaoBase : comissaoBase*fator;
     if(e.qualidadeEstimada) regra += " — sem auditoria: aplicada a média da equipe";

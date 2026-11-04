@@ -150,6 +150,15 @@ const ComissaoCalc = {
     let rep = getComissaoTableData(ini, fim, todosRows);
     if(fator !== 1) rep = rep.map(e=> Commission.recalcular(e, Math.round(e.pontos*fator), P, fatFat));
 
+    // ---- avaria: % do valor de avaria do mês diluído igualmente entre os repositores ----
+    const avariaTotal = M.avariaValor * M.avariaPct / 100;
+    const cota = rep.length ? avariaTotal / rep.length : 0;
+    rep = rep.map(e=>{
+      const desc = Math.min(cota, Math.max(e.comissaoTotal, 0));
+      return { ...e, preAvaria: e.comissaoTotal, avariaCota: desc, comissaoTotal: e.comissaoTotal - desc,
+        regra: desc>0 ? e.regra + ` — avaria −${fmtBRL(desc)}` : e.regra };
+    });
+
     // ---- quadro: quem bateu a pontuação mínima (mesma regra da tabela, sem os códigos de exceção) ----
     const team = window.APP_STATE.currentTeam, excl = this.excluidos(P);
     const baseCodes = team.cargoDisponivel ? team.repositorCodes : team.codes;
@@ -205,11 +214,11 @@ const ComissaoCalc = {
 
     const fixos = sum(linhas.filter(l=>l.chave.indexOf("esp:fix")===0).map(l=>l.comissaoTotal));
     const manuais = sum(linhas.filter(l=>l.chave.indexOf("esp:man")===0).map(l=>l.comissaoTotal));
-    const repBase = sum(rep.map(e=>e.comissaoBase)), repQual = sum(rep.map(e=>e.posQualidade)), repFinal = sum(rep.map(e=>e.comissaoTotal));
+    const repBase = sum(rep.map(e=>e.comissaoBase)), repQual = sum(rep.map(e=>e.posQualidade)), repFinal = sum(rep.map(e=>e.preAvaria)), repAvaria = sum(rep.map(e=>e.avariaCota));
     const audB = aud?aud.bruto:0, audA = aud?aud.apos:0, audF = aud?aud.final:0, recB = rec?rec.bruto:0, recA = rec?rec.apos:0, recF = rec?rec.final:0;
     const semDesc = repBase + audB + recB + fixos + manuais;
     const subtotal = repFinal + audF + recF + fixos + manuais;
-    const avariaDesc = M.avariaValor * M.avariaPct / 100;
+    const avariaDesc = repAvaria;                 // quanto realmente foi descontado (limitado ao que cada repositor tem a receber)
     const total = subtotal - avariaDesc;
     const tot = {
       qtdOs: sum(rep.map(e=>e.pontos)), fixa: repFinal, fixaBase: repBase, aud: audF, rec: recF, fixos, manuais,
@@ -312,7 +321,7 @@ const ComissaoResumo = {
       ["(−) Desconto por qualidade", t=>fmtBRL(t.descQual), false, true],
       ["(−) Desconto por meta (auditor/recuperação)", t=>fmtBRL(t.descMeta), false, true],
       ["(±) Ajuste por faturamento", t=>fmtBRL(t.ajusteFat), false, true],
-      ["(−) Desconto de avaria", t=>fmtBRL(t.avariaDesc), false, true],
+      ["(−) Desconto de avaria (diluído nos repositores)", t=>fmtBRL(t.avariaDesc), false, true],
       ["Valor total descontos", t=>fmtBRL(t.descontos), false, true],
       ["Valor total a ser pago", t=>fmtBRL(t.total), true, true],
       ["Teto comissão", t=>fmtBRL(t.teto), false, true],
@@ -355,7 +364,7 @@ const ComissaoResumo = {
         const t = l[0]==="Qtd O.S. (pontos)" ? m.qtdOs : null;
         if(t!==null) return t;
         const txt = String(f(m)).replace(/<[^>]+>/g,"");
-        const campo = ({"Comissão Fixa (repositores)":"fixa","Comissão Auditor":"aud","Comissão Recuperações":"rec","Comissões fixas por código":"fixos","Comissões manuais (sem código)":"manuais","Valor total s/ descontos":"semDesc","(−) Desconto por qualidade":"descQual","(−) Desconto por meta (auditor/recuperação)":"descMeta","(±) Ajuste por faturamento":"ajusteFat","(−) Desconto de avaria":"avariaDesc","Valor total descontos":"descontos","Valor total a ser pago":"total","Teto comissão":"teto","Margem disponível (teto − total pago)":"margem"})[l[0]];
+        const campo = ({"Comissão Fixa (repositores)":"fixa","Comissão Auditor":"aud","Comissão Recuperações":"rec","Comissões fixas por código":"fixos","Comissões manuais (sem código)":"manuais","Valor total s/ descontos":"semDesc","(−) Desconto por qualidade":"descQual","(−) Desconto por meta (auditor/recuperação)":"descMeta","(±) Ajuste por faturamento":"ajusteFat","(−) Desconto de avaria (diluído nos repositores)":"avariaDesc","Valor total descontos":"descontos","Valor total a ser pago":"total","Teto comissão":"teto","Margem disponível (teto − total pago)":"margem"})[l[0]];
         return campo ? n2(m[campo]) : txt;
       })];
     });
@@ -437,7 +446,7 @@ const ComissaoParamsUI = {
         ${fld("Pontuação mínima no mês (O.S.)", this.inp("pontosMinimos", d.pontosMinimos, {w:100}))}
         ${fld("R$ fixo se não atingir a mínima", this.inp("valorFixoAbaixo", d.valorFixoAbaixo, {w:100, step:0.01}))}
         ${fld("Meta de faturamento (R$)", this.inp("metaFaturamento", d.metaFaturamento, {w:150, step:1000}))}
-      </div><p class="small-muted" style="margin:6px 0 0">Qualidade: &lt;50% zera · 50–69% paga metade · ≥70% paga o % da qualidade. Repositor com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo (sem desconto de qualidade e sem ajuste de faturamento).</p>`)}
+      </div><p class="small-muted" style="margin:6px 0 0">Qualidade: &lt;50% zera · 50–69% paga metade · ≥70% paga o % da qualidade. Repositor com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo (com desconto de qualidade e ajuste de faturamento, como os demais).</p>`)}
 
       ${sec("Faixas de Pontuação", `<div class="band-row" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase"><div>Pontuação Inicial</div><div>Pontuação Final</div><div>Valor por Ponto (R$)</div><div></div></div>
         ${d.bands.map(rowBand).join("")}<button type="button" class="btn btn-outline btn-sm" data-add="bands">+ Adicionar faixa</button>`)}
@@ -542,7 +551,7 @@ const ComissaoParamsUI = {
       if(fat===""||!meta) F.innerHTML = `Informe o faturamento para ajustar a comissão (meta ${fmtBRL(meta)}). Sem valor: sem ajuste (×1,0000).`;
       else { const f = Number(fat)/meta; F.innerHTML = `${fmtBRL(Number(fat))} ÷ ${fmtBRL(meta)} = <strong>${fmtNum(f*100,2)}%</strong> → comissão do quadro × <strong>${fmtNum(f,4)}</strong> (${f>=1?'+':''}${fmtNum((f-1)*100,2)}%)`; }
       const v = Number(el.querySelector("#mm-av").value)||0, p = Number(el.querySelector("#mm-avp").value)||0;
-      A.innerHTML = `${fmtBRL(v)} × ${fmtNum(p,2)}% = <strong>${fmtBRL(v*p/100)}</strong> descontados do total da comissão`;
+      A.innerHTML = `${fmtBRL(v)} × ${fmtNum(p,2)}% = <strong>${fmtBRL(v*p/100)}</strong> diluídos igualmente entre os repositores (cada um tem sua parte descontada da comissão)`;
     };
     const lista = ()=>{
       const box = el.querySelector("#mm-manuais");
