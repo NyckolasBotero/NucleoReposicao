@@ -23,7 +23,7 @@ const ComissaoParams = {
       aplicarDesconto: "SIM", considerarMissoes: "SIM",
       teto: 15000, metaFaturamento: 100000000, pontosMinimos: 660, valorFixoAbaixo: 300,
       auditor:    { cod:"", valorAudit:0.5, metaAuditorias:0, pctSeNaoBater:30, faixas:[{ min:0, max:49.99, value:0 }, { min:50, max:100, value:0 }] },
-      recuperacao:{ cod:"", valorItem:0, metaItens:0, pctSeNaoBater:30, motivo:"RECUPERADO (REP) STO" },
+      recuperacao:{ cod:"", valorItem:0, metaItens:0, pctSeNaoBater:30, motivo:"RECUPERADO (REP) STO", extras:[] },
       fixos: [],      // [{ cod, tipo, valor }]  comissão fixa por código
       excecoes: []    // códigos que não contam como repositor (nem na meta do quadro)
     };
@@ -73,7 +73,7 @@ const ComissaoParams = {
 
   mensalDe(ym){
     const m = this.estado().mensal[ym] || {};
-    return { faturado: m.faturado!=null ? m.faturado : null, avariaValor: Number(m.avariaValor)||0, avariaPct: Number(m.avariaPct)||0, manuais: (m.manuais||[]).map(x=>({ nome:x.nome||"", valor:Number(x.valor)||0 })) };
+    return { faturado: m.faturado!=null ? m.faturado : null, itensManual: m.itensManual!=null ? m.itensManual : null, audsManual: m.audsManual!=null ? m.audsManual : null, avariaValor: Number(m.avariaValor)||0, avariaPct: Number(m.avariaPct)||0, manuais: (m.manuais||[]).map(x=>({ nome:x.nome||"", valor:Number(x.valor)||0 })) };
   },
   setMensal(ym, obj){ this.estado().mensal[ym] = obj; },
   fatorFat(P, M){ return (M.faturado>0 && P.metaFaturamento>0) ? M.faturado / P.metaFaturamento : 1; },
@@ -142,6 +142,17 @@ const ComissaoCalc = {
     (P.fixos||[]).forEach(f=>{ const d = this.digits(f.cod); if(d) s.add(d); });
     return s;
   },
+  /** Quem lançou (Func.Lançamento) o motivo de recuperação no período, para conferência/atribuição. */
+  lancadoresRec(P, ini, fim){
+    const alvo = normStr(P.recuperacao.motivo||""), i = dateOnly(ini), f = dateOnly(fim), por = new Map();
+    (window.APP_STATE.processed.p9712||[]).forEach(r=>{
+      if(!r.dt || dateOnly(r.dt)<i || dateOnly(r.dt)>f || normStr(r.motivo||"")!==alvo) return;
+      const k = this.digits(r.funcLanc); if(!k) return;
+      const e = por.get(k) || { cod:k, nome: this.nomeDe(k) || r.nome || ("Cód. "+k), itens:0, lanc:0 };
+      e.itens += r.qtd||0; e.lanc++; por.set(k, e);
+    });
+    return Array.from(por.values()).sort((a,b)=>b.itens-a.itens);
+  },
   mes(ini, fim, fator){
     fator = fator || 1;
     const P = ComissaoParams.paraPeriodo(ini, fim), ym = ComissaoParams.ymPeriodo(ini, fim), M = ComissaoParams.mensalDe(ym);
@@ -175,30 +186,33 @@ const ComissaoCalc = {
     if(this.digits(P.auditor.cod)){
       const nome = this.nomeDe(P.auditor.cod) || ("Cód. " + P.auditor.cod);
       let auds = (window.RetornoOnline && RetornoOnline.rows) ? RetornoOnline.contarPorAuditor(ini || new Date(2000,0,1), fim || new Date(), P.auditor.cod, this.nomeDe(P.auditor.cod)) : undefined;
-      if(auds!=null) auds = Math.round(auds*fator);
+      const audsAuto = auds==null ? auds : Math.round(auds*fator);
+      auds = M.audsManual!=null ? M.audsManual : audsAuto;
       const porAud = (auds||0) * (Number(P.auditor.valorAudit)||0);
       const faixa = pctQuadro==null ? null : (P.auditor.faixas||[]).find(f=> pctQuadro>=f.min && pctQuadro<=f.max);
       const premio = faixa ? Number(faixa.value)||0 : 0;
       const bruto = porAud + premio, metaA = Number(P.auditor.metaAuditorias)||0;
       const bateuMeta = !(metaA>0) || (auds||0) >= metaA, pct = Number(P.auditor.pctSeNaoBater);
       const apos = bateuMeta ? bruto : bruto * ((isNaN(pct)?100:pct)/100);
-      aud = { cod:P.auditor.cod, nome, auds, porAud, faixa, premio, bruto, apos, final: apos*fatFat, bateuMeta, metaA, pct };
+      aud = { cod:P.auditor.cod, nome, auds, audsAuto, manual: M.audsManual!=null, porAud, faixa, premio, bruto, apos, final: apos*fatFat, bateuMeta, metaA, pct };
       linhas.push({ chave:"esp:aud", tipo:"Auditor", cod:P.auditor.cod, nome, comissaoBase:bruto, posQualidade:apos, comissaoComDesconto:apos, comissaoTotal:aud.final,
-        regra: `Auditor — ${auds==null?"—":fmtNum(auds)} auditoria(s) de retorno × ${fmtBRL(Number(P.auditor.valorAudit)||0)}` + (premio? ` + prêmio quadro ${fmtBRL(premio)}` : "") + (metaA>0 ? (bateuMeta ? ` · meta de ${fmtNum(metaA)} atingida` : ` · meta de ${fmtNum(metaA)} NÃO atingida: paga ${fmtNum(aud.pct,0)}%`) : "") });
+        regra: `Auditor — ${auds==null?"—":fmtNum(auds)} auditoria(s) de retorno${M.audsManual!=null?" (ajustado manualmente)":""} × ${fmtBRL(Number(P.auditor.valorAudit)||0)}` + (premio? ` + prêmio quadro ${fmtBRL(premio)}` : "") + (metaA>0 ? (bateuMeta ? ` · meta de ${fmtNum(metaA)} atingida` : ` · meta de ${fmtNum(metaA)} NÃO atingida: paga ${fmtNum(aud.pct,0)}%`) : "") });
     }
     // ---- recuperação ----
     let rec = null;
     if(this.digits(P.recuperacao.cod)){
       const nome = this.nomeDe(P.recuperacao.cod) || ("Cód. " + P.recuperacao.cod);
-      const alvo = normStr(P.recuperacao.motivo||""), cd = this.digits(P.recuperacao.cod);
+      const alvo = normStr(P.recuperacao.motivo||"");
+      const cods = new Set([this.digits(P.recuperacao.cod)].concat((P.recuperacao.extras||[]).map(c=>this.digits(c))).filter(Boolean));
       const i = ini ? dateOnly(ini) : new Date(2000,0,1), f = fim ? dateOnly(fim) : new Date(2999,0,1);
-      const lin = (window.APP_STATE.processed.p9712||[]).filter(r=> r.dt && dateOnly(r.dt)>=i && dateOnly(r.dt)<=f && normStr(r.motivo||"")===alvo && this.digits(r.funcLanc)===cd);
-      const itens = Math.round(sum(lin.map(r=>r.qtd)) * fator), valorItem = Number(P.recuperacao.valorItem)||0;
+      const lin = (window.APP_STATE.processed.p9712||[]).filter(r=> r.dt && dateOnly(r.dt)>=i && dateOnly(r.dt)<=f && normStr(r.motivo||"")===alvo && cods.has(this.digits(r.funcLanc)));
+      const itensAuto = Math.round(sum(lin.map(r=>r.qtd)) * fator), valorItem = Number(P.recuperacao.valorItem)||0;
+      const itens = M.itensManual!=null ? M.itensManual : itensAuto;
       const bruto = itens*valorItem, metaR = Number(P.recuperacao.metaItens)||0, bateuMeta = !(metaR>0) || itens >= metaR, pct = Number(P.recuperacao.pctSeNaoBater);
       const apos = bateuMeta ? bruto : bruto * ((isNaN(pct)?100:pct)/100);
-      rec = { cod:P.recuperacao.cod, nome, itens, lanc: Math.round(lin.length*fator), bruto, apos, final: apos*fatFat, bateuMeta, metaR, pct, valorItem };
+      rec = { cod:P.recuperacao.cod, nome, itens, itensAuto, manual: M.itensManual!=null, lanc: Math.round(lin.length*fator), bruto, apos, final: apos*fatFat, bateuMeta, metaR, pct, valorItem };
       linhas.push({ chave:"esp:rec", tipo:"Recuperação", cod:P.recuperacao.cod, nome, comissaoBase:bruto, posQualidade:apos, comissaoComDesconto:apos, comissaoTotal:rec.final,
-        regra: `Recuperação — ${fmtNum(itens)} item(ns) × ${fmtBRL(valorItem)}` + (metaR>0 ? (bateuMeta ? ` · meta de ${fmtNum(metaR)} atingida` : ` · meta de ${fmtNum(metaR)} NÃO atingida: paga ${fmtNum(rec.pct,0)}%`) : "") });
+        regra: `Recuperação — ${fmtNum(itens)} item(ns)${M.itensManual!=null?" (ajustado manualmente)":""} × ${fmtBRL(valorItem)}` + (metaR>0 ? (bateuMeta ? ` · meta de ${fmtNum(metaR)} atingida` : ` · meta de ${fmtNum(metaR)} NÃO atingida: paga ${fmtNum(rec.pct,0)}%`) : "") });
     }
     // ---- fixas por código ----
     (P.fixos||[]).forEach((f,i)=>{
@@ -392,7 +406,8 @@ const ComissaoParamsUI = {
     exceptions: ()=>({ codigo:"", nome:"", valuePerPoint:0.4, active:true }),
     fixos: ()=>({ cod:"", tipo:"Líder", valor:0 }),
     excecoes: ()=>"",
-    "auditor.faixas": ()=>({ min:0, max:0, value:0 })
+    "auditor.faixas": ()=>({ min:0, max:0, value:0 }),
+    "recuperacao.extras": ()=>""
   },
   garantirDraft(){ if(!this.draft) this.draft = ComissaoParams.clone(ComissaoParams.vigente()); return this.draft; },
   aoCarregar(){
@@ -409,12 +424,13 @@ const ComissaoParamsUI = {
     if(document.getElementById("cp-css")) return;
     const st = document.createElement("style"); st.id = "cp-css";
     st.textContent = `
+      #comissao-params *{box-sizing:border-box}
       #comissao-params .cp-sec{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
       #comissao-params .cp-sec>header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--gray-100)}
       #comissao-params .cp-sec>header h4{margin:0;font-size:14px;color:var(--blue-dark);font-weight:700}
       #comissao-params .cp-sec>header span{font-size:12px;color:var(--gray-500)}
       #comissao-params .cp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 14px;align-items:end}
-      #comissao-params .cp-grid.cols2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+      #comissao-params .cp-grid.cols2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px 24px;align-items:start}
       #comissao-params .cp-f{display:flex;flex-direction:column;gap:5px;min-width:0}
       #comissao-params .cp-f>label,#comissao-params .cp-lbl{font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.02em}
       #comissao-params .cp-f input,#comissao-params .cp-rows input[type=text],#comissao-params .cp-rows input[type=number],#comissao-params .cp-aff input,#comissao-params input[type=month]{width:100%;height:36px;box-sizing:border-box;border:1px solid var(--gray-300);border-radius:8px;padding:0 10px;font:inherit;font-size:13px;background:var(--white);color:var(--ink)}
@@ -481,6 +497,7 @@ const ComissaoParamsUI = {
     const ref = ComissaoResumo.mesRef(), ym = ComissaoParams.ym(ref), M = ComissaoParams.mensalDe(ym);
     const vs = ComissaoParams.estado().versoes;
     const desdeDef = ComissaoParams.ym(Production.maxDataDate() || new Date());
+    const aut = ComissaoCalc.mes(new Date(ref.getFullYear(), ref.getMonth(), 1), (Production.maxDataDate() && Production.maxDataDate()>=new Date(ref.getFullYear(), ref.getMonth(), 1) && Production.maxDataDate()<new Date(ref.getFullYear(), ref.getMonth()+1, 0)) ? Production.maxDataDate() : new Date(ref.getFullYear(), ref.getMonth()+1, 0));
     const fld = (rot, html)=>`<div class="cp-f"><label>${rot}</label>${html}</div>`;
     const sec = (titulo, nota, inner)=>`<section class="cp-sec"><header><h4>${titulo}</h4>${nota?`<span>${nota}</span>`:''}</header>${inner}</section>`;
     const xbtn = path=>`<button type="button" class="cp-x" data-del="${path}" title="Remover">✕</button>`;
@@ -491,12 +508,16 @@ const ComissaoParamsUI = {
     const rowEx = (c,i)=>`<div class="cp-row ex1">${this.inp(`excecoes.${i}`,c,{t:"text",re:1,ph:"código"})}${this.nomeTag(c)}${xbtn(`excecoes.${i}`)}</div>`;
     const rowFx = (f,i)=>`<div class="cp-row faixa">${this.inp(`auditor.faixas.${i}.min`,f.min,{step:0.01,suf:"%"})}${this.inp(`auditor.faixas.${i}.max`,f.max,{step:0.01,suf:"%"})}${this.inp(`auditor.faixas.${i}.value`,f.value,{step:0.01,pre:"R$"})}${xbtn(`auditor.faixas.${i}`)}</div>`;
     const a = d.auditor, r = d.recuperacao;
+    const mIni = new Date(ref.getFullYear(), ref.getMonth(), 1), mFimTot = new Date(ref.getFullYear(), ref.getMonth()+1, 0), maxD = Production.maxDataDate();
+    const lanc = ComissaoCalc.lancadoresRec(d, mIni, (maxD && maxD>=mIni && maxD<mFimTot) ? maxD : mFimTot);
+    const contados = new Set([ComissaoCalc.digits(r.cod)].concat((r.extras||[]).map(c=>ComissaoCalc.digits(c))).filter(Boolean));
+    const quem = `<div class="cp-lbl" style="margin:14px 0 6px">Quem lançou "${escapeHtml(r.motivo)}" em ${ComissaoParams.ymRot(ym)}</div>` + (lanc.length ? `<div class="cp-rows">${lanc.map(l=>`<div class="cp-row" style="grid-template-columns:minmax(120px,1fr) 90px 150px"><span class="cp-nome-tag" title="${escapeHtml(l.nome)}">${escapeHtml(l.nome)} <span style="color:var(--gray-500);font-weight:400">(${l.cod})</span></span><span class="small-muted">${fmtNum(l.itens)} item(ns)</span>${contados.has(l.cod) ? `<span class="small-muted">✔ conta para o responsável</span>` : `<button type="button" class="btn btn-outline btn-sm" data-conta="${l.cod}">Contar para o responsável</button>`}</div>`).join("")}</div>` : `<p class="small-muted" style="margin:0">Nenhum lançamento com esse motivo no mês.</p>`);
     el.innerHTML = `
       <div class="panel-header"><h3>Definição de Parâmetros</h3><span class="small-muted">Edite, depois clique em <strong>Salvar parâmetros</strong> (barra azul no fim do bloco)</span></div>
 
       ${sec("Parâmetros gerais", "Valem para o cálculo de todos os repositores", `
         <div class="cp-grid">
-          ${fld("Aplicar desconto por qualidade?", this.toggle("aplicarDesconto", d.aplicarDesconto))}
+          ${fld("Desconto por qualidade?", this.toggle("aplicarDesconto", d.aplicarDesconto))}
           ${fld("Considerar Missões?", this.toggle("considerarMissoes", d.considerarMissoes))}
           ${fld("Teto de comissão", this.inp("teto", d.teto, {step:100, pre:"R$"}))}
           ${fld("Pontuação mínima no mês", this.inp("pontosMinimos", d.pontosMinimos, {suf:"O.S."}))}
@@ -542,6 +563,10 @@ const ComissaoParamsUI = {
               ${fld("Recebe se não bater a meta", this.inp("recuperacao.pctSeNaoBater", r.pctSeNaoBater, {suf:"%"}))}
               <div class="cp-f" style="grid-column:1/-1"><label>Motivo na 9712</label>${this.inp("recuperacao.motivo", r.motivo, {t:"text"})}</div>
             </div>
+            <div class="cp-lbl" style="margin:14px 0 6px">Outros códigos que lançam em nome do responsável</div>
+            <div class="cp-rows">${(r.extras||[]).map((c,i)=>`<div class="cp-row ex1">${this.inp(`recuperacao.extras.${i}`,c,{t:"text",re:1,ph:"código"})}${this.nomeTag(c)}<button type="button" class="cp-x" data-del="recuperacao.extras.${i}" title="Remover">✕</button></div>`).join("")}</div>
+            <button type="button" class="btn btn-outline btn-sm cp-add" data-add="recuperacao.extras">+ Adicionar código</button>
+            ${quem}
           </div>
         </div>`)}
 
@@ -581,6 +606,11 @@ const ComissaoParamsUI = {
             </div>
           </div>
         </div>
+        <div class="cp-sub" style="margin-top:16px">Ajuste manual do mês <span class="small-muted" style="font-weight:400">(deixe vazio para usar o valor automático)</span></div>
+        <div class="cp-grid cols2">
+          ${fld("Itens recuperados (automático: "+fmtNum(aut.rec?aut.rec.itensAuto:0)+")", `<input type="number" step="1" id="mm-itens" value="${M.itensManual==null?'':M.itensManual}" placeholder="automático">`)}
+          ${fld("Auditorias de retorno do auditor (automático: "+(aut.aud&&aut.aud.audsAuto!=null?fmtNum(aut.aud.audsAuto):"—")+")", `<input type="number" step="1" id="mm-auds" value="${M.audsManual==null?'':M.audsManual}" placeholder="automático">`)}
+        </div>
         <div class="cp-sub" style="margin-top:16px">Comissão manual — funcionários sem código</div>
         <div class="cp-rows" id="mm-manuais"></div>
         <button type="button" class="btn btn-outline btn-sm cp-add" id="mm-add">+ Adicionar</button>
@@ -597,6 +627,7 @@ const ComissaoParamsUI = {
       marcar();
       if(inp.dataset.re) this.render();
     }));
+    el.querySelectorAll("[data-conta]").forEach(b=> b.addEventListener("click", ()=>{ (d.recuperacao.extras = d.recuperacao.extras||[]).push(b.dataset.conta); marcar(); this.render(); }));
     el.querySelectorAll("[data-tg]").forEach(b=> b.addEventListener("click", ()=>{ d[b.dataset.tg] = b.dataset.v; marcar(); this.render(); }));
     el.querySelectorAll("[data-add]").forEach(b=> b.addEventListener("click", ()=>{
       const [o,k] = this.caminho(d, b.dataset.add+".x"); const lista = o[k.replace(/x$/,"")] || (o);
@@ -641,7 +672,8 @@ const ComissaoParamsUI = {
     calc(); lista();
     el.querySelector("#mm-salvar").addEventListener("click", async ()=>{
       const fat = el.querySelector("#mm-fat").value;
-      ComissaoParams.setMensal(ym, { faturado: fat==="" ? null : Number(fat), avariaValor: Number(el.querySelector("#mm-av").value)||0, avariaPct: Number(el.querySelector("#mm-avp").value)||0, manuais: man.filter(m=>m.nome||m.valor) });
+      const nv = id=>{ const v = el.querySelector(id).value; return v==="" ? null : Number(v); };
+      ComissaoParams.setMensal(ym, { faturado: fat==="" ? null : Number(fat), itensManual: nv("#mm-itens"), audsManual: nv("#mm-auds"), avariaValor: Number(el.querySelector("#mm-av").value)||0, avariaPct: Number(el.querySelector("#mm-avp").value)||0, manuais: man.filter(m=>m.nome||m.valor) });
       const ok = await ComissaoParams.persistir();
       toast(ok ? "Lançamentos do mês salvos." : (ComissaoParams.status||"Salvo."), ok ? "success" : "warn");
       renderComissao();
