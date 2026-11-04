@@ -6581,6 +6581,8 @@ function renderComissao(){
       </div>
     </div>
 
+    <div class="panel" id="comissao-apoio-panel" style="border:1.5px solid #1a9c62;"></div>
+
     <div class="panel" id="comissao-hist-panel">
       <div class="panel-header"><h3>Histórico do Valor de Comissão</h3><span class="small-muted">mês a mês · os meses do período filtrado ficam destacados</span></div>
       <div class="chart-wrap"><canvas id="chart-comissao-hist"></canvas></div>
@@ -6652,6 +6654,7 @@ function renderComissao(){
   renderBandsEditor();
   renderExceptionsEditor();
   renderCommissionTable();
+  ComissaoApoio.render();
 
   $("#add-band").addEventListener("click", ()=>{
     cfg.bands.push({ min:0, max:0, value:0, active:true });
@@ -6662,6 +6665,119 @@ function renderComissao(){
     renderExceptionsEditor(); renderCommissionTable();
   });
 }
+
+/* ---------------------------------------------------------------------- */
+/* Comissão — equipe de apoio: Ronny (auditoria de retorno + meta do quadro) e Fabiane (recuperação 9712) */
+/* ---------------------------------------------------------------------- */
+const ComissaoApoio = {
+  KEY: "nucleo_comissao_apoio_v1",
+  padrao(){ return {
+    ronny:  { nome:"Ronny",   cod:"", valorAudit:0.5, metaPontos:null, faixas:[{ min:0, max:49.99, value:0 }, { min:50, max:100, value:0 }] },
+    fabiane:{ nome:"Fabiane", cod:"", valorItem:0, motivo:"RECUPERADO (REP) STO" }
+  }; },
+  cfg(){
+    if(this._cfg) return this._cfg;
+    let c = this.padrao();
+    try{ const s = JSON.parse(localStorage.getItem(this.KEY)||"null"); if(s){ c.ronny = { ...c.ronny, ...(s.ronny||{}) }; c.fabiane = { ...c.fabiane, ...(s.fabiane||{}) }; } }catch(e){}
+    return (this._cfg = c);
+  },
+  salvar(){ try{ localStorage.setItem(this.KEY, JSON.stringify(this._cfg)); }catch(e){} },
+  periodo(){
+    const st = CommissionState, max = Production.maxDataDate();
+    let ini = st.dataInicial, fim = st.dataFinal;
+    if(!ini && !fim && max){ ini = new Date(max.getFullYear(), max.getMonth(), 1); fim = max; }
+    if(!ini) ini = fim ? new Date(fim.getFullYear(), fim.getMonth(), 1) : new Date(2000,0,1);
+    if(!fim) fim = max || new Date();
+    return { ini: dateOnly(ini), fim: dateOnly(fim) };
+  },
+  /** Meta (pontos) padrão = início da menor faixa ativa que paga algo. */
+  metaPadrao(){
+    const b = (window.APP_STATE.commissionConfig.bands||[]).filter(x=>x.active!==false && x.value>0).sort((a,c)=>a.min-c.min)[0];
+    return b ? b.min : null;
+  },
+  calcular(){
+    const c = this.cfg(), { ini, fim } = this.periodo();
+    // ---- Ronny ----
+    const team = window.APP_STATE.currentTeam;
+    const baseCodes = team.cargoDisponivel ? team.repositorCodes : team.codes;
+    const tabela = Commission.computeAll(ini, fim, commissionConsiderarMissoes==="SIM").filter(e=>baseCodes.has(e.codKey));
+    const meta = c.ronny.metaPontos!=null && c.ronny.metaPontos!=="" ? Number(c.ronny.metaPontos) : this.metaPadrao();
+    const bateram = meta==null ? null : tabela.filter(e=>e.pontos>=meta).length;
+    const pct = (bateram==null || !baseCodes.size) ? null : bateram/baseCodes.size*100;
+    const faixa = pct==null ? null : (c.ronny.faixas||[]).find(f=> pct>=f.min && pct<=f.max);
+    const premio = faixa ? Number(faixa.value)||0 : 0;
+    const auds = (window.RetornoOnline && RetornoOnline.rows) ? RetornoOnline.contarPorAuditor(ini, fim, c.ronny.cod, c.ronny.nome) : undefined;
+    const porAud = (auds||0) * (Number(c.ronny.valorAudit)||0);
+    // ---- Fabiane ----
+    const alvo = normStr(c.fabiane.motivo||"");
+    const dig = (v)=>String(v||"").replace(/\D/g,"");
+    const lin = (window.APP_STATE.processed.p9712||[]).filter(r=>{
+      if(!r.dt || dateOnly(r.dt)<ini || dateOnly(r.dt)>fim) return false;
+      if(normStr(r.motivo||"")!==alvo) return false;
+      return c.fabiane.cod ? dig(r.funcLanc)===dig(c.fabiane.cod) : false;
+    });
+    const itens = sum(lin.map(r=>r.qtd)), valorItem = Number(c.fabiane.valorItem)||0;
+    return { ini, fim, baseN: baseCodes.size, meta, bateram, pct, faixa, premio, auds, porAud, totalRonny: porAud + premio,
+             lancF: lin.length, itens, totalFabiane: itens*valorItem };
+  },
+  render(){
+    const el = document.getElementById("comissao-apoio-panel"); if(!el) return;
+    const c = this.cfg();
+    if(window.RetornoOnline && RetornoOnline.rows===null && !RetornoOnline.loading) RetornoOnline.load().then(()=> this.render());
+    const r = this.calcular();
+    const num = (v,d=0)=> v==null ? "—" : fmtNum(v,d);
+    const avisoAud = r.auds===null ? `<div class="warn-box">A aba Auditoria_Retorno não tem as colunas <strong>Matricula_Auditor</strong>/<strong>Nome_Auditor</strong> — não dá para contar as auditorias do Ronny.</div>`
+                   : r.auds===undefined ? `<p class="small-muted">Carregando Auditoria_Retorno...</p>` : "";
+    el.innerHTML = `
+      <div class="panel-header"><h3>Comissão — Equipe de Apoio (Ronny e Fabiane)</h3><span class="small-muted">Período: ${fmtDateBR(r.ini)} a ${fmtDateBR(r.fim)} (mesmo filtro da tela) · parâmetros salvos neste navegador</span></div>
+      <div class="grid-2">
+        <div>
+          <h4 style="margin:0 0 8px">Ronny — auditor</h4>
+          <div class="toolbar" style="flex-wrap:wrap;gap:8px">
+            <div class="filter-group"><label>Matrícula</label><input type="text" data-ap="ronny.cod" value="${escapeHtml(c.ronny.cod)}" style="width:110px"></div>
+            <div class="filter-group"><label>Nome (como na auditoria)</label><input type="text" data-ap="ronny.nome" value="${escapeHtml(c.ronny.nome)}" style="width:130px"></div>
+            <div class="filter-group"><label>R$ por auditoria de retorno</label><input type="number" step="0.01" data-ap="ronny.valorAudit" value="${c.ronny.valorAudit}" style="width:90px"></div>
+            <div class="filter-group"><label>Meta (pontos/mês)</label><input type="number" step="1" data-ap="ronny.metaPontos" value="${c.ronny.metaPontos==null?'':c.ronny.metaPontos}" placeholder="${r.meta==null?'defina':r.meta+' (faixa)'}" style="width:110px"></div>
+          </div>
+          <div class="small-muted" style="margin:6px 0 4px">Prêmio (R$) conforme o % do quadro que bateu a meta:</div>
+          ${(c.ronny.faixas||[]).map((f,i)=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+            de <input type="number" step="0.01" data-ap="ronny.faixas.${i}.min" value="${f.min}" style="width:70px">% até <input type="number" step="0.01" data-ap="ronny.faixas.${i}.max" value="${f.max}" style="width:70px">% → R$ <input type="number" step="0.01" data-ap="ronny.faixas.${i}.value" value="${f.value}" style="width:90px">
+            <button class="icon-btn" data-ap-del="${i}">✕</button></div>`).join("")}
+          <button class="btn btn-outline btn-sm" id="ap-add-faixa">+ faixa</button>
+          ${avisoAud}
+          <table class="data-table" style="margin-top:10px"><tbody>
+            <tr><td>Auditorias de retorno no período</td><td>${num(r.auds)}</td><td>${fmtBRL(r.porAud)}</td></tr>
+            <tr><td>Repositores que bateram a meta${r.meta==null?' (defina a meta)':' (≥ '+fmtNum(r.meta)+' pts)'}</td><td>${num(r.bateram)} de ${r.baseN} (${r.pct==null?'—':fmtNum(r.pct,1)+'%'})</td><td>${fmtBRL(r.premio)}</td></tr>
+            <tr><td><strong>Total Ronny</strong></td><td></td><td><strong>${fmtBRL(r.totalRonny)}</strong></td></tr>
+          </tbody></table>
+        </div>
+        <div>
+          <h4 style="margin:0 0 8px">Fabiane — recuperação (9712)</h4>
+          <div class="toolbar" style="flex-wrap:wrap;gap:8px">
+            <div class="filter-group"><label>Matrícula (Func.Lançamento)</label><input type="text" data-ap="fabiane.cod" value="${escapeHtml(c.fabiane.cod)}" style="width:110px"></div>
+            <div class="filter-group"><label>R$ por item recuperado</label><input type="number" step="0.01" data-ap="fabiane.valorItem" value="${c.fabiane.valorItem}" style="width:90px"></div>
+            <div class="filter-group"><label>Motivo na 9712</label><input type="text" data-ap="fabiane.motivo" value="${escapeHtml(c.fabiane.motivo)}" style="width:190px"></div>
+          </div>
+          ${!c.fabiane.cod ? `<div class="warn-box">Informe a matrícula da Fabiane para contar os lançamentos dela na 9712.</div>` : ""}
+          <table class="data-table" style="margin-top:10px"><tbody>
+            <tr><td>Lançamentos "${escapeHtml(c.fabiane.motivo)}"</td><td>${fmtNum(r.lancF)}</td><td></td></tr>
+            <tr><td>Itens recuperados (soma das quantidades)</td><td>${fmtNum(r.itens)}</td><td>${fmtBRL(r.totalFabiane)}</td></tr>
+            <tr><td><strong>Total Fabiane</strong></td><td></td><td><strong>${fmtBRL(r.totalFabiane)}</strong></td></tr>
+          </tbody></table>
+        </div>
+      </div>`;
+    el.querySelectorAll("[data-ap]").forEach(inp=> inp.addEventListener("change", ()=>{
+      const path = inp.dataset.ap.split("."); let o = c;
+      for(let i=0;i<path.length-1;i++) o = o[path[i]];
+      const k = path[path.length-1];
+      o[k] = inp.type==="number" ? (inp.value===""? (k==="metaPontos"?null:0) : Number(inp.value)) : inp.value.trim();
+      this.salvar(); this.render();
+    }));
+    el.querySelectorAll("[data-ap-del]").forEach(b=> b.addEventListener("click", ()=>{ c.ronny.faixas.splice(Number(b.dataset.apDel),1); this.salvar(); this.render(); }));
+    const add = document.getElementById("ap-add-faixa");
+    if(add) add.addEventListener("click", ()=>{ c.ronny.faixas.push({ min:0, max:0, value:0 }); this.salvar(); this.render(); });
+  }
+};
 
 function renderBandsEditor(){
   const cfg = window.APP_STATE.commissionConfig;

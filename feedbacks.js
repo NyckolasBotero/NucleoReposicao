@@ -582,6 +582,7 @@ const RetornoOnline = {
     const h = lines[0].map(x=>trimStr(x));
     const col = (n)=> h.findIndex(x=>normStr(x)===normStr(n));
     const iData = col("DataHora"), iNC = col("Possui_NC"), iMat = col("Matricula_Colaborador_NC"), iNome = col("Nome_Colaborador_NC");
+    const iAM = col("Matricula_Auditor"), iAN = col("Nome_Auditor");
     const iEtq = col("Qtd_Etiqueta"), iFis = col("Qtd_Fisico"), iDiv = col("Divergencia_Un"), iFoto = col("Foto_Retorno");
     // a gviz devolve a 1ª aba quando o nome não existe: exige colunas próprias de Auditoria_Retorno
     if(iData<0 || iMat<0 || (iFoto<0 && iEtq<0)) throw new Error("A aba Auditoria_Retorno não foi encontrada na planilha de auditoria (ou está sem as colunas esperadas).");
@@ -591,18 +592,30 @@ const RetornoOnline = {
     for(let i=1;i<lines.length;i++){
       const c = lines[i]; const data = AuditOnline.parseDateFlexible(c[iData]); if(!data) continue;
       const mat = trimStr(c[iMat]), nome = iNome>=0 ? trimStr(c[iNome]) : "";
-      if(!mat && !nome) continue;     // sem repositor atribuído: não entra no ranking individual
+      const audMat = iAM>=0 ? trimStr(c[iAM]) : "", audNome = iAN>=0 ? trimStr(c[iAN]) : "";
+      if(!mat && !nome){ if(audMat || audNome) out.push({ data, codKey:"", nc:false, audMat, audNome, soAuditor:true }); continue; }     // sem repositor atribuído: não entra no ranking individual
       const etq = iEtq>=0 ? num(c[iEtq]) : null, fis = iFis>=0 ? num(c[iFis]) : null, dv = iDiv>=0 ? num(c[iDiv]) : null;
       const nc = (iNC>=0 && sim(c[iNC])) || (dv!==null && dv!==0) || (etq!==null && fis!==null && etq!==fis);
-      out.push({ data, codKey: mat ? normStr(mat) : "NOME::"+normStr(nome), nc });
+      out.push({ data, codKey: mat ? normStr(mat) : "NOME::"+normStr(nome), nc, audMat, audNome });
     }
     return out;
+  },
+  /** Auditorias de retorno feitas por um auditor (matrícula ou nome) no intervalo. null se a planilha não tem colunas de auditor. */
+  contarPorAuditor(ini, fim, cod, nome){
+    const i = dateOnly(ini), f = dateOnly(fim), dig = (v)=>String(v||"").replace(/\D/g,""), nn = normStr(nome||"");
+    const rows = this.rows||[];
+    if(!rows.some(r=>r.audMat || r.audNome)) return null;
+    return rows.filter(r=>{
+      const d = dateOnly(r.data); if(d<i || d>f) return false;
+      if(cod && dig(r.audMat) && dig(r.audMat)===dig(cod)) return true;
+      return !!(nn && r.audNome && normStr(r.audNome).includes(nn));
+    }).length;
   },
   /** Map codKey → { auditorias, qualidade } no intervalo. */
   porRepositor(ini, fim){
     const m = new Map(), i = dateOnly(ini), f = dateOnly(fim);
     (this.rows||[]).forEach(r=>{
-      const d = dateOnly(r.data); if(d<i || d>f) return;
+      const d = dateOnly(r.data); if(d<i || d>f || r.soAuditor) return;
       if(!m.has(r.codKey)) m.set(r.codKey, { auditorias:0, ok:0 });
       const e = m.get(r.codKey); e.auditorias++; if(!r.nc) e.ok++;
     });
