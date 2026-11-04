@@ -6593,6 +6593,7 @@ function renderComissao(){
       <div class="chart-wrap"><canvas id="chart-comissao-hist"></canvas></div>
     </div>
 
+    <style>#comissao-calculada-panel.sem-proj .proj-col{display:none !important}</style>
     <div class="panel" id="comissao-calculada-panel">
       <div class="panel-header">
         <h3>Comissão Calculada</h3>
@@ -6650,12 +6651,9 @@ function renderComissao(){
   $("#btn-toggle-col-regra").addEventListener("click", ()=>{ commissionShowRegra = !commissionShowRegra; renderComissao(); });
   $("#btn-toggle-col-comissao").addEventListener("click", ()=>{ commissionShowComissaoTotal = !commissionShowComissaoTotal; renderComissao(); });
   $("#btn-export-comissao-xlsx").addEventListener("click", exportComissaoToExcel);
-  $("#btn-export-comissao-pdf").addEventListener("click", ()=>{
-    Export.toPDF(document.getElementById("comissao-calculada-panel"), "comissao-calculada");
-  });
-  $("#btn-export-comissao-png").addEventListener("click", ()=>{
-    Export.toPNG(document.getElementById("comissao-calculada-panel"), "comissao-calculada");
-  });
+  const semProj = async (fn)=>{ const p = document.getElementById("comissao-calculada-panel"); p.classList.add("sem-proj"); try{ await fn(p); } finally { p.classList.remove("sem-proj"); } };
+  $("#btn-export-comissao-pdf").addEventListener("click", ()=> semProj(p=> Export.toPDF(p, "comissao-calculada")));
+  $("#btn-export-comissao-png").addEventListener("click", ()=> semProj(p=> Export.toPNG(p, "comissao-calculada")));
 
   renderBandsEditor();
   renderExceptionsEditor();
@@ -7114,6 +7112,38 @@ function renderComissaoHistorico(){
   });
 }
 
+// Projeção de comissão do mês em andamento (só para visualização — não vai para PDF/PNG/Excel):
+// projeta os pontos pelo ritmo de dias úteis (seg–sex) e reaplica faixa/exceção e fator de qualidade.
+function diasUteisEntre(a, b){
+  let n = 0; for(let d = dateOnly(a); d <= b; d = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1)){ const w = d.getDay(); if(w>0 && w<6) n++; }
+  return n;
+}
+function projecaoComissao(data){
+  const st = CommissionState, max = Production.maxDataDate();
+  const ref = st.dataFinal || (st.dataInicial ? null : max);
+  if(!ref) return null;
+  const mIni = new Date(ref.getFullYear(), ref.getMonth(), 1), mFim = new Date(ref.getFullYear(), ref.getMonth()+1, 0);
+  const ini = st.dataInicial ? dateOnly(st.dataInicial) : mIni;
+  if(ini < mIni || ini > mFim) return null;
+  let fim = st.dataFinal ? dateOnly(st.dataFinal) : dateOnly(max||ref);
+  if(max && fim > dateOnly(max)) fim = dateOnly(max);
+  const decorridos = diasUteisEntre(ini, fim), totalMes = diasUteisEntre(mIni, mFim);
+  if(decorridos <= 0) return null;
+  const fator = fim >= mFim ? 1 : diasUteisEntre(ini, mFim) / decorridos;
+  const cfg = window.APP_STATE.commissionConfig;
+  const porRep = new Map();
+  data.forEach(e=>{
+    const pts = Math.round(e.pontos * fator);
+    const exc = Commission.findException(e.codKey, e.cod, cfg.exceptions);
+    const band = exc ? null : Commission.findBand(pts, cfg.bands);
+    const vp = exc ? exc.valuePerPoint : (band ? band.value : 0);
+    const f = Commission.qualityFactor(e.qualidade);
+    const base = pts * vp, comDesc = f===null ? base : base*f;
+    porRep.set(e.codKey, commissionAplicarDesconto==="SIM" ? comDesc : base);
+  });
+  return { porRep, total: sum(Array.from(porRep.values())), fator, decorridos, totalMes };
+}
+
 function renderCommissionTable(){
   renderComissaoHistorico();
   if(window.ComissaoResumo) ComissaoResumo.render();
@@ -7131,7 +7161,9 @@ function renderCommissionTable(){
     ${commissionShowValorPonto?'<th>Valor/Ponto</th>':''}
     ${commissionShowRegra?'<th>Regra</th>':''}
     ${commissionShowComissaoTotal?'<th>Comissão Base</th><th>Comissão Total (c/ ajuste)</th>':''}
+    <th class="proj-col" title="Projeção do mês pelo ritmo de dias úteis — não vai para a extração">Comissão Projetada</th>
   </tr>`;
+  const proj = projecaoComissao(data);
   $("#commission-thead").innerHTML = theadHtml;
 
   $("#commission-tbody").innerHTML = data.map(e=>`
@@ -7143,7 +7175,12 @@ function renderCommissionTable(){
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
       ${commissionShowRegra?`<td>${e.regra.startsWith('Exceção Individual')?`<span class="tag-warn">${e.regra}</span>`:e.regra.startsWith('Regra Normal')?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
       ${commissionShowComissaoTotal?`<td class="small-muted">${fmtBRL(e.comissaoBase)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
+      <td class="proj-col">${proj ? fmtBRL(proj.porRep.get(e.codKey)||0) : '—'}</td>
     </tr>`).join("") || `<tr><td colspan="10" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
+  if(data.length){
+    const ncol = document.querySelectorAll("#commission-thead th").length;
+    $("#commission-tbody").insertAdjacentHTML("beforeend", `<tr class="proj-col" style="font-weight:800;background:#eef7f1"><td colspan="${ncol-1}" style="text-align:right">TOTAL PROJETADO${proj?` <span class="small-muted">(${proj.decorridos} de ${proj.totalMes} dias úteis)</span>`:''}</td><td>${proj ? fmtBRL(proj.total) : '—'}</td></tr>`);
+  }
 
   // resumo: período selecionado + os dois totais (com e sem desconto), sempre os dois —
   // o toggle "Aplicar desconto?" só decide qual vira a "Comissão Total" oficial da tabela/export
