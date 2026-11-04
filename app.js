@@ -6677,7 +6677,7 @@ function comissaoHistoricoMensal(){
   while(y < h.getFullYear() || (y===h.getFullYear() && m<=h.getMonth())){
     const ini = new Date(y,m,1), fim = new Date(y,m+1,0,23,59,59);
     const c = ComissaoCalc.mes(ini, fim);   // inclui apoio, fixas, manuais, faturamento e avaria do mês
-    out.push({ ini, fim, label: nomes[m]+"/"+String(y).slice(2), n:c.rep.length, sem:c.tot.semDesc, com:c.tot.total });
+    out.push({ ini, fim, label: nomes[m]+"/"+String(y).slice(2), n:c.rep.length, sem:c.tot.semDesc, com:c.tot.total, teto:c.tot.teto });
     m++; if(m>11){ m=0; y++; }
   }
   return out;
@@ -6694,9 +6694,12 @@ function renderComissaoHistorico(){
       { label:"Total sem descontos", data:hist.map(h=>h.sem), borderColor:Charts.colors.blue, backgroundColor:"rgba(47,111,206,.10)", fill:true, tension:.3,
         pointRadius:hist.map(h=>dentro(h)?6:3), pointBackgroundColor:hist.map(h=>dentro(h)?Charts.colors.blue:"#fff"), pointBorderColor:Charts.colors.blue, pointHoverRadius:8,
         datalabels:{ display: aplicado==="sem", align:"top", anchor:"end", color:Charts.colors.blue, font:{size:11,weight:"700"}, formatter:v=>fmtBRL(v) } },
-      { label:"Total a pagar (descontos, metas, faturamento e avaria)", data:hist.map(h=>h.com), borderColor:Charts.colors.green, backgroundColor:Charts.colors.green, borderDash:[5,4], tension:.3,
-        pointRadius:hist.map(h=>dentro(h)?6:3), pointBackgroundColor:hist.map(h=>dentro(h)?Charts.colors.green:"#fff"), pointBorderColor:Charts.colors.green, pointHoverRadius:8,
-        datalabels:{ display: aplicado==="com", align:"top", anchor:"end", color:Charts.colors.green, font:{size:11,weight:"700"}, formatter:v=>fmtBRL(v) } }
+      { label:"Total a pagar (descontos, metas, faturamento e avaria)", data:hist.map(h=>h.com), borderColor:Charts.colors.green, segment:{ borderColor:c=> (hist[c.p1DataIndex] && hist[c.p1DataIndex].teto>0 && hist[c.p1DataIndex].com>hist[c.p1DataIndex].teto) ? "#d64545" : Charts.colors.green }, backgroundColor:Charts.colors.green, borderDash:[5,4], tension:.3,
+        pointRadius:hist.map(h=>dentro(h)?6:3), pointBackgroundColor:hist.map(h=>dentro(h)?(h.teto>0&&h.com>h.teto?"#d64545":Charts.colors.green):"#fff"), pointBorderColor:hist.map(h=>h.teto>0&&h.com>h.teto?"#d64545":Charts.colors.green), pointHoverRadius:8,
+        datalabels:{ display: aplicado==="com", align:"top", anchor:"end", color:Charts.colors.green, font:{size:11,weight:"700"}, formatter:v=>fmtBRL(v) } },
+      { label:"Teto de comissão", data:hist.map(h=>h.teto), borderColor:"#e08a1f", backgroundColor:"#e08a1f", borderWidth:2, borderDash:[2,3], pointRadius:0, pointHoverRadius:4, tension:0, fill:false,
+        segment:{ borderColor:c=> (hist[c.p1DataIndex] && hist[c.p1DataIndex].teto>0 && hist[c.p1DataIndex].com>hist[c.p1DataIndex].teto) ? "#d64545" : "#e08a1f" },
+        datalabels:{ display:false } }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, layout:{ padding:{ top:22, bottom:6, left:4, right:14 } },
       interaction:{ mode:"index", intersect:false },
