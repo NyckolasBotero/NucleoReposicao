@@ -112,7 +112,7 @@ const FeedbackAdv = {
     const p = this.proc(), out = new Map(); if(!p) return out;
     (p.turnover||[]).forEach(t=>{
       const tp = normStr(t.tipo||"");
-      if(t.codKey && t.ativo && (tp.includes("encost") || tp.includes("faltante"))) out.set(t.codKey, tp.includes("encost") ? "Encostado" : "Faltante");
+      if(t.codKey && (tp.includes("encost") || tp.includes("faltante"))) out.set(t.codKey, tp.includes("encost") ? "Encostado" : "Faltante");
     });
     const porPessoa = new Map();
     (p.quadro||[]).forEach(r=>{ if(r.codKey && r.data){ if(!porPessoa.has(r.codKey)) porPessoa.set(r.codKey, []); porPessoa.get(r.codKey).push(r); } });

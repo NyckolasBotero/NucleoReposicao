@@ -875,7 +875,9 @@ const LancUI = {
           <label>Tipo<select id="qd-tipo" data-vazio="">${this.options(L.TIPO_DESLIGAMENTO, null, "— continua ativo")}</select></label>
           <label>Motivo do desligamento<select id="qd-motivo" data-vazio="">${this.options(L.MOTIVO_DESLIGAMENTO, null, "—")}</select></label>
           <label>Data do desligamento<input type="date" id="qd-desl"></label>
-          <label>Data da transferência<input type="date" id="qd-transf"></label>
+          <label id="qd-l-transf" style="display:none">Data da transferência<input type="date" id="qd-transf"></label>
+          <label id="qd-l-setor" style="display:none">Transferido para qual setor?<input type="text" id="qd-setor" placeholder="Ex.: Expedição"></label>
+          <label id="qd-l-enc" style="display:none">Data do encostamento (INSS)<input type="date" id="qd-enc"></label>
         </div>
         ${this.novoItem("TIPO_DESLIGAMENTO", "qd-tipo", "novo tipo")}
         ${this.novoItem("MOTIVO_DESLIGAMENTO", "qd-motivo", "novo motivo")}
@@ -896,12 +898,16 @@ const LancUI = {
     const $$ = (id)=> document.getElementById(id);
 
     const atualizarAtivo = ()=>{
-      const tipo = $$("qd-tipo").value, saiu = !!($$("qd-desl").value || $$("qd-transf").value || /transfer/i.test(tipo));
+      const tipo = $$("qd-tipo").value, transf = /transfer/i.test(tipo), enc = /encost/i.test(tipo);
+      const saiu = !!($$("qd-desl").value || transf || enc);   // desligado, transferido ou encostado = ativo "Não"
       $$("qd-ativo").value = saiu ? "Não" : "Sim";
-      const transf = /transfer/i.test(tipo);
-      $$("qd-motivo").disabled = transf;
+      $$("qd-l-transf").style.display = $$("qd-l-setor").style.display = transf ? "" : "none";
+      $$("qd-l-enc").style.display = enc ? "" : "none";
+      if(!transf){ $$("qd-transf").value = ""; $$("qd-setor").value = ""; }
+      if(!enc) $$("qd-enc").value = "";
+      $$("qd-motivo").disabled = transf || enc;
     };
-    ["qd-tipo","qd-desl","qd-transf"].forEach(id=> $$(id).addEventListener("change", atualizarAtivo));
+    ["qd-tipo","qd-desl"].forEach(id=> $$(id).addEventListener("change", atualizarAtivo));
     $$("qd-mat").addEventListener("change", ()=>{
       const mat = this.soDigitos($$("qd-mat").value);
       // matrícula já ativa no quadro: carrega o registro (inclui data de contratação) para edição
@@ -910,7 +916,7 @@ const LancUI = {
         const b = $$("qd-lista").querySelector(`[data-ed="${reg.linha}"]`);
         if(b){ b.click(); this.aviso("qd-msg", "ok", "Matrícula já está no quadro — registro carregado (data de contratação incluída). Edite e salve."); return; }
         this.qd.editar = reg.linha; $$("qd-nome").value = reg.nome; $$("qd-adm").value = reg.adm || ""; $$("qd-tipo").value = reg.tipo; $$("qd-motivo").value = reg.motivo;
-        $$("qd-desl").value = reg.desl; $$("qd-transf").value = reg.transf; $$("qd-obs").value = reg.obs; $$("qd-titulo").textContent = "Editando " + reg.nome; $$("qd-novo").style.display = ""; atualizarAtivo();
+        $$("qd-desl").value = reg.desl; $$("qd-transf").value = reg.transf; $$("qd-setor").value = reg.setor||""; $$("qd-enc").value = reg.enc||""; $$("qd-obs").value = reg.obs; $$("qd-titulo").textContent = "Editando " + reg.nome; $$("qd-novo").style.display = ""; atualizarAtivo();
         return;
       }
       const n = this.nomeDe($$("qd-mat").value); if(n && !$$("qd-nome").value) $$("qd-nome").value = n;
@@ -918,7 +924,7 @@ const LancUI = {
 
     const limpar = ()=>{
       this.qd.editar = null;
-      ["qd-mat","qd-nome","qd-obs","qd-desl","qd-transf"].forEach(id=> $$(id).value = "");
+      ["qd-mat","qd-nome","qd-obs","qd-desl","qd-transf","qd-setor","qd-enc"].forEach(id=> $$(id).value = "");
       $$("qd-adm").value = this.hojeISO(); $$("qd-tipo").value = ""; $$("qd-motivo").value = "";
       $$("qd-titulo").textContent = "Nova contratação"; $$("qd-novo").style.display = "none"; $$("qd-mat").readOnly = false; atualizarAtivo();
     };
@@ -930,14 +936,14 @@ const LancUI = {
         .sort((a,b)=> (b.ativo - a.ativo) || a.nome.localeCompare(b.nome));
       $$("qd-lista").innerHTML = rows.length ? `<table class="adm-table"><thead><tr><th>Matrícula</th><th>Nome</th><th>Ativo</th><th>Tipo / Motivo</th><th>Contratação</th><th>Saída</th><th></th></tr></thead><tbody>
         ${rows.map(p=>`<tr><td>${this.h(p.mat)}</td><td>${this.h(p.nome)}</td><td><span class="adm-tag ${p.ativo ? "acc" : "off"}">${p.ativo ? "Sim" : "Não"}</span></td>
-          <td>${this.h([p.tipo, p.motivo].filter(Boolean).join(" · "))}</td><td>${this.br(p.adm)}</td><td>${this.br(p.desl || p.transf)}</td>
+          <td>${this.h([p.tipo, p.motivo].filter(Boolean).join(" · "))}</td><td>${this.br(p.adm)}</td><td>${this.br(p.desl || p.transf || p.enc)}${p.setor ? " → " + this.h(p.setor) : ""}</td>
           <td><button type="button" class="btn btn-outline btn-sm" data-ed="${p.linha}">Editar</button></td></tr>`).join("")}</tbody></table>`
         : `<p class="small-muted">Nenhum registro.</p>`;
       $$("qd-lista").querySelectorAll("[data-ed]").forEach(b=> b.addEventListener("click", ()=>{
         const p = this.qd.pessoas.find(x=>x.linha === Number(b.dataset.ed)); if(!p) return;
         this.qd.editar = p.linha;
         $$("qd-mat").value = p.mat; $$("qd-nome").value = p.nome; $$("qd-adm").value = p.adm; $$("qd-tipo").value = p.tipo; $$("qd-motivo").value = p.motivo;
-        $$("qd-desl").value = p.desl; $$("qd-transf").value = p.transf; $$("qd-obs").value = p.obs;
+        $$("qd-desl").value = p.desl; $$("qd-transf").value = p.transf; $$("qd-setor").value = p.setor||""; $$("qd-enc").value = p.enc||""; $$("qd-obs").value = p.obs;
         $$("qd-titulo").textContent = "Editando " + p.nome; $$("qd-novo").style.display = ""; atualizarAtivo();
         window.scrollTo({ top:0, behavior:"smooth" });
       }));
@@ -953,7 +959,7 @@ const LancUI = {
       this.aviso("qd-msg", "", "");
       const r = await this.enviar($$("qd-salvar"), { acao:"lanc_quadro_salvar", linha:this.qd.editar || 0, matric:$$("qd-mat").value, nome:$$("qd-nome").value.trim(),
         tipo:$$("qd-tipo").value, motivo:$$("qd-motivo").disabled ? "" : $$("qd-motivo").value, obs:$$("qd-obs").value,
-        dtAdm:$$("qd-adm").value, dtDesl:$$("qd-desl").value, dtTransf:$$("qd-transf").value });
+        dtAdm:$$("qd-adm").value, dtDesl:$$("qd-desl").value, dtTransf:$$("qd-transf").value, setor:$$("qd-setor").value.trim(), dtEnc:$$("qd-enc").value });
       if(!r || !r.ok) return this.aviso("qd-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
       this.aviso("qd-msg", "ok", `Registro salvo — ${r.ativo ? "colaborador <strong>ATIVO</strong>" : "colaborador <strong>NÃO ativo</strong> (fora dos indicadores)"}.`);
       toast("Quadro atualizado.");
