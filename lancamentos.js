@@ -902,7 +902,19 @@ const LancUI = {
       $$("qd-motivo").disabled = transf;
     };
     ["qd-tipo","qd-desl","qd-transf"].forEach(id=> $$(id).addEventListener("change", atualizarAtivo));
-    $$("qd-mat").addEventListener("change", ()=>{ const n = this.nomeDe($$("qd-mat").value); if(n && !$$("qd-nome").value) $$("qd-nome").value = n; });
+    $$("qd-mat").addEventListener("change", ()=>{
+      const mat = this.soDigitos($$("qd-mat").value);
+      // matrícula já ativa no quadro: carrega o registro (inclui data de contratação) para edição
+      const reg = !this.qd.editar && mat && (this.qd.pessoas||[]).find(p=> this.soDigitos(p.mat) === mat && p.ativo);
+      if(reg){
+        const b = $$("qd-lista").querySelector(`[data-ed="${reg.linha}"]`);
+        if(b){ b.click(); this.aviso("qd-msg", "ok", "Matrícula já está no quadro — registro carregado (data de contratação incluída). Edite e salve."); return; }
+        this.qd.editar = reg.linha; $$("qd-nome").value = reg.nome; $$("qd-adm").value = reg.adm || ""; $$("qd-tipo").value = reg.tipo; $$("qd-motivo").value = reg.motivo;
+        $$("qd-desl").value = reg.desl; $$("qd-transf").value = reg.transf; $$("qd-obs").value = reg.obs; $$("qd-titulo").textContent = "Editando " + reg.nome; $$("qd-novo").style.display = ""; atualizarAtivo();
+        return;
+      }
+      const n = this.nomeDe($$("qd-mat").value); if(n && !$$("qd-nome").value) $$("qd-nome").value = n;
+    });
 
     const limpar = ()=>{
       this.qd.editar = null;
