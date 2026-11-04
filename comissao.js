@@ -405,116 +405,192 @@ const ComissaoParamsUI = {
     const n = ComissaoCalc.nomeDe(d);
     return n ? `<strong>${escapeHtml(n)}</strong>` : `<span class="small-muted" style="color:#d64545">código não encontrado</span>`;
   },
+  css(){
+    if(document.getElementById("cp-css")) return;
+    const st = document.createElement("style"); st.id = "cp-css";
+    st.textContent = `
+      #comissao-params .cp-sec{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
+      #comissao-params .cp-sec>header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--gray-100)}
+      #comissao-params .cp-sec>header h4{margin:0;font-size:14px;color:var(--blue-dark);font-weight:700}
+      #comissao-params .cp-sec>header span{font-size:12px;color:var(--gray-500)}
+      #comissao-params .cp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 14px;align-items:end}
+      #comissao-params .cp-grid.cols2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+      #comissao-params .cp-f{display:flex;flex-direction:column;gap:5px;min-width:0}
+      #comissao-params .cp-f>label,#comissao-params .cp-lbl{font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.02em}
+      #comissao-params .cp-f input,#comissao-params .cp-rows input[type=text],#comissao-params .cp-rows input[type=number],#comissao-params .cp-aff input,#comissao-params input[type=month]{width:100%;height:36px;box-sizing:border-box;border:1px solid var(--gray-300);border-radius:8px;padding:0 10px;font:inherit;font-size:13px;background:var(--white);color:var(--ink)}
+      #comissao-params input:focus{outline:2px solid var(--blue-soft);border-color:var(--blue-med)}
+      #comissao-params .cp-aff{display:flex;align-items:center;border:1px solid var(--gray-300);border-radius:8px;background:var(--white);overflow:hidden;height:36px}
+      #comissao-params .cp-aff:focus-within{outline:2px solid var(--blue-soft);border-color:var(--blue-med)}
+      #comissao-params .cp-aff i{font-style:normal;font-size:12px;color:var(--gray-500);padding:0 9px;background:var(--gray-50);height:100%;display:flex;align-items:center;border-right:1px solid var(--gray-200)}
+      #comissao-params .cp-aff i.suf{border-right:0;border-left:1px solid var(--gray-200)}
+      #comissao-params .cp-aff input{border:0;border-radius:0;outline:0!important;height:100%;min-width:0}
+      #comissao-params .cp-seg{display:inline-flex;border:1px solid var(--gray-300);border-radius:8px;overflow:hidden;height:36px}
+      #comissao-params .cp-seg button{border:0;background:var(--white);padding:0 18px;font:inherit;font-size:13px;color:var(--gray-700);cursor:pointer}
+      #comissao-params .cp-seg button+button{border-left:1px solid var(--gray-300)}
+      #comissao-params .cp-seg button.active{background:var(--blue-med);color:#fff;font-weight:700}
+      #comissao-params .cp-sub{margin:14px 0 8px;font-size:13px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+      #comissao-params .cp-sub .cp-nome{font-weight:600;color:var(--blue-dark)}
+      #comissao-params .cp-rows{display:grid;gap:8px}
+      #comissao-params .cp-row{display:grid;gap:10px;align-items:center}
+      #comissao-params .cp-row.head{font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.02em}
+      #comissao-params .cp-row.bands{grid-template-columns:1fr 1fr 1fr 74px 36px}
+      #comissao-params .cp-row.exc{grid-template-columns:110px minmax(120px,1.4fr) 1fr 74px 36px}
+      #comissao-params .cp-row.fix{grid-template-columns:110px minmax(120px,1.4fr) 1fr 1fr 36px}
+      #comissao-params .cp-row.ex1{grid-template-columns:110px minmax(120px,1fr) 36px}
+      #comissao-params .cp-row.faixa{grid-template-columns:1fr 1fr 1fr 36px}
+      #comissao-params .cp-row.man{grid-template-columns:minmax(160px,1.6fr) 1fr 36px}
+      #comissao-params .cp-chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-700)}
+      #comissao-params .cp-x{width:36px;height:36px;border:1px solid var(--gray-200);border-radius:8px;background:var(--white);color:var(--red);cursor:pointer;font-size:14px}
+      #comissao-params .cp-x:hover{background:var(--red-bg)}
+      #comissao-params .cp-add{margin-top:10px}
+      #comissao-params .cp-nome-tag{font-size:13px;color:var(--blue-dark);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #comissao-params .cp-hint{font-size:12px;color:var(--gray-500);margin:10px 0 0;line-height:1.5}
+      #comissao-params .cp-calc{background:var(--blue-light);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--blue-dark);min-height:20px}
+      #comissao-params .cp-save{position:sticky;bottom:0;z-index:5;display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--blue-light);border:1px solid var(--blue-soft);border-radius:var(--radius);padding:10px 14px;margin:14px 0 12px;box-shadow:0 -4px 14px rgba(16,32,64,.08)}
+      #comissao-params .cp-save .grow{flex:1;min-width:220px}
+      #comissao-params .cp-save .cp-f{flex-direction:row;align-items:center;gap:8px}
+      #comissao-params .cp-save input[type=month]{width:150px}
+      #comissao-params .cp-state{font-size:12px;color:var(--gray-700)}
+      #comissao-params .cp-state.dirty{color:var(--orange);font-weight:700}
+      #comissao-params .cp-foot{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--gray-100)}
+      @media (max-width:640px){#comissao-params .cp-row.bands,#comissao-params .cp-row.exc,#comissao-params .cp-row.fix,#comissao-params .cp-row.faixa,#comissao-params .cp-row.man{grid-template-columns:1fr 1fr}#comissao-params .cp-row.head{display:none}}
+    `;
+    document.head.appendChild(st);
+  },
+  nomeTag(cod){
+    const d = ComissaoCalc.digits(cod); if(!d) return `<span class="cp-nome-tag" style="color:var(--gray-500);font-weight:400">informe o código</span>`;
+    const n = ComissaoCalc.nomeDe(d);
+    return n ? `<span class="cp-nome-tag" title="${escapeHtml(n)}">${escapeHtml(n)}</span>` : `<span class="cp-nome-tag" style="color:var(--red)">código não encontrado</span>`;
+  },
+  /** campo numérico/texto com prefixo (R$) ou sufixo (%) opcional */
   inp(path, val, opts){
     opts = opts || {};
-    const t = opts.t || "number";
-    const v = val==null ? "" : val;
-    return `<input type="${t}" ${t==="number"?`step="${opts.step||"any"}"`:""} data-p="${path}" ${opts.re?'data-re="1"':''} value="${escapeHtml(String(v))}" style="width:${opts.w||100}px" ${opts.ph?`placeholder="${opts.ph}"`:''}>`;
+    const t = opts.t || "number", v = val==null ? "" : val;
+    const input = `<input type="${t}" ${t==="number"?`step="${opts.step||"any"}"`:""} data-p="${path}" ${opts.re?'data-re="1"':''} value="${escapeHtml(String(v))}" ${opts.ph?`placeholder="${opts.ph}"`:''}>`;
+    if(opts.pre || opts.suf) return `<div class="cp-aff">${opts.pre?`<i>${opts.pre}</i>`:''}${input}${opts.suf?`<i class="suf">${opts.suf}</i>`:''}</div>`;
+    return input;
   },
-  toggle(path, val, rotulo){
-    return `<div class="filter-group"><label>${rotulo}</label><div class="toggle-group">
-      <button type="button" data-tg="${path}" data-v="SIM" class="${val==='SIM'?'active':''}">Sim</button>
-      <button type="button" data-tg="${path}" data-v="NAO" class="${val==='NAO'?'active':''}">Não</button></div></div>`;
+  toggle(path, val){
+    return `<div class="cp-seg"><button type="button" data-tg="${path}" data-v="SIM" class="${val==='SIM'?'active':''}">Sim</button><button type="button" data-tg="${path}" data-v="NAO" class="${val==='NAO'?'active':''}">Não</button></div>`;
   },
   render(){
     const el = document.getElementById("comissao-params"); if(!el) return;
+    this.css();
     ComissaoParams.carregarRemoto();
-    const d = this.garantirDraft(), st = CommissionState;
+    const d = this.garantirDraft();
     const ref = ComissaoResumo.mesRef(), ym = ComissaoParams.ym(ref), M = ComissaoParams.mensalDe(ym);
-    const Pm = ComissaoParams.paraMes(ym);
     const vs = ComissaoParams.estado().versoes;
     const desdeDef = ComissaoParams.ym(Production.maxDataDate() || new Date());
-    const rowBand = (b,i)=>`<div class="band-row">${this.inp(`bands.${i}.min`,b.min,{w:90})}${this.inp(`bands.${i}.max`,b.max,{w:90})}${this.inp(`bands.${i}.value`,b.value,{w:90,step:0.01})}
-        <div style="display:flex;gap:6px;align-items:center"><label class="small-muted" style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-p="bands.${i}.active" ${b.active!==false?'checked':''}> Ativa</label><button type="button" class="icon-btn" data-del="bands.${i}">✕</button></div></div>`;
-    const rowExc = (x,i)=>`<div class="exception-row">${this.inp(`exceptions.${i}.codigo`,x.codigo,{t:"text",w:90,re:1})}<div>${this.nomeTag(x.codigo)}</div>${this.inp(`exceptions.${i}.valuePerPoint`,x.valuePerPoint,{w:80,step:0.01})}
-        <label class="small-muted" style="display:flex;align-items:center;gap:4px"><input type="checkbox" data-p="exceptions.${i}.active" ${x.active!==false?'checked':''}> Ativa</label><button type="button" class="icon-btn" data-del="exceptions.${i}">✕</button></div>`;
-    const rowFix = (f,i)=>`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">${this.inp(`fixos.${i}.cod`,f.cod,{t:"text",w:90,re:1,ph:"código"})}<span style="min-width:170px">${this.nomeTag(f.cod)}</span>
-        ${this.inp(`fixos.${i}.tipo`,f.tipo,{t:"text",w:110,ph:"tipo (ex.: Líder)"})} R$ ${this.inp(`fixos.${i}.valor`,f.valor,{w:100,step:0.01})}<button type="button" class="icon-btn" data-del="fixos.${i}">✕</button></div>`;
-    const rowEx = (c,i)=>`<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">${this.inp(`excecoes.${i}`,c,{t:"text",w:90,re:1,ph:"código"})}<span>${this.nomeTag(c)}</span><button type="button" class="icon-btn" data-del="excecoes.${i}">✕</button></div>`;
-    const rowFx = (f,i)=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">de ${this.inp(`auditor.faixas.${i}.min`,f.min,{w:70,step:0.01})}% até ${this.inp(`auditor.faixas.${i}.max`,f.max,{w:70,step:0.01})}% → R$ ${this.inp(`auditor.faixas.${i}.value`,f.value,{w:90,step:0.01})}<button type="button" class="icon-btn" data-del="auditor.faixas.${i}">✕</button></div>`;
-    const sec = (t, inner)=>`<div style="border:1px solid var(--gray-200,#dde3ec);border-radius:8px;padding:10px 12px;margin-bottom:10px"><h4 style="margin:0 0 8px">${t}</h4>${inner}</div>`;
-    const fld = (rot, html)=>`<div class="filter-group"><label>${rot}</label>${html}</div>`;
+    const fld = (rot, html)=>`<div class="cp-f"><label>${rot}</label>${html}</div>`;
+    const sec = (titulo, nota, inner)=>`<section class="cp-sec"><header><h4>${titulo}</h4>${nota?`<span>${nota}</span>`:''}</header>${inner}</section>`;
+    const xbtn = path=>`<button type="button" class="cp-x" data-del="${path}" title="Remover">✕</button>`;
+    const ativa = path=>`<label class="cp-chk"><input type="checkbox" data-p="${path}" ${(path.indexOf("bands")===0?d.bands[Number(path.split(".")[1])].active:d.exceptions[Number(path.split(".")[1])].active)!==false?'checked':''}> Ativa</label>`;
+    const rowBand = (b,i)=>`<div class="cp-row bands">${this.inp(`bands.${i}.min`,b.min)}${this.inp(`bands.${i}.max`,b.max)}${this.inp(`bands.${i}.value`,b.value,{step:0.01,pre:"R$"})}${ativa(`bands.${i}.active`)}${xbtn(`bands.${i}`)}</div>`;
+    const rowExc = (x,i)=>`<div class="cp-row exc">${this.inp(`exceptions.${i}.codigo`,x.codigo,{t:"text",re:1,ph:"código"})}${this.nomeTag(x.codigo)}${this.inp(`exceptions.${i}.valuePerPoint`,x.valuePerPoint,{step:0.01,pre:"R$"})}${ativa(`exceptions.${i}.active`)}${xbtn(`exceptions.${i}`)}</div>`;
+    const rowFix = (f,i)=>`<div class="cp-row fix">${this.inp(`fixos.${i}.cod`,f.cod,{t:"text",re:1,ph:"código"})}${this.nomeTag(f.cod)}${this.inp(`fixos.${i}.tipo`,f.tipo,{t:"text",ph:"Ex.: Líder"})}${this.inp(`fixos.${i}.valor`,f.valor,{step:0.01,pre:"R$"})}${xbtn(`fixos.${i}`)}</div>`;
+    const rowEx = (c,i)=>`<div class="cp-row ex1">${this.inp(`excecoes.${i}`,c,{t:"text",re:1,ph:"código"})}${this.nomeTag(c)}${xbtn(`excecoes.${i}`)}</div>`;
+    const rowFx = (f,i)=>`<div class="cp-row faixa">${this.inp(`auditor.faixas.${i}.min`,f.min,{step:0.01,suf:"%"})}${this.inp(`auditor.faixas.${i}.max`,f.max,{step:0.01,suf:"%"})}${this.inp(`auditor.faixas.${i}.value`,f.value,{step:0.01,pre:"R$"})}${xbtn(`auditor.faixas.${i}`)}</div>`;
     const a = d.auditor, r = d.recuperacao;
     el.innerHTML = `
-      <div class="panel-header"><h3>Definição de Parâmetros</h3><span class="small-muted" id="cp-status">${escapeHtml(ComissaoParams.status || "")}</span></div>
-      ${this.dirty ? `<div class="warn-box">Há alterações não salvas. Os cálculos só mudam depois de clicar em <strong>Salvar parâmetros</strong>.</div>` : ""}
+      <div class="panel-header"><h3>Definição de Parâmetros</h3><span class="small-muted">Edite, depois clique em <strong>Salvar parâmetros</strong> (barra azul no fim do bloco)</span></div>
 
-      ${sec("Parâmetros comissão", `<div class="toolbar" style="flex-wrap:wrap;gap:10px;margin:0">
-        ${this.toggle("aplicarDesconto", d.aplicarDesconto, "Aplicar desconto por qualidade?")}
-        ${this.toggle("considerarMissoes", d.considerarMissoes, "Considerar Missões?")}
-        ${fld("Teto de comissão (R$)", this.inp("teto", d.teto, {w:110, step:100}))}
-        ${fld("Pontuação mínima no mês (O.S.)", this.inp("pontosMinimos", d.pontosMinimos, {w:100}))}
-        ${fld("R$ fixo se não atingir a mínima", this.inp("valorFixoAbaixo", d.valorFixoAbaixo, {w:100, step:0.01}))}
-        ${fld("Meta de faturamento (R$)", this.inp("metaFaturamento", d.metaFaturamento, {w:150, step:1000}))}
-      </div><p class="small-muted" style="margin:6px 0 0">Qualidade: &lt;50% zera · 50–69% paga metade · ≥70% paga o % da qualidade. Repositor com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo (com desconto de qualidade e ajuste de faturamento, como os demais).</p>`)}
+      ${sec("Parâmetros gerais", "Valem para o cálculo de todos os repositores", `
+        <div class="cp-grid">
+          ${fld("Aplicar desconto por qualidade?", this.toggle("aplicarDesconto", d.aplicarDesconto))}
+          ${fld("Considerar Missões?", this.toggle("considerarMissoes", d.considerarMissoes))}
+          ${fld("Teto de comissão", this.inp("teto", d.teto, {step:100, pre:"R$"}))}
+          ${fld("Pontuação mínima no mês", this.inp("pontosMinimos", d.pontosMinimos, {suf:"O.S."}))}
+          ${fld("Valor fixo abaixo da mínima", this.inp("valorFixoAbaixo", d.valorFixoAbaixo, {step:0.01, pre:"R$"}))}
+          ${fld("Meta de faturamento", this.inp("metaFaturamento", d.metaFaturamento, {step:1000, pre:"R$"}))}
+        </div>
+        <p class="cp-hint">Qualidade: &lt;50% zera · 50–69% paga metade · ≥70% paga o % da qualidade. Com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês o repositor recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo, com desconto de qualidade e ajuste de faturamento como os demais.</p>`)}
 
-      ${sec("Faixas de Pontuação", `<div class="band-row" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase"><div>Pontuação Inicial</div><div>Pontuação Final</div><div>Valor por Ponto (R$)</div><div></div></div>
-        ${d.bands.map(rowBand).join("")}<button type="button" class="btn btn-outline btn-sm" data-add="bands">+ Adicionar faixa</button>`)}
+      ${sec("Faixas de Pontuação", "Valor pago por ponto em cada faixa", `
+        <div class="cp-rows">
+          <div class="cp-row head bands"><span>Pontuação inicial</span><span>Pontuação final</span><span>Valor por ponto</span><span></span><span></span></div>
+          ${d.bands.map(rowBand).join("")}
+        </div>
+        <button type="button" class="btn btn-outline btn-sm cp-add" data-add="bands">+ Adicionar faixa</button>`)}
 
-      ${sec("Exceções Individuais (valor por ponto próprio)", (d.exceptions.length ? `<div class="exception-row" style="font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase"><div>Código</div><div>Nome</div><div>R$/Ponto</div><div>Ativo</div><div></div></div>` : `<p class="small-muted">Nenhuma exceção cadastrada.</p>`)
-        + d.exceptions.map(rowExc).join("") + `<button type="button" class="btn btn-outline btn-sm" data-add="exceptions">+ Adicionar exceção</button>`)}
+      ${sec("Exceções Individuais", "Valor por ponto próprio para um colaborador", `
+        ${d.exceptions.length ? `<div class="cp-rows"><div class="cp-row head exc"><span>Código</span><span>Nome</span><span>Valor por ponto</span><span></span><span></span></div>${d.exceptions.map(rowExc).join("")}</div>` : `<p class="small-muted" style="margin:0">Nenhuma exceção cadastrada.</p>`}
+        <button type="button" class="btn btn-outline btn-sm cp-add" data-add="exceptions">+ Adicionar exceção</button>`)}
 
-      ${sec("Equipe de Apoio", `
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px">
-          <div><h5 style="margin:0 0 6px">Auditor — ${this.nomeTag(a.cod)}</h5>
-            <div class="toolbar" style="flex-wrap:wrap;gap:8px;margin:0">
-              ${fld("Código", this.inp("auditor.cod", a.cod, {t:"text", w:100, re:1}))}
-              ${fld("R$ por auditoria de retorno", this.inp("auditor.valorAudit", a.valorAudit, {w:90, step:0.01}))}
-              ${fld("Meta de auditorias (mês)", this.inp("auditor.metaAuditorias", a.metaAuditorias, {w:90}))}
-              ${fld("% recebido se não bater a meta", this.inp("auditor.pctSeNaoBater", a.pctSeNaoBater, {w:90}))}
+      ${sec("Equipe de Apoio", "O nome vem do código informado", `
+        <div class="cp-grid cols2">
+          <div>
+            <div class="cp-sub">Auditor <span class="cp-nome">${this.nomeTag(a.cod)}</span></div>
+            <div class="cp-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+              ${fld("Código", this.inp("auditor.cod", a.cod, {t:"text", re:1}))}
+              ${fld("Valor por auditoria de retorno", this.inp("auditor.valorAudit", a.valorAudit, {step:0.01, pre:"R$"}))}
+              ${fld("Meta de auditorias (mês)", this.inp("auditor.metaAuditorias", a.metaAuditorias))}
+              ${fld("Recebe se não bater a meta", this.inp("auditor.pctSeNaoBater", a.pctSeNaoBater, {suf:"%"}))}
             </div>
-            <div class="small-muted" style="margin:6px 0 4px">Prêmio (R$) conforme o % do quadro que bateu a pontuação mínima:</div>
-            ${a.faixas.map(rowFx).join("")}<button type="button" class="btn btn-outline btn-sm" data-add="auditor.faixas">+ faixa</button>
+            <div class="cp-lbl" style="margin:14px 0 6px">Prêmio pelo % do quadro que bateu a pontuação mínima</div>
+            <div class="cp-rows">
+              <div class="cp-row head faixa"><span>De</span><span>Até</span><span>Prêmio</span><span></span></div>
+              ${a.faixas.map(rowFx).join("")}
+            </div>
+            <button type="button" class="btn btn-outline btn-sm cp-add" data-add="auditor.faixas">+ Adicionar faixa</button>
           </div>
-          <div><h5 style="margin:0 0 6px">Recuperação (9712) — ${this.nomeTag(r.cod)}</h5>
-            <div class="toolbar" style="flex-wrap:wrap;gap:8px;margin:0">
-              ${fld("Código (Func.Lançamento)", this.inp("recuperacao.cod", r.cod, {t:"text", w:100, re:1}))}
-              ${fld("R$ por item recuperado", this.inp("recuperacao.valorItem", r.valorItem, {w:90, step:0.01}))}
-              ${fld("Meta de recuperação (itens/mês)", this.inp("recuperacao.metaItens", r.metaItens, {w:90}))}
-              ${fld("% recebido se não bater a meta", this.inp("recuperacao.pctSeNaoBater", r.pctSeNaoBater, {w:90}))}
-              ${fld("Motivo na 9712", this.inp("recuperacao.motivo", r.motivo, {t:"text", w:190}))}
+          <div>
+            <div class="cp-sub">Recuperação (9712) <span class="cp-nome">${this.nomeTag(r.cod)}</span></div>
+            <div class="cp-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+              ${fld("Código (Func.Lançamento)", this.inp("recuperacao.cod", r.cod, {t:"text", re:1}))}
+              ${fld("Valor por item recuperado", this.inp("recuperacao.valorItem", r.valorItem, {step:0.01, pre:"R$"}))}
+              ${fld("Meta de recuperação (itens/mês)", this.inp("recuperacao.metaItens", r.metaItens))}
+              ${fld("Recebe se não bater a meta", this.inp("recuperacao.pctSeNaoBater", r.pctSeNaoBater, {suf:"%"}))}
+              <div class="cp-f" style="grid-column:1/-1"><label>Motivo na 9712</label>${this.inp("recuperacao.motivo", r.motivo, {t:"text"})}</div>
             </div>
           </div>
         </div>`)}
 
-      ${sec("Comissão fixa por código (ex.: Líder)", `<p class="small-muted" style="margin:0 0 6px">O nome vem do código e a linha aparece na tabela com o tipo indicado. Esses códigos não entram na pontuação nem na meta do quadro.</p>
-        ${d.fixos.map(rowFix).join("")}<button type="button" class="btn btn-outline btn-sm" data-add="fixos">+ Adicionar comissão fixa</button>`)}
+      ${sec("Comissão fixa por código", "Ex.: Líder. Esses códigos ficam fora da pontuação e da meta do quadro", `
+        ${d.fixos.length ? `<div class="cp-rows"><div class="cp-row head fix"><span>Código</span><span>Nome</span><span>Tipo</span><span>Valor</span><span></span></div>${d.fixos.map(rowFix).join("")}</div>` : `<p class="small-muted" style="margin:0">Nenhuma comissão fixa cadastrada.</p>`}
+        <button type="button" class="btn btn-outline btn-sm cp-add" data-add="fixos">+ Adicionar comissão fixa</button>`)}
 
-      ${sec("Lista de exceção de repositor", `<p class="small-muted" style="margin:0 0 6px">Códigos que não contam como repositor (não entram na tabela de pontos nem no cálculo "quantos bateram a meta"). Auditor, Recuperação e as comissões fixas acima já ficam de fora automaticamente.</p>
-        ${d.excecoes.map(rowEx).join("")}<button type="button" class="btn btn-outline btn-sm" data-add="excecoes">+ Adicionar código</button>`)}
+      ${sec("Lista de exceção de repositor", "Auditor, Recuperação e fixas já ficam de fora automaticamente", `
+        ${d.excecoes.length ? `<div class="cp-rows"><div class="cp-row head ex1"><span>Código</span><span>Nome</span><span></span></div>${d.excecoes.map(rowEx).join("")}</div>` : `<p class="small-muted" style="margin:0">Nenhum código na lista de exceção.</p>`}
+        <button type="button" class="btn btn-outline btn-sm cp-add" data-add="excecoes">+ Adicionar código</button>`)}
 
-      <div style="border:2px solid #2f6fce;border-radius:8px;padding:10px 12px;margin-bottom:12px;background:#f4f8ff">
-        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-          <label style="display:flex;align-items:center;gap:6px;font-weight:700"><input type="checkbox" id="cp-congelar"> Congelar meses anteriores</label>
-          <span class="filter-group" id="cp-desde-box" style="display:none"><label>Novos parâmetros valem a partir de</label><input type="month" id="cp-desde" value="${desdeDef}"></span>
-          <button type="button" class="btn btn-primary" id="cp-salvar">Salvar parâmetros</button>
-          <button type="button" class="btn btn-outline btn-sm" id="cp-descartar" ${this.dirty?'':'disabled'}>Descartar alterações</button>
+      <div class="cp-save">
+        <div class="grow">
+          <div class="cp-state ${this.dirty?'dirty':''}" id="cp-status">${this.dirty ? "Alterações não salvas" : escapeHtml(ComissaoParams.status || "Parâmetros salvos")}</div>
+          <div class="cp-hint" style="margin:2px 0 0">Vigências: ${vs.map(v=> v.desde==="0000-00" ? "início" : "a partir de "+ComissaoParams.ymRot(v.desde)).join(" → ")}</div>
         </div>
-        <p class="small-muted" style="margin:6px 0 0">Com o botão <strong>desmarcado</strong>, os novos parâmetros passam a valer também para os meses passados (o histórico é recalculado). <strong>Marcado</strong>: os meses anteriores ao escolhido mantêm os parâmetros antigos.<br>
-        Vigências salvas: ${vs.map(v=> v.desde==="0000-00" ? "início" : "a partir de "+ComissaoParams.ymRot(v.desde)).join(" → ")}</p>
+        <label class="cp-chk" style="font-weight:700;font-size:13px"><input type="checkbox" id="cp-congelar"> Congelar meses anteriores</label>
+        <div class="cp-f" id="cp-desde-box" style="display:none"><label>Valer a partir de</label><input type="month" id="cp-desde" value="${desdeDef}"></div>
+        <button type="button" class="btn btn-outline" id="cp-descartar" ${this.dirty?'':'disabled'}>Descartar</button>
+        <button type="button" class="btn btn-primary" id="cp-salvar">Salvar parâmetros</button>
       </div>
+      <p class="cp-hint" style="margin:-4px 0 14px"><strong>Desmarcado:</strong> os novos parâmetros valem também para os meses passados (histórico recalculado). <strong>Marcado:</strong> os meses anteriores ao escolhido mantêm os parâmetros antigos.</p>
 
-      ${sec("Lançamentos do mês — " + ComissaoParams.ymRot(ym) + " (ficam salvos por mês)", `
-        <div class="toolbar" style="flex-wrap:wrap;gap:12px;margin:0;align-items:flex-end">
-          ${fld("Valor faturado no mês (R$)", `<input type="number" step="1000" id="mm-fat" value="${M.faturado==null?'':M.faturado}" style="width:160px">`)}
-          <div id="mm-fat-calc" class="hint-box" style="margin:0"></div>
+      ${sec("Lançamentos do mês — " + ComissaoParams.ymRot(ym), "Salvos por mês (independem dos parâmetros acima)", `
+        <div class="cp-grid cols2">
+          <div>
+            <div class="cp-grid" style="grid-template-columns:1fr">
+              ${fld("Valor faturado no mês", `<input type="number" step="1000" id="mm-fat" value="${M.faturado==null?'':M.faturado}" placeholder="Ex.: 90000000">`)}
+              <div class="cp-calc" id="mm-fat-calc"></div>
+            </div>
+          </div>
+          <div>
+            <div class="cp-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+              ${fld("Valor de avaria do mês", `<div class="cp-aff"><i>R$</i><input type="number" step="0.01" id="mm-av" value="${M.avariaValor||''}"></div>`)}
+              ${fld("% de desconto de avaria", `<div class="cp-aff"><input type="number" step="0.01" id="mm-avp" value="${M.avariaPct||''}"><i class="suf">%</i></div>`)}
+              <div class="cp-calc" id="mm-av-calc" style="grid-column:1/-1"></div>
+            </div>
+          </div>
         </div>
-        <div class="toolbar" style="flex-wrap:wrap;gap:12px;margin:8px 0 0;align-items:flex-end">
-          ${fld("Valor de avaria do mês (R$)", `<input type="number" step="0.01" id="mm-av" value="${M.avariaValor||''}" style="width:140px">`)}
-          ${fld("% de desconto de avaria", `<input type="number" step="0.01" id="mm-avp" value="${M.avariaPct||''}" style="width:100px">`)}
-          <div id="mm-av-calc" class="hint-box" style="margin:0"></div>
-        </div>
-        <div style="margin-top:10px"><strong>Comissão manual (funcionários sem código)</strong>
-          <div id="mm-manuais"></div>
-          <button type="button" class="btn btn-outline btn-sm" id="mm-add">+ Adicionar</button>
-        </div>
-        <div style="margin-top:10px"><button type="button" class="btn btn-primary btn-sm" id="mm-salvar">Salvar lançamentos do mês</button> <span class="small-muted" id="mm-status"></span></div>`)}
+        <div class="cp-sub" style="margin-top:16px">Comissão manual — funcionários sem código</div>
+        <div class="cp-rows" id="mm-manuais"></div>
+        <button type="button" class="btn btn-outline btn-sm cp-add" id="mm-add">+ Adicionar</button>
+        <div class="cp-foot"><span class="cp-state" id="mm-status"></span><button type="button" class="btn btn-primary" id="mm-salvar">Salvar lançamentos do mês</button></div>`)}
     `;
-    this.ligar(el, ym, Pm);
+    this.ligar(el, ym, null);
   },
   ligar(el, ym, Pm){
     const d = this.draft;
-    const marcar = ()=>{ if(!this.dirty){ this.dirty = true; const d2 = el.querySelector("#cp-descartar"); if(d2) d2.disabled = false; const st = el.querySelector("#cp-status"); if(st) st.textContent = "Alterações não salvas"; } };
+    const marcar = ()=>{ if(!this.dirty){ this.dirty = true; const d2 = el.querySelector("#cp-descartar"); if(d2) d2.disabled = false; const st = el.querySelector("#cp-status"); if(st){ st.textContent = "Alterações não salvas"; st.classList.add("dirty"); } } };
     el.querySelectorAll("[data-p]").forEach(inp=> inp.addEventListener("change", ()=>{
       const [o,k] = this.caminho(d, inp.dataset.p);
       o[k] = inp.type==="checkbox" ? inp.checked : inp.type==="number" ? (inp.value==="" ? 0 : Number(inp.value)) : inp.value.trim();
@@ -555,7 +631,7 @@ const ComissaoParamsUI = {
     };
     const lista = ()=>{
       const box = el.querySelector("#mm-manuais");
-      box.innerHTML = man.map((m,i)=>`<div style="display:flex;gap:8px;align-items:center;margin:4px 0"><input type="text" data-mn="${i}" placeholder="Nome" value="${escapeHtml(m.nome)}" style="width:220px"> R$ <input type="number" step="0.01" data-mv="${i}" value="${m.valor||''}" style="width:110px"><button type="button" class="icon-btn" data-mx="${i}">✕</button></div>`).join("") || `<p class="small-muted" style="margin:4px 0">Nenhuma comissão manual neste mês.</p>`;
+      box.innerHTML = man.length ? `<div class="cp-row head man"><span>Nome</span><span>Valor</span><span></span></div>` + man.map((m,i)=>`<div class="cp-row man"><input type="text" data-mn="${i}" placeholder="Nome do funcionário" value="${escapeHtml(m.nome)}"><div class="cp-aff"><i>R$</i><input type="number" step="0.01" data-mv="${i}" value="${m.valor||''}"></div><button type="button" class="cp-x" data-mx="${i}" title="Remover">✕</button></div>`).join("") : `<p class="small-muted" style="margin:0">Nenhuma comissão manual neste mês.</p>`;
       box.querySelectorAll("[data-mn]").forEach(x=> x.addEventListener("change", ()=>{ man[Number(x.dataset.mn)].nome = x.value.trim(); }));
       box.querySelectorAll("[data-mv]").forEach(x=> x.addEventListener("change", ()=>{ man[Number(x.dataset.mv)].valor = Number(x.value)||0; }));
       box.querySelectorAll("[data-mx]").forEach(x=> x.addEventListener("click", ()=>{ man.splice(Number(x.dataset.mx),1); lista(); }));
