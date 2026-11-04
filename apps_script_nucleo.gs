@@ -641,7 +641,7 @@ const CONFIG_PADRAO = {
 };
 const LISTAS_EDITAVEIS = ['STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAMENTO', 'TIPO_DESLIGAMENTO', 'TIPO_MISSAO', 'MOTIVO_FEEDBACK'];
 const SUB_DA_ACAO = {
-  lanc_init: null, lanc_config_add: null,
+  lanc_init: null, lanc_config_add: null, lanc_comissao_cfg_ler: null, lanc_comissao_cfg_salvar: null,
   lanc_feedback_salvar: 'Lançar Feedback', lanc_feedback_listar: 'Lançar Feedback', lanc_feedback_editar: 'Lançar Feedback', lanc_feedback_anexar: 'Lançar Feedback',
   lanc_advertencia_salvar: 'Lançar Advertência',
   lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
@@ -661,6 +661,8 @@ function lancamento(d, s) {
   switch (d.acao) {
     case 'lanc_init': return lancInit(s);
     case 'lanc_config_add': return lancConfigAdd(d, s);
+    case 'lanc_comissao_cfg_ler': return comissaoCfgLer();
+    case 'lanc_comissao_cfg_salvar': return comissaoCfgSalvar(d, s);
     case 'lanc_feedback_salvar': return feedbackSalvar(d, s);
     case 'lanc_feedback_listar': return feedbackListar(d);
     case 'lanc_feedback_editar': return feedbackEditar(d, s);
@@ -793,6 +795,35 @@ function lancConfigAdd(d, s) {
   sh.getRange(sh.getLastRow() + 1, 1, 1, 2).setNumberFormat('@').setValues([[lista, valor]]);
   registrarLog(s, 'Nova opção', lista + ': ' + valor);
   return { ok: true, listas: lerConfig() };
+}
+
+/* ---------- parâmetros da comissão da equipe de apoio (aba Config_Comissao) ---------- */
+
+const ABA_CFG_COMISSAO = 'Config_Comissao';
+function comissaoCfgLer() {
+  const sh = dadosSS().getSheetByName(ABA_CFG_COMISSAO);
+  if (!sh || sh.getLastRow() < 2) return { ok: true, cfg: null };
+  const l = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getDisplayValues();
+  for (let i = 0; i < l.length; i++) if (texto(l[i][0]) === 'apoio') {
+    try { return { ok: true, cfg: JSON.parse(l[i][1]), atualizado: l[i][2] }; } catch (e) { return { ok: true, cfg: null }; }
+  }
+  return { ok: true, cfg: null };
+}
+function comissaoCfgSalvar(d, s) {
+  exigir(s, ['Gestão', 'Comissão']);
+  if (!d.cfg || typeof d.cfg !== 'object') throw new Error('Configuração inválida.');
+  const json = JSON.stringify(d.cfg);
+  if (json.length > 40000) throw new Error('Configuração grande demais.');
+  const ss = dadosSS();
+  let sh = ss.getSheetByName(ABA_CFG_COMISSAO);
+  if (!sh) { sh = ss.insertSheet(ABA_CFG_COMISSAO); sh.getRange(1, 1, 1, 3).setValues([['Chave', 'Valor (JSON)', 'Atualizado em / por']]).setFontWeight('bold'); sh.setFrozenRows(1); }
+  const quando = Utilities.formatDate(new Date(), tzDados(), 'dd/MM/yyyy HH:mm') + ' · ' + (s.nome || s.matricula || '');
+  let linha = 0;
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 1).getDisplayValues().forEach(function (r, i) { if (!linha && texto(r[0]) === 'apoio') linha = i + 2; });
+  if (!linha) linha = Math.max(sh.getLastRow(), 1) + 1;
+  sh.getRange(linha, 1, 1, 3).setNumberFormat('@').setValues([['apoio', json, quando]]);
+  registrarLog(s, 'Comissão (parâmetros)', 'Parâmetros da equipe de apoio atualizados');
+  return { ok: true, atualizado: quando };
 }
 
 /* ---------- funcionários (quadro = aba TURNOVER) ---------- */

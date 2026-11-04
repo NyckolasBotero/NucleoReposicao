@@ -3072,13 +3072,17 @@ const Commission = {
       qFim = dateOnly(maxDateProd);
     }
     const qualidadePorRep = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
+    const mediaEquipe = (qIni && qFim) ? ComissaoResumo.qualidadeComFallback(qIni, qFim).ruas.q : null;
 
     return Array.from(map.values()).map(e=>{
       const missaoInfo = missoesPorFuncionario.get(e.codKey);
       const missoesOs = missaoInfo ? missaoInfo.totalOs : 0;
       const pontos = considerarMissoes ? (e.producao + missoesOs) : e.producao;
       const qInfo = qualidadePorRep.get(e.codKey);
-      const qualidade = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null;
+      let qualidade = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null;
+      // sem auditoria do repositor no período: aplica a média da equipe (do período; se não houver, a média dos últimos meses)
+      let qualidadeEstimada = false;
+      if(qualidade===null && mediaEquipe!==null){ qualidade = mediaEquipe; qualidadeEstimada = true; }
 
       const exc = this.findException(e.codKey, e.cod, cfg.exceptions);
       let valorPonto, regra, band;
@@ -3093,6 +3097,7 @@ const Commission = {
 
       const fator = this.qualityFactor(qualidade);
       const comissaoComDesconto = fator===null ? comissaoBase : comissaoBase*fator;
+      if(qualidadeEstimada) regra += " — sem auditoria: aplicada a média da equipe";
       if(fator===null) regra += " — sem auditoria no período (comissão integral)";
       else if(fator===0) regra += ` — qualidade ${fmtNum(qualidade,1)}% (<50%): comissão zerada`;
       else if(fator===0.5) regra += ` — qualidade ${fmtNum(qualidade,1)}% (50-69%): metade da comissão`;
@@ -3104,7 +3109,7 @@ const Commission = {
       const comissaoTotal = commissionAplicarDesconto==="SIM" ? comissaoComDesconto : comissaoBase;
 
       return {
-        ...e, missoesOs, pontos, valorPonto, regra, band, qualidade,
+        ...e, missoesOs, pontos, valorPonto, regra, band, qualidade, qualidadeEstimada,
         comissaoBase, comissaoComDesconto, comissaoTotal
       };
     }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
@@ -6608,6 +6613,7 @@ function renderComissao(){
           <button class="btn btn-primary btn-sm" id="btn-export-comissao-xlsx">Exportar Excel</button>
         </div>
       </div>
+      <div id="comissao-resumo-mensal"></div>
       <p class="panel-note">Pontos = Produção (O.S. 58)${commissionConsiderarMissoes==='SIM'?' + Missões (O.S. equivalente: Média Histórica do colaborador × Tempo da Missão ÷ 9h, arredondado para baixo)':' — missões NÃO somadas (toggle "Considerar Missões?" está em Não)'}.</p>
       <div id="commissao-resumo-periodo" class="hint-box" style="font-weight:700;"></div>
       <div class="table-wrap"><table class="data-table">
@@ -6672,16 +6678,37 @@ function renderComissao(){
 const ComissaoApoio = {
   KEY: "nucleo_comissao_apoio_v1",
   padrao(){ return {
+    geral:  { teto:15000 },
     ronny:  { nome:"Ronny",   cod:"", valorAudit:0.5, metaPontos:null, faixas:[{ min:0, max:49.99, value:0 }, { min:50, max:100, value:0 }] },
     fabiane:{ nome:"Fabiane", cod:"", valorItem:0, motivo:"RECUPERADO (REP) STO" }
   }; },
+  status:"", remotoCarregado:false,
+  aplicar(c, s){ if(!s) return c; c.geral = { ...c.geral, ...(s.geral||{}) }; c.ronny = { ...c.ronny, ...(s.ronny||{}) }; c.fabiane = { ...c.fabiane, ...(s.fabiane||{}) }; return c; },
   cfg(){
     if(this._cfg) return this._cfg;
     let c = this.padrao();
-    try{ const s = JSON.parse(localStorage.getItem(this.KEY)||"null"); if(s){ c.ronny = { ...c.ronny, ...(s.ronny||{}) }; c.fabiane = { ...c.fabiane, ...(s.fabiane||{}) }; } }catch(e){}
+    try{ this.aplicar(c, JSON.parse(localStorage.getItem(this.KEY)||"null")); }catch(e){}
     return (this._cfg = c);
   },
-  salvar(){ try{ localStorage.setItem(this.KEY, JSON.stringify(this._cfg)); }catch(e){} },
+  /** Lê os parâmetros salvos na planilha (aba Config_Comissao) — valem para todos os aparelhos. */
+  async carregarRemoto(){
+    if(this.remotoCarregado || !Api.configured() || !Auth.user) return;
+    this.remotoCarregado = true;
+    try{
+      const r = await Api.call({ acao:"lanc_comissao_cfg_ler" });
+      if(r && r.ok && r.cfg){ this.aplicar(this.cfg(), r.cfg); this.status = "Salvo na planilha"+(r.atualizado?" ("+r.atualizado+")":""); this.render(); if(window.ComissaoResumo) ComissaoResumo.render(); }
+      else if(r && r.ok){ this.status = "Ainda não salvo na planilha"; this.render(); }
+    }catch(e){ this.status = "Planilha indisponível — usando o salvo neste navegador"; }
+  },
+  async salvar(){
+    try{ localStorage.setItem(this.KEY, JSON.stringify(this._cfg)); }catch(e){}
+    if(!Api.configured() || !Auth.user){ this.status = "Salvo só neste navegador"; return; }
+    try{
+      const r = await Api.call({ acao:"lanc_comissao_cfg_salvar", cfg:this._cfg });
+      this.status = r && r.ok ? "Salvo na planilha ("+(r.atualizado||"agora")+")" : "Não foi possível salvar na planilha: "+((r&&r.erro)||"erro")+" (salvo neste navegador)";
+    }catch(e){ this.status = "Sem conexão — salvo só neste navegador"; }
+    const el = document.getElementById("ap-status"); if(el) el.textContent = this.status;
+  },
   periodo(){
     const st = CommissionState, max = Production.maxDataDate();
     let ini = st.dataInicial, fim = st.dataFinal;
@@ -6695,12 +6722,13 @@ const ComissaoApoio = {
     const b = (window.APP_STATE.commissionConfig.bands||[]).filter(x=>x.active!==false && x.value>0).sort((a,c)=>a.min-c.min)[0];
     return b ? b.min : null;
   },
-  calcular(){
-    const c = this.cfg(), { ini, fim } = this.periodo();
+  calcular(iniX, fimX){
+    const c = this.cfg(), { ini, fim } = (iniX && fimX) ? { ini:dateOnly(iniX), fim:dateOnly(fimX) } : this.periodo();
     // ---- Ronny ----
     const team = window.APP_STATE.currentTeam;
     const baseCodes = team.cargoDisponivel ? team.repositorCodes : team.codes;
     const tabela = Commission.computeAll(ini, fim, commissionConsiderarMissoes==="SIM").filter(e=>baseCodes.has(e.codKey));
+    const pontosMeta = (c.ronny.metaPontos!=null && c.ronny.metaPontos!=="") ? "definida por você" : "início da menor faixa que paga";
     const meta = c.ronny.metaPontos!=null && c.ronny.metaPontos!=="" ? Number(c.ronny.metaPontos) : this.metaPadrao();
     const bateram = meta==null ? null : tabela.filter(e=>e.pontos>=meta).length;
     const pct = (bateram==null || !baseCodes.size) ? null : bateram/baseCodes.size*100;
@@ -6717,19 +6745,21 @@ const ComissaoApoio = {
       return c.fabiane.cod ? dig(r.funcLanc)===dig(c.fabiane.cod) : false;
     });
     const itens = sum(lin.map(r=>r.qtd)), valorItem = Number(c.fabiane.valorItem)||0;
-    return { ini, fim, baseN: baseCodes.size, meta, bateram, pct, faixa, premio, auds, porAud, totalRonny: porAud + premio,
+    return { ini, fim, baseN: baseCodes.size, meta, pontosMeta, bateram, pct, faixa, premio, auds, porAud, totalRonny: porAud + premio,
              lancF: lin.length, itens, totalFabiane: itens*valorItem };
   },
   render(){
     const el = document.getElementById("comissao-apoio-panel"); if(!el) return;
     const c = this.cfg();
     if(window.RetornoOnline && RetornoOnline.rows===null && !RetornoOnline.loading) RetornoOnline.load().then(()=> this.render());
+    this.carregarRemoto();
     const r = this.calcular();
     const num = (v,d=0)=> v==null ? "—" : fmtNum(v,d);
     const avisoAud = r.auds===null ? `<div class="warn-box">A aba Auditoria_Retorno não tem as colunas <strong>Matricula_Auditor</strong>/<strong>Nome_Auditor</strong> — não dá para contar as auditorias do Ronny.</div>`
                    : r.auds===undefined ? `<p class="small-muted">Carregando Auditoria_Retorno...</p>` : "";
     el.innerHTML = `
-      <div class="panel-header"><h3>Comissão — Equipe de Apoio (Ronny e Fabiane)</h3><span class="small-muted">Período: ${fmtDateBR(r.ini)} a ${fmtDateBR(r.fim)} (mesmo filtro da tela) · parâmetros salvos neste navegador</span></div>
+      <div class="panel-header"><h3>Comissão — Equipe de Apoio (Ronny e Fabiane)</h3><span class="small-muted">Período: ${fmtDateBR(r.ini)} a ${fmtDateBR(r.fim)} (mesmo filtro da tela) · <span id="ap-status">${escapeHtml(this.status||"parâmetros salvos na planilha e neste navegador")}</span></span></div>
+      <div class="toolbar" style="margin-bottom:8px"><div class="filter-group"><label>Teto de comissão (R$)</label><input type="number" step="100" data-ap="geral.teto" value="${c.geral.teto}" style="width:110px"></div></div>
       <div class="grid-2">
         <div>
           <h4 style="margin:0 0 8px">Ronny — auditor</h4>
@@ -6771,13 +6801,155 @@ const ComissaoApoio = {
       for(let i=0;i<path.length-1;i++) o = o[path[i]];
       const k = path[path.length-1];
       o[k] = inp.type==="number" ? (inp.value===""? (k==="metaPontos"?null:0) : Number(inp.value)) : inp.value.trim();
-      this.salvar(); this.render();
+      this.salvar(); this.render(); if(window.ComissaoResumo) ComissaoResumo.render();
     }));
-    el.querySelectorAll("[data-ap-del]").forEach(b=> b.addEventListener("click", ()=>{ c.ronny.faixas.splice(Number(b.dataset.apDel),1); this.salvar(); this.render(); }));
+    el.querySelectorAll("[data-ap-del]").forEach(b=> b.addEventListener("click", ()=>{ c.ronny.faixas.splice(Number(b.dataset.apDel),1); this.salvar(); this.render(); if(window.ComissaoResumo) ComissaoResumo.render(); }));
+    if(window.ComissaoResumo && !this._emResumo){ this._emResumo = true; try{ ComissaoResumo.render(); } finally { this._emResumo = false; } }
     const add = document.getElementById("ap-add-faixa");
     if(add) add.addEventListener("click", ()=>{ c.ronny.faixas.push({ min:0, max:0, value:0 }); this.salvar(); this.render(); });
   }
 };
+
+/* ---------------------------------------------------------------------- */
+/* Comissão — resumo mensal (3 meses), teto, qualidade e regras aplicadas  */
+/* ---------------------------------------------------------------------- */
+const ComissaoResumo = {
+  mesesRot: ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"],
+  /** Qualidade bruta (sem fallback) de ruas e retornos num intervalo: { ruas:{q,n}, ret:{q,n}, geral:{q,n} } */
+  qualidadeBruta(ini, fim){
+    const i = dateOnly(ini), f = dateOnly(fim);
+    const ar = (window.AuditOnline && AuditOnline.rows ? AuditOnline.rows : []).filter(r=>{ const d=dateOnly(r.data); return d>=i && d<=f; });
+    const rr = (window.RetornoOnline && RetornoOnline.rows ? RetornoOnline.rows : []).filter(r=>{ const d=dateOnly(r.data); return d>=i && d<=f && !r.soAuditor; });
+    const ruas = { q: ar.length ? AuditOnline.qualidadeDe(ar) : null, n: ar.length };
+    const ret  = { q: rr.length ? rr.filter(r=>!r.nc).length/rr.length*100 : null, n: rr.length };
+    const n = ruas.n + ret.n;
+    const geral = { q: n ? (((ruas.q||0)*ruas.n) + ((ret.q||0)*ret.n))/n : null, n };
+    return { ruas, ret, geral };
+  },
+  /** Com fallback: sem auditoria no mês → média dos 3 meses até ele que tenham dados (marcada como estimada). */
+  qualidadeComFallback(ini, fim){
+    const base = this.qualidadeBruta(ini, fim), out = {};
+    ["ruas","ret"].forEach(k=>{
+      if(base[k].q!==null){ out[k] = { q:base[k].q, n:base[k].n, estimada:false }; return; }
+      const qs = [];
+      for(let m=0;m>=-5;m--){
+        const a = new Date(dateOnly(ini).getFullYear(), dateOnly(ini).getMonth()+m, 1), b = new Date(a.getFullYear(), a.getMonth()+1, 0);
+        const v = this.qualidadeBruta(a, b)[k]; if(v.q!==null) qs.push(v.q);
+        if(qs.length>=3) break;
+      }
+      out[k] = { q: qs.length ? qs.reduce((x,y)=>x+y,0)/qs.length : null, n:0, estimada:qs.length>0 };
+    });
+    // geral = ruas + retornos (ponderado pelo nº de auditorias; parte sem auditoria entra pela média)
+    const w = o=> o.q===null ? 0 : Math.max(o.n, 1), tw = w(out.ruas) + w(out.ret);
+    out.geral = { q: tw ? ((out.ruas.q||0)*w(out.ruas) + (out.ret.q||0)*w(out.ret))/tw : null, n: out.ruas.n + out.ret.n, estimada: out.ruas.estimada || out.ret.estimada };
+    return out;
+  },
+  mesRef(){
+    const st = CommissionState, max = Production.maxDataDate();
+    const ref = st.dataFinal || st.dataInicial || max || new Date();
+    return new Date(ref.getFullYear(), ref.getMonth(), 1);
+  },
+  /** Os 3 meses terminando no mês visualizado: [{rot, ini, fim, ...valores}] */
+  calcular(){
+    const ref = this.mesRef(), max = Production.maxDataDate();
+    const teto = Number(ComissaoApoio.cfg().geral.teto)||0;
+    const meses = [-2,-1,0].map(k=>{
+      const ini = new Date(ref.getFullYear(), ref.getMonth()+k, 1);
+      let fim = new Date(ini.getFullYear(), ini.getMonth()+1, 0);
+      if(max && max >= ini && max < fim) fim = dateOnly(max);
+      const data = getComissaoTableData(ini, fim);
+      const apoio = ComissaoApoio.calcular(ini, fim);
+      const qtdOs = sum(data.map(e=>e.pontos));
+      const fixaBase = sum(data.map(e=>e.comissaoBase)), fixa = sum(data.map(e=>e.comissaoTotal));
+      const total = fixa + apoio.totalRonny + apoio.totalFabiane;
+      const semDesc = fixaBase + apoio.totalRonny + apoio.totalFabiane;
+      return { rot: this.mesesRot[ini.getMonth()]+"/"+String(ini.getFullYear()).slice(2), ini, fim, atual:k===0, data, apoio,
+        qtdOs, fixaBase, fixa, aud: apoio.totalRonny, rec: apoio.totalFabiane, total, semDesc, descontos: semDesc - total,
+        margem: teto - total, teto, qual: this.qualidadeComFallback(ini, fim) };
+    });
+    return { meses, teto, regras: this.regras(meses[2]) };
+  },
+  regras(m){
+    const c = ComissaoApoio.cfg(), a = m.apoio, cfgC = window.APP_STATE.commissionConfig;
+    const cont = new Map();
+    m.data.forEach(e=>{
+      const k = e.regra.split(" — ")[0] + (e.band ? ` (${fmtNum(e.band.min)}–${fmtNum(e.band.max)} pts · ${fmtBRL(e.valorPonto)}/pt)` : e.regra==="Exceção Individual" ? ` (${fmtBRL(e.valorPonto)}/pt)` : "");
+      cont.set(k, (cont.get(k)||0)+1);
+    });
+    const estimados = m.data.filter(e=>e.qualidadeEstimada).length;
+    const fixa = Array.from(cont.entries()).map(([k,n])=>`${k}: ${n} repositor(es)`)
+      .concat([commissionAplicarDesconto==="SIM" ? "Desconto por qualidade aplicado (<50% zera · 50–69% metade · ≥70% proporcional)" : "Desconto por qualidade NÃO aplicado"])
+      .concat(estimados ? [`${estimados} repositor(es) sem auditoria no mês: aplicada a média da equipe`] : []);
+    const faixaTxt = a.faixa ? `faixa ${fmtNum(a.faixa.min,2)}%–${fmtNum(a.faixa.max,2)}% → ${fmtBRL(a.premio)}` : "nenhuma faixa atingida";
+    const auditor = [
+      `${fmtBRL(Number(c.ronny.valorAudit)||0)} por auditoria de retorno: ${a.auds==null?"—":fmtNum(a.auds)} auditoria(s) = ${fmtBRL(a.porAud)}`,
+      `Meta do quadro: ${a.meta==null?"não definida":fmtNum(a.meta)+" pts"} — bateram ${a.bateram==null?"—":a.bateram} de ${a.baseN} (${a.pct==null?"—":fmtNum(a.pct,1)+"%"}) → ${faixaTxt}`
+    ];
+    const rec = [
+      `${fmtBRL(Number(c.fabiane.valorItem)||0)} por item recuperado (motivo "${c.fabiane.motivo}", 9712): ${fmtNum(a.itens)} item(ns) em ${fmtNum(a.lancF)} lançamento(s) = ${fmtBRL(a.totalFabiane)}`
+    ];
+    return { fixa, auditor, rec };
+  },
+  fmtQ(o){ return o.q===null ? "—" : fmtNum(o.q,1)+"%"+(o.estimada?" (média)":""); },
+  render(){
+    const el = document.getElementById("comissao-resumo-mensal"); if(!el) return;
+    let r; try{ r = this.calcular(); }catch(e){ el.innerHTML = `<div class="warn-box">Não foi possível montar o resumo: ${escapeHtml(e.message||String(e))}</div>`; return; }
+    const th = r.meses.map(m=>`<th style="${m.atual?'background:#e8f1ff;':''}">${m.rot}${m.atual?' (visualizado)':''}</th>`).join("");
+    const row = (rot, fn, forte)=> `<tr${forte?' style="font-weight:700"':''}><td>${rot}</td>${r.meses.map(m=>`<td style="${m.atual?'background:#f4f8ff;':''}text-align:right">${fn(m)}</td>`).join("")}</tr>`;
+    const chip = (cor, titulo, itens)=> `<div style="flex:1;min-width:260px;border-left:5px solid ${cor};background:${cor}14;padding:8px 12px;border-radius:6px"><strong style="color:${cor}">${titulo}</strong><ul style="margin:4px 0 0 16px;padding:0;font-size:12px">${itens.map(i=>`<li>${escapeHtml(i)}</li>`).join("")}</ul></div>`;
+    el.innerHTML = `
+      <div class="panel-header" style="margin-top:6px"><h3>Resumo Mensal — últimos 3 meses</h3><span class="small-muted">Teto de comissão: <strong>${fmtBRL(r.teto)}</strong> (editável em Equipe de Apoio)</span></div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th></th>${th}</tr></thead>
+        <tbody>
+          ${row("Qtd O.S. (pontos)", m=>fmtNum(m.qtdOs))}
+          ${row("Valor comissão — Comissão Fixa", m=>fmtBRL(m.fixa))}
+          ${row("Valor comissão — Comissão Auditor", m=>fmtBRL(m.aud))}
+          ${row("Valor comissão — Comissão Recuperações", m=>fmtBRL(m.rec))}
+          ${row("Valor total a ser pago", m=>fmtBRL(m.total), true)}
+          ${row("Valor total s/ descontos", m=>fmtBRL(m.semDesc))}
+          ${row("Valor total descontos", m=>fmtBRL(m.descontos))}
+          ${row("Teto comissão", m=>fmtBRL(m.teto))}
+          ${row("Margem disponível (teto − total pago)", m=>`<span style="color:${m.margem<0?'#d64545':'#1a9c62'}">${fmtBRL(m.margem)}</span>`, true)}
+          ${row("Qualidade geral da equipe", m=>this.fmtQ(m.qual.geral))}
+          ${row("Qualidade retornos", m=>this.fmtQ(m.qual.ret))}
+          ${row("Qualidade ruas", m=>this.fmtQ(m.qual.ruas))}
+        </tbody>
+      </table></div>
+      <p class="panel-note">Sem auditoria no mês, a qualidade usa a média dos meses anteriores com dados e é marcada "(média)".</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0">
+        ${chip("#2f6fce","Comissão Fixa — regra aplicada ("+r.meses[2].rot+")", r.regras.fixa)}
+        ${chip("#e08a1f","Comissão Auditor — regra aplicada", r.regras.auditor)}
+        ${chip("#1a9c62","Comissão Recuperações — regra aplicada", r.regras.rec)}
+      </div>`;
+  },
+  /** Linhas para o Excel (aba "Resumo Mensal"). */
+  aoa(){
+    const r = this.calcular(), h = ["", ...r.meses.map(m=>m.rot)];
+    const l = (rot, fn)=> [rot, ...r.meses.map(fn)];
+    const n2 = v=>+Number(v).toFixed(2);
+    return [
+      ["Resumo Mensal — Comissão"], [], h,
+      l("Qtd O.S. (pontos)", m=>m.qtdOs),
+      l("Valor comissão — Comissão Fixa (R$)", m=>n2(m.fixa)),
+      l("Valor comissão — Comissão Auditor (R$)", m=>n2(m.aud)),
+      l("Valor comissão — Comissão Recuperações (R$)", m=>n2(m.rec)),
+      l("Valor total a ser pago (R$)", m=>n2(m.total)),
+      l("Valor total s/ descontos (R$)", m=>n2(m.semDesc)),
+      l("Valor total descontos (R$)", m=>n2(m.descontos)),
+      l("Teto comissão (R$)", m=>n2(m.teto)),
+      l("Margem disponível (R$)", m=>n2(m.margem)),
+      l("Qualidade geral da equipe", m=>this.fmtQ(m.qual.geral)),
+      l("Qualidade retornos", m=>this.fmtQ(m.qual.ret)),
+      l("Qualidade ruas", m=>this.fmtQ(m.qual.ruas)),
+      [], ["Regras aplicadas ("+r.meses[2].rot+")"],
+      ...r.regras.fixa.map((t,i)=>[i?"":"Comissão Fixa", t]),
+      ...r.regras.auditor.map((t,i)=>[i?"":"Comissão Auditor", t]),
+      ...r.regras.rec.map((t,i)=>[i?"":"Comissão Recuperações", t])
+    ];
+  }
+};
+window.ComissaoResumo = ComissaoResumo;
 
 function renderBandsEditor(){
   const cfg = window.APP_STATE.commissionConfig;
@@ -6944,10 +7116,11 @@ function renderComissaoHistorico(){
 
 function renderCommissionTable(){
   renderComissaoHistorico();
+  if(window.ComissaoResumo) ComissaoResumo.render();
   const data = getComissaoTableData();
   const st = CommissionState;
   const qualClass = (v) => v===null||v===undefined ? '' : v>=90 ? 'cell-pos' : v>=70 ? 'cell-warn' : 'cell-neg';
-  const qualLabel = (v) => v===null||v===undefined ? '<span class="small-muted">Sem auditoria</span>' : fmtNum(v,1)+'%';
+  const qualLabel = (v, est) => v===null||v===undefined ? '<span class="small-muted">Sem auditoria</span>' : fmtNum(v,1)+'%'+(est?' <span class="small-muted">(média)</span>':'');
 
   // cabeçalho dinâmico conforme colunas visíveis
   const theadHtml = `<tr>
@@ -6966,7 +7139,7 @@ function renderCommissionTable(){
       <td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${fmtNum(e.producao)}</td>
       ${commissionShowMissoes?`<td>${e.missoesOs>0?`<span class="tag-pos">+${fmtNum(e.missoesOs)}</span>`:'-'}</td>`:''}
       <td><strong>${fmtNum(e.pontos)}</strong></td>
-      <td class="${qualClass(e.qualidade)}">${qualLabel(e.qualidade)}</td>
+      <td class="${qualClass(e.qualidade)}">${qualLabel(e.qualidade, e.qualidadeEstimada)}</td>
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
       ${commissionShowRegra?`<td>${e.regra.startsWith('Exceção Individual')?`<span class="tag-warn">${e.regra}</span>`:e.regra.startsWith('Regra Normal')?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
       ${commissionShowComissaoTotal?`<td class="small-muted">${fmtBRL(e.comissaoBase)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
@@ -7043,6 +7216,11 @@ function exportComissaoToExcel(){
     ws["!cols"] = header.map(()=>({ wch:20 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Comissao Calculada");
+    try{
+      const wr = XLSX.utils.aoa_to_sheet(ComissaoResumo.aoa());
+      wr["!cols"] = [{ wch:46 }, { wch:22 }, { wch:22 }, { wch:22 }];
+      XLSX.utils.book_append_sheet(wb, wr, "Resumo Mensal");
+    }catch(e){ console.error(e); }
     XLSX.writeFile(wb, `comissao-calculada-${Date.now()}.xlsx`);
     toast("Excel exportado com sucesso.", "success");
   }catch(err){
