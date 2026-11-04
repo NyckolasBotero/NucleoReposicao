@@ -801,7 +801,8 @@ const ALIAS_TURN = {
   mat: ['MATRIC', 'MATRICULA', 'CODIGO', 'COD'], nome: ['NOME'], ativo: ['ATIVO'], tipo: ['TIPO'], motivo: ['MOTIVO'],
   obs: ['OBS', 'OUTRAS OBS', 'OBSERVACAO'], adm: ['DATA CONTRATACAO', 'DATA CONTRATA', 'DATA ADMISSAO', 'DT ADMISSAO', 'ADMISSAO'],
   desl: ['DATA DESLIGAMENTO', 'DT DESLIGAMENTO', 'DESLIGAMENTO', 'DEMISSAO'],
-  transf: ['DATA TRANSFERENCIA', 'DT TRANSFERENCIA']
+  transf: ['DATA TRANSFERENCIA', 'DT TRANSFERENCIA'],
+  enc: ['DATA ENCOSTAMENTO', 'ENCOSTAMENTO', 'DATA ENCOSTAMENTO INSS'], setor: ['SETOR DESTINO', 'SETOR']
 };
 
 function lerTurnover() {
@@ -816,7 +817,8 @@ function lerTurnover() {
       linha: i + 2, mat: mat, nome: texto(l[idx.nome]),
       ativo: idx.ativo >= 0 && ['SIM', 'S', 'TRUE', '1'].indexOf(normalizar(l[idx.ativo])) >= 0,
       tipo: idx.tipo >= 0 ? texto(l[idx.tipo]) : '', motivo: idx.motivo >= 0 ? texto(l[idx.motivo]) : '', obs: idx.obs >= 0 ? texto(l[idx.obs]) : '',
-      adm: idx.adm >= 0 ? chaveData(l[idx.adm]) : '', desl: idx.desl >= 0 ? chaveData(l[idx.desl]) : '', transf: idx.transf >= 0 ? chaveData(l[idx.transf]) : ''
+      adm: idx.adm >= 0 ? chaveData(l[idx.adm]) : '', desl: idx.desl >= 0 ? chaveData(l[idx.desl]) : '', transf: idx.transf >= 0 ? chaveData(l[idx.transf]) : '',
+      enc: idx.enc >= 0 ? chaveData(l[idx.enc]) : '', setor: idx.setor >= 0 ? texto(l[idx.setor]) : ''
     });
   });
   return { info: info, idx: idx, pessoas: out };
@@ -1320,12 +1322,17 @@ function quadroSalvar(d, s) {
   if (!mat) throw new Error('Informe a matrícula.');
   if (!nome) throw new Error('Informe o nome.');
   const tipo = texto(d.tipo), motivo = texto(d.motivo), obs = texto(d.obs);
-  const dtAdm = texto(d.dtAdm), dtDesl = texto(d.dtDesl), dtTransf = texto(d.dtTransf);
-  [dtAdm, dtDesl, dtTransf].forEach(function (x) { if (x) isoParaData(x); });
-  const saiu = !!(dtDesl || dtTransf || /TRANSFER/.test(normalizar(tipo)));
-  if (saiu && !tipo) throw new Error('Informe o tipo (desligamento, pediu desligamento ou transferência).');
-  if (/TRANSFER/.test(normalizar(tipo)) && !dtTransf) throw new Error('Informe a data da transferência.');
-  if (saiu && !/TRANSFER/.test(normalizar(tipo)) && !motivo) throw new Error('Informe o motivo do desligamento.');
+  const dtAdm = texto(d.dtAdm), dtDesl = texto(d.dtDesl);
+  const ehTransf = /TRANSFER/.test(normalizar(tipo)), ehEnc = /ENCOST/.test(normalizar(tipo));
+  const dtTransf = ehTransf ? texto(d.dtTransf) : '', dtEnc = ehEnc ? texto(d.dtEnc) : '', setor = ehTransf ? texto(d.setor) : '';
+  if (!ehTransf && texto(d.dtTransf)) throw new Error('A data de transferência só vale para o tipo TRANSFERENCIA.');
+  [dtAdm, dtDesl, dtTransf, dtEnc].forEach(function (x) { if (x) isoParaData(x); });
+  if (ehTransf && !dtTransf) throw new Error('Informe a data da transferência.');
+  if (ehTransf && !setor) throw new Error('Informe para qual setor a pessoa foi transferida.');
+  if (ehEnc && !dtEnc) throw new Error('Informe a data do encostamento (INSS).');
+  const saiu = !!(dtDesl || ehTransf || ehEnc);   // desligado, transferido ou encostado = ATIVO "Não" no quadro
+  if (saiu && !tipo) throw new Error('Informe o tipo (desligamento, pediu desligamento, transferência ou encostado).');
+  if (saiu && !ehTransf && !ehEnc && !motivo) throw new Error('Informe o motivo do desligamento.');
   const ativo = !saiu;
   if (!linhaEd && t.pessoas.some(function (p) { return p.mat === mat && p.ativo; }))
     throw new Error('A matrícula ' + mat + ' já está ATIVA no quadro. Edite o registro existente.');
@@ -1336,16 +1343,18 @@ function quadroSalvar(d, s) {
     ativo: garantirCol(info, ALIAS_TURN.ativo, 'ATIVO'), tipo: garantirCol(info, ALIAS_TURN.tipo, 'TIPO'),
     motivo: garantirCol(info, ALIAS_TURN.motivo, 'MOTIVO'), obs: garantirCol(info, ALIAS_TURN.obs, 'OBS'),
     adm: garantirCol(info, ALIAS_TURN.adm, 'DATA CONTRATAÇÃO'), desl: garantirCol(info, ALIAS_TURN.desl, 'DATA DESLIGAMENTO'),
-    transf: garantirCol(info, ALIAS_TURN.transf, 'DATA TRANSFERÊNCIA')
+    transf: garantirCol(info, ALIAS_TURN.transf, 'DATA TRANSFERÊNCIA'),
+    enc: garantirCol(info, ALIAS_TURN.enc, 'DATA ENCOSTAMENTO'), setor: garantirCol(info, ALIAS_TURN.setor, 'SETOR DESTINO')
   };
   const l = new Array(info.ult).fill('');
   if (linhaEd) { const atual = sh.getRange(linhaEd, 1, 1, info.ult).getValues()[0]; for (let i = 0; i < atual.length; i++) l[i] = atual[i]; }
   l[c.mat] = mat; l[c.nome] = nome; l[c.ativo] = ativo ? 'Sim' : 'Não'; l[c.tipo] = tipo; l[c.motivo] = motivo; l[c.obs] = obs;
   l[c.adm] = dtAdm ? isoParaData(dtAdm) : ''; l[c.desl] = dtDesl ? isoParaData(dtDesl) : ''; l[c.transf] = dtTransf ? isoParaData(dtTransf) : '';
+  l[c.enc] = dtEnc ? isoParaData(dtEnc) : ''; l[c.setor] = setor;
   const n = linhaEd || (Math.max(sh.getLastRow(), 1) + 1);
   garantirTamanho(sh, n, info.ult);
   sh.getRange(n, 1, 1, info.ult).setValues([l]);
-  [c.adm, c.desl, c.transf].forEach(function (k) { formatarDatas(sh, k, n, 1); });
+  [c.adm, c.desl, c.transf, c.enc].forEach(function (k) { formatarDatas(sh, k, n, 1); });
   CacheService.getScriptCache().remove('nome_' + mat);
   registrarLog(s, linhaEd ? 'Quadro (edição)' : 'Quadro (novo)', mat + ' ' + nome + ' · ' + (ativo ? 'ATIVO' : 'NÃO ativo' + (tipo ? ' (' + tipo + ')' : '')));
   return { ok: true, ativo: ativo, linha: n };
