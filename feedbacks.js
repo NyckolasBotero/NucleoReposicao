@@ -427,6 +427,7 @@ const FeedbackAdv = {
         <h2 class="adm-h" style="margin:0">${escapeHtml(e.nome)} <span class="small-muted" style="font-size:13px">${escapeHtml(e.cod||"")}</span></h2>
         <span>${this.farolHtml(e.farol)}</span>
         <span style="flex:1"></span>
+        <button type="button" class="btn btn-outline btn-sm" id="fb-gerar-pdf">📄 Gerar feedback (PDF)</button>
         ${Auth.can("lancamentos","lfeedback") ? lancar("lfeedback","＋ Lançar feedback") : ""}
         ${Auth.can("lancamentos","ladvertencia") ? lancar("ladvertencia","＋ Lançar advertência") : ""}
       </div>
@@ -497,6 +498,7 @@ const FeedbackAdv = {
     });
     if(ultAdvComDoc) this.carregarPrevia(ultAdvComDoc.anexo);
     const alvo = document.getElementById("fb-content");
+    const bg = document.getElementById("fb-gerar-pdf"); if(bg) bg.addEventListener("click", ()=> this.gerarDocumento(e));
     alvo.querySelectorAll("[data-fb-ed]").forEach(b=> b.addEventListener("click", ()=> this.editarFeedback(e, Number(b.dataset.fbEd))));
     alvo.querySelectorAll("[data-fb-doc]").forEach(b=> b.addEventListener("click", ()=> this.escanearFeedback(e, Number(b.dataset.fbDoc))));
   },
@@ -504,6 +506,18 @@ const FeedbackAdv = {
   /* ------------------------------------------------------------------ */
   /* editar feedback já lançado / escanear o documento depois             */
   /* ------------------------------------------------------------------ */
+  /** Gera o documento de feedback (mesmo do Ranking de Repositores) a partir do detalhe do funcionário. */
+  async gerarDocumento(e){
+    const antesQ = feedbackOnlyQuadroAtual, antesR = feedbackOnlyRepositor;
+    try{
+      feedbackOnlyQuadroAtual = false; feedbackOnlyRepositor = false;
+      const emp = getFeedbackRankingData().find(x=>x.codKey===e.codKey);
+      if(!emp){ toast("Sem dados de produção (O.S. 58) para gerar o documento deste funcionário.", "error"); return; }
+      await FeedbackDoc.generate(emp);
+    }catch(err){ toast("Não foi possível gerar o documento: "+(err&&err.message||err), "error"); }
+    finally{ feedbackOnlyQuadroAtual = antesQ; feedbackOnlyRepositor = antesR; }
+  },
+
   /** Como achar este feedback na planilha: matrícula + data + resumo (repetidos: pela ordem). */
   _refFeedback(e, i){
     const r = e.feedbacks[i], iso = LancUI.isoDe(r.data), chave = normStr(r.resumo||"");
