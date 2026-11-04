@@ -6720,7 +6720,8 @@ const ComissaoApoio = {
     const b = (window.APP_STATE.commissionConfig.bands||[]).filter(x=>x.active!==false && x.value>0).sort((a,c)=>a.min-c.min)[0];
     return b ? b.min : null;
   },
-  calcular(iniX, fimX){
+  calcular(iniX, fimX, fatorP){
+    const fp = fatorP || 1;
     const c = this.cfg(), { ini, fim } = (iniX && fimX) ? { ini:dateOnly(iniX), fim:dateOnly(fimX) } : this.periodo();
     // ---- Ronny ----
     const team = window.APP_STATE.currentTeam;
@@ -6728,12 +6729,13 @@ const ComissaoApoio = {
     const tabela = Commission.computeAll(ini, fim, commissionConsiderarMissoes==="SIM").filter(e=>baseCodes.has(e.codKey));
     const pontosMeta = (c.ronny.metaPontos!=null && c.ronny.metaPontos!=="") ? "definida por você" : "início da menor faixa que paga";
     const meta = c.ronny.metaPontos!=null && c.ronny.metaPontos!=="" ? Number(c.ronny.metaPontos) : this.metaPadrao();
-    const bateram = meta==null ? null : tabela.filter(e=>e.pontos>=meta).length;
+    const bateram = meta==null ? null : tabela.filter(e=>Math.round(e.pontos*fp)>=meta).length;
     const pct = (bateram==null || !baseCodes.size) ? null : bateram/baseCodes.size*100;
     const faixa = pct==null ? null : (c.ronny.faixas||[]).find(f=> pct>=f.min && pct<=f.max);
     const premio = faixa ? Number(faixa.value)||0 : 0;
     const auds = (window.RetornoOnline && RetornoOnline.rows) ? RetornoOnline.contarPorAuditor(ini, fim, c.ronny.cod, c.ronny.nome) : undefined;
-    const porAud = (auds||0) * (Number(c.ronny.valorAudit)||0);
+    const audsP = auds==null ? auds : Math.round(auds*fp);
+    const porAud = (audsP||0) * (Number(c.ronny.valorAudit)||0);
     // ---- Fabiane ----
     const alvo = normStr(c.fabiane.motivo||"");
     const dig = (v)=>String(v||"").replace(/\D/g,"");
@@ -6742,9 +6744,9 @@ const ComissaoApoio = {
       if(normStr(r.motivo||"")!==alvo) return false;
       return c.fabiane.cod ? dig(r.funcLanc)===dig(c.fabiane.cod) : false;
     });
-    const itens = sum(lin.map(r=>r.qtd)), valorItem = Number(c.fabiane.valorItem)||0;
-    return { ini, fim, baseN: baseCodes.size, meta, pontosMeta, bateram, pct, faixa, premio, auds, porAud, totalRonny: porAud + premio,
-             lancF: lin.length, itens, totalFabiane: itens*valorItem };
+    const itens = Math.round(sum(lin.map(r=>r.qtd))*fp), valorItem = Number(c.fabiane.valorItem)||0;
+    return { ini, fim, baseN: baseCodes.size, meta, pontosMeta, bateram, pct, faixa, premio, auds: audsP, porAud, totalRonny: porAud + premio,
+             lancF: Math.round(lin.length*fp), itens, totalFabiane: itens*valorItem };
   },
   render(){
     const el = document.getElementById("comissao-apoio-panel"); if(!el) return;
@@ -6865,7 +6867,18 @@ const ComissaoResumo = {
         qtdOs, fixaBase, fixa, aud: apoio.totalRonny, rec: apoio.totalFabiane, total, semDesc, descontos: semDesc - total,
         margem: teto - total, teto, qual: this.qualidadeComFallback(ini, fim) };
     });
-    return { meses, teto, regras: this.regras(meses[2]) };
+    // projeção do mês visualizado (ritmo de dias úteis do mês, até o último dado)
+    let proj = null;
+    const m = meses[2], mIni = new Date(m.ini.getFullYear(), m.ini.getMonth(), 1), mFim = new Date(m.ini.getFullYear(), m.ini.getMonth()+1, 0);
+    const dec = diasUteisEntre(mIni, m.fim), totM = diasUteisEntre(mIni, mFim);
+    if(dec > 0){
+      const fator = m.fim >= mFim ? 1 : totM / dec;
+      const pj = projecaoComissao(m.data, { fator, decorridos:dec, totalMes:totM });
+      const ap = ComissaoApoio.calcular(m.ini, m.fim, fator);
+      const total = pj.total + ap.totalRonny + ap.totalFabiane, semDesc = pj.totalBase + ap.totalRonny + ap.totalFabiane;
+      proj = { rot:"Projeção "+m.rot, qtdOs: Math.round(m.qtdOs*fator), fixa: pj.total, aud: ap.totalRonny, rec: ap.totalFabiane, total, semDesc, descontos: semDesc-total, teto, margem: teto-total, dec, totM };
+    }
+    return { meses, teto, proj, regras: this.regras(meses[2]) };
   },
   regras(m){
     const c = ComissaoApoio.cfg(), a = m.apoio, cfgC = window.APP_STATE.commissionConfig;
@@ -6892,29 +6905,29 @@ const ComissaoResumo = {
   render(){
     const el = document.getElementById("comissao-resumo-mensal"); if(!el) return;
     let r; try{ r = this.calcular(); }catch(e){ el.innerHTML = `<div class="warn-box">Não foi possível montar o resumo: ${escapeHtml(e.message||String(e))}</div>`; return; }
-    const th = r.meses.map(m=>`<th style="${m.atual?'background:#e8f1ff;':''}">${m.rot}${m.atual?' (visualizado)':''}</th>`).join("");
-    const row = (rot, fn, forte)=> `<tr${forte?' style="font-weight:700"':''}><td>${rot}</td>${r.meses.map(m=>`<td style="${m.atual?'background:#f4f8ff;':''}text-align:right">${fn(m)}</td>`).join("")}</tr>`;
+    const th = r.meses.map(m=>`<th style="${m.atual?'background:#e8f1ff;':''}">${m.rot}${m.atual?' (visualizado)':''}</th>`).join("") + (r.proj ? `<th class="proj-col" style="background:#eef7f1" title="${r.proj.dec} de ${r.proj.totM} dias úteis">${r.proj.rot}</th>` : "");
+    const row = (rot, fn, forte, chave)=> `<tr${forte?' style="font-weight:700"':''}><td>${rot}</td>${r.meses.map(m=>`<td style="${m.atual?'background:#f4f8ff;':''}text-align:right">${fn(m)}</td>`).join("")}${r.proj ? `<td class="proj-col" style="background:#f6fbf8;text-align:right">${chave ? fn(r.proj) : "—"}</td>` : ""}</tr>`;
     const chip = (cor, titulo, itens)=> `<div style="flex:1;min-width:260px;border-left:5px solid ${cor};background:${cor}14;padding:8px 12px;border-radius:6px"><strong style="color:${cor}">${titulo}</strong><ul style="margin:4px 0 0 16px;padding:0;font-size:12px">${itens.map(i=>`<li>${escapeHtml(i)}</li>`).join("")}</ul></div>`;
     el.innerHTML = `
       <div class="panel-header" style="margin-top:6px"><h3>Resumo Mensal — últimos 3 meses</h3><span class="small-muted">Teto de comissão: <strong>${fmtBRL(r.teto)}</strong> (editável em Equipe de Apoio)</span></div>
       <div class="table-wrap"><table class="data-table">
         <thead><tr><th></th>${th}</tr></thead>
         <tbody>
-          ${row("Qtd O.S. (pontos)", m=>fmtNum(m.qtdOs))}
-          ${row("Valor comissão — Comissão Fixa", m=>fmtBRL(m.fixa))}
-          ${row("Valor comissão — Comissão Auditor", m=>fmtBRL(m.aud))}
-          ${row("Valor comissão — Comissão Recuperações", m=>fmtBRL(m.rec))}
-          ${row("Valor total a ser pago", m=>fmtBRL(m.total), true)}
-          ${row("Valor total s/ descontos", m=>fmtBRL(m.semDesc))}
-          ${row("Valor total descontos", m=>fmtBRL(m.descontos))}
-          ${row("Teto comissão", m=>fmtBRL(m.teto))}
-          ${row("Margem disponível (teto − total pago)", m=>`<span style="color:${m.margem<0?'#d64545':'#1a9c62'}">${fmtBRL(m.margem)}</span>`, true)}
+          ${row("Qtd O.S. (pontos)", m=>fmtNum(m.qtdOs), false, true)}
+          ${row("Valor comissão — Comissão Fixa", m=>fmtBRL(m.fixa), false, true)}
+          ${row("Valor comissão — Comissão Auditor", m=>fmtBRL(m.aud), false, true)}
+          ${row("Valor comissão — Comissão Recuperações", m=>fmtBRL(m.rec), false, true)}
+          ${row("Valor total a ser pago", m=>fmtBRL(m.total), true, true)}
+          ${row("Valor total s/ descontos", m=>fmtBRL(m.semDesc), false, true)}
+          ${row("Valor total descontos", m=>fmtBRL(m.descontos), false, true)}
+          ${row("Teto comissão", m=>fmtBRL(m.teto), false, true)}
+          ${row("Margem disponível (teto − total pago)", m=>`<span style="color:${m.margem<0?'#d64545':'#1a9c62'}">${fmtBRL(m.margem)}</span>`, true, true)}
           ${row("Qualidade geral da equipe", m=>this.fmtQ(m.qual.geral))}
           ${row("Qualidade retornos", m=>this.fmtQ(m.qual.ret))}
           ${row("Qualidade ruas", m=>this.fmtQ(m.qual.ruas))}
         </tbody>
       </table></div>
-      <p class="panel-note">Sem auditoria no mês, a qualidade usa a média dos meses anteriores com dados e é marcada "(média)".</p>
+      <p class="panel-note">A coluna de projeção (só na tela, fora das extrações) extrapola o mês pelo ritmo de dias úteis; qualidade não é projetada. Sem auditoria no mês, a qualidade usa a média dos meses anteriores com dados e é marcada "(média)".</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0">
         ${chip("#2f6fce","Comissão Fixa — regra aplicada ("+r.meses[2].rot+")", r.regras.fixa)}
         ${chip("#e08a1f","Comissão Auditor — regra aplicada", r.regras.auditor)}
@@ -7118,7 +7131,7 @@ function diasUteisEntre(a, b){
   let n = 0; for(let d = dateOnly(a); d <= b; d = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1)){ const w = d.getDay(); if(w>0 && w<6) n++; }
   return n;
 }
-function projecaoComissao(data){
+function fatorProjecao(){
   const st = CommissionState, max = Production.maxDataDate();
   const ref = st.dataFinal || (st.dataInicial ? null : max);
   if(!ref) return null;
@@ -7130,18 +7143,23 @@ function projecaoComissao(data){
   const decorridos = diasUteisEntre(ini, fim), totalMes = diasUteisEntre(mIni, mFim);
   if(decorridos <= 0) return null;
   const fator = fim >= mFim ? 1 : diasUteisEntre(ini, mFim) / decorridos;
+  return { fator, decorridos, totalMes, ini, fim: mFim };
+}
+function projecaoComissao(data, fatorFixo){
+  const fp = fatorFixo ? { fator:fatorFixo.fator, decorridos:fatorFixo.decorridos, totalMes:fatorFixo.totalMes } : fatorProjecao(); if(!fp) return null;
+  const { fator, decorridos, totalMes } = fp;
   const cfg = window.APP_STATE.commissionConfig;
-  const porRep = new Map();
+  const base = new Map(), pagar = new Map();
   data.forEach(e=>{
     const pts = Math.round(e.pontos * fator);
     const exc = Commission.findException(e.codKey, e.cod, cfg.exceptions);
     const band = exc ? null : Commission.findBand(pts, cfg.bands);
     const vp = exc ? exc.valuePerPoint : (band ? band.value : 0);
     const f = Commission.qualityFactor(e.qualidade);
-    const base = pts * vp, comDesc = f===null ? base : base*f;
-    porRep.set(e.codKey, commissionAplicarDesconto==="SIM" ? comDesc : base);
+    const b = pts * vp, c = f===null ? b : b*f;
+    base.set(e.codKey, b); pagar.set(e.codKey, commissionAplicarDesconto==="SIM" ? c : b);
   });
-  return { porRep, total: sum(Array.from(porRep.values())), fator, decorridos, totalMes };
+  return { base, porRep: pagar, totalBase: sum(Array.from(base.values())), total: sum(Array.from(pagar.values())), fator, decorridos, totalMes };
 }
 
 function renderCommissionTable(){
@@ -7161,7 +7179,8 @@ function renderCommissionTable(){
     ${commissionShowValorPonto?'<th>Valor/Ponto</th>':''}
     ${commissionShowRegra?'<th>Regra</th>':''}
     ${commissionShowComissaoTotal?'<th>Comissão Base</th><th>Comissão Total (c/ ajuste)</th>':''}
-    <th class="proj-col" title="Projeção do mês pelo ritmo de dias úteis — não vai para a extração">Comissão Projetada</th>
+    <th class="proj-col" title="Projeção do mês pelo ritmo de dias úteis — não vai para a extração">Projetada s/ desconto</th>
+    <th class="proj-col" title="Valor projetado a ser pago (com desconto de qualidade, se ativo)">Projetada a pagar</th>
   </tr>`;
   const proj = projecaoComissao(data);
   $("#commission-thead").innerHTML = theadHtml;
@@ -7175,11 +7194,12 @@ function renderCommissionTable(){
       ${commissionShowValorPonto?`<td>${fmtBRL(e.valorPonto)}</td>`:''}
       ${commissionShowRegra?`<td>${e.regra.startsWith('Exceção Individual')?`<span class="tag-warn">${e.regra}</span>`:e.regra.startsWith('Regra Normal')?`<span class="tag-neutral">${e.regra}</span>`:`<span class="tag-neg">${e.regra}</span>`}</td>`:''}
       ${commissionShowComissaoTotal?`<td class="small-muted">${fmtBRL(e.comissaoBase)}</td><td><strong>${fmtBRL(e.comissaoTotal)}</strong></td>`:''}
-      <td class="proj-col">${proj ? fmtBRL(proj.porRep.get(e.codKey)||0) : '—'}</td>
+      <td class="proj-col small-muted">${proj ? fmtBRL(proj.base.get(e.codKey)||0) : '—'}</td>
+      <td class="proj-col"><strong>${proj ? fmtBRL(proj.porRep.get(e.codKey)||0) : '—'}</strong></td>
     </tr>`).join("") || `<tr><td colspan="10" class="small-muted">Nenhuma produção encontrada.</td></tr>`;
   if(data.length){
     const ncol = document.querySelectorAll("#commission-thead th").length;
-    $("#commission-tbody").insertAdjacentHTML("beforeend", `<tr class="proj-col" style="font-weight:800;background:#eef7f1"><td colspan="${ncol-1}" style="text-align:right">TOTAL PROJETADO${proj?` <span class="small-muted">(${proj.decorridos} de ${proj.totalMes} dias úteis)</span>`:''}</td><td>${proj ? fmtBRL(proj.total) : '—'}</td></tr>`);
+    $("#commission-tbody").insertAdjacentHTML("beforeend", `<tr class="proj-col" style="font-weight:800;background:#eef7f1"><td colspan="${ncol-2}" style="text-align:right">TOTAL PROJETADO${proj?` <span class="small-muted">(${proj.decorridos} de ${proj.totalMes} dias úteis)</span>`:''}</td><td>${proj ? fmtBRL(proj.totalBase) : '—'}</td><td>${proj ? fmtBRL(proj.total) : '—'}</td></tr>`);
   }
 
   // resumo: período selecionado + os dois totais (com e sem desconto), sempre os dois —
