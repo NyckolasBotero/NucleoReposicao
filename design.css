@@ -709,3 +709,6 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
 .nc-chip{ padding:4px 10px; border-radius:12px; font-size:12px; background:var(--gray-100); color:var(--gray-600); }
 .nc-chip.on{ background:rgba(214,69,69,.12); color:#c03030; }
 tr.av-erro td{ background:rgba(214,69,69,.08); }
+.nc-ind{ margin:10px 0; }
+.nc-ind-h{ margin-bottom:6px; }
+.nc-ind-l{ margin:4px 0 10px 18px; padding:0; font-size:12.5px; max-height:130px; overflow:auto; }
