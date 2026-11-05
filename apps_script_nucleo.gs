@@ -26,7 +26,7 @@ const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
-const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias'];
+const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
 const ABA_ADVERTENCIAS = 'ADVERTÊNCIAS';
@@ -637,15 +637,17 @@ const CONFIG_PADRAO = {
     'SOLICITAÇÃO RECEBIMENTO', 'SOLICITAÇÃO ARMAZENAGEM', 'SOLICITAÇÃO EXPEDIÇÃO'],
   TIPO_DESLIGAMENTO: ['DESLIGAMENTO S. JUSTA', 'PEDIU DESLIGAMENTO', 'TRANSFERENCIA', 'ENCOSTADO', 'FALTANTES'],
   TIPO_MISSAO: [],
+  SETOR_COLETOR: ['Reposição', 'Picking', 'Recebimento', 'Armazenagem', 'Expedição', 'Conferência'],
   MOTIVO_FEEDBACK: ['Má Conduta', 'Insubordinação', 'Ausência Injustificada', 'Atrasos Frequentes', 'Desrespeito às Regras',
     'Violação Política Moral da Empresa', 'Baixa Produção', 'Desempenho Geral', 'Desídia']
 };
-const LISTAS_EDITAVEIS = ['STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAMENTO', 'TIPO_DESLIGAMENTO', 'TIPO_MISSAO', 'MOTIVO_FEEDBACK'];
+const LISTAS_EDITAVEIS = ['SETOR_COLETOR', 'STATUS_CHAMADA', 'TIPO_REP_AVARIA', 'MOTIVO_DESLIGAMENTO', 'TIPO_DESLIGAMENTO', 'TIPO_MISSAO', 'MOTIVO_FEEDBACK'];
 const SUB_DA_ACAO = {
   lanc_init: null, lanc_config_add: null, lanc_comissao_cfg_ler: null, lanc_comissao_cfg_salvar: null,
   lanc_feedback_salvar: 'Lançar Feedback', lanc_feedback_listar: 'Lançar Feedback', lanc_feedback_editar: 'Lançar Feedback', lanc_feedback_anexar: 'Lançar Feedback',
   lanc_advertencia_salvar: 'Lançar Advertência',
   lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
+  lanc_coletor_listar: 'Controle de Coletores', lanc_coletor_salvar: 'Controle de Coletores', lanc_coletor_termo: 'Controle de Coletores',
   lanc_suspensao_salvar: 'Lançar Suspensão', lanc_suspensao_listar: 'Lançar Suspensão', lanc_suspensao_editar: 'Lançar Suspensão',
   lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712', lanc_avaria_listar: 'Lançar Avaria 9712', lanc_avaria_editar: 'Lançar Avaria 9712',
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
@@ -654,7 +656,7 @@ const SUB_DA_ACAO = {
   lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro',
   lanc_missao_salvar: 'Lançar Missões', lanc_capacidade_salvar: 'Lançar Capacidade'
 };
-const LISTA_DA_SUB = { STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar Avaria 9712', MOTIVO_FEEDBACK: 'Lançar Feedback', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
+const LISTA_DA_SUB = { SETOR_COLETOR: 'Controle de Coletores', STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar Avaria 9712', MOTIVO_FEEDBACK: 'Lançar Feedback', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
 
 function lancamento(d, s) {
   if (!(d.acao in SUB_DA_ACAO)) throw new Error('Ação desconhecida.');
@@ -672,6 +674,9 @@ function lancamento(d, s) {
     case 'lanc_advertencia_salvar': return advertenciaSalvar(d, s);
     case 'lanc_advertencia_listar': return advertenciaListar(d);
     case 'lanc_advertencia_editar': return advertenciaEditar(d, s);
+    case 'lanc_coletor_listar': return coletorListar();
+    case 'lanc_coletor_salvar': return coletorSalvar(d, s);
+    case 'lanc_coletor_termo': return coletorTermo(d, s);
     case 'lanc_suspensao_salvar': return suspensaoSalvar(d, s);
     case 'lanc_suspensao_listar': return suspensaoListar(d);
     case 'lanc_suspensao_editar': return suspensaoEditar(d, s);
@@ -788,6 +793,10 @@ function lerConfig() {
     const k = texto(l[0]), v = texto(l[1]);
     if (cfg[k] && v && cfg[k].map(normalizar).indexOf(normalizar(v)) < 0) cfg[k].push(v);
   });
+  // lista criada depois da planilha de configuração: grava os valores padrão uma única vez
+  if (!cfg.SETOR_COLETOR.length) {
+    CONFIG_PADRAO.SETOR_COLETOR.forEach(function (v) { sh.getRange(sh.getLastRow() + 1, 1, 1, 2).setNumberFormat('@').setValues([['SETOR_COLETOR', v]]); cfg.SETOR_COLETOR.push(v); });
+  }
   return cfg;
 }
 
@@ -929,7 +938,7 @@ function idDoLink(ref) {
 
 /** Devolve o arquivo (base64) para o site mostrar sem baixar. Só arquivos da pasta de documentos do Núcleo. */
 function anexoLer(d, s) {
-  const ok = [['Gestão', 'Feedbacks e Advertências'], ['Lançamentos', 'Lançar Feedback'], ['Lançamentos', 'Lançar Advertência'], ['Lançamentos', 'Lançar Suspensão']].some(function (par) {
+  const ok = [['Gestão', 'Feedbacks e Advertências'], ['Lançamentos', 'Lançar Feedback'], ['Lançamentos', 'Lançar Advertência'], ['Lançamentos', 'Lançar Suspensão'], ['Lançamentos', 'Controle de Coletores']].some(function (par) {
     try { exigir(s, par); return true; } catch (e) { return false; }
   });
   if (!ok) throw new Error('Sem permissão para ver documentos.');
@@ -1269,6 +1278,85 @@ function suspensaoEditar(d, s) {
   formatarDatas(info.sh, c.data, linha, 1); formatarDatas(info.sh, c.fim, linha, 1);
   registrarLog(s, 'Suspensão (edição)', r.mat + ' ' + r.nome + ' · ' + r.motivo + ' · ' + d.data);
   return { ok: true, nome: r.nome, anexo: anexo };
+}
+
+/* ---------- Controle de coletores (abas COLETORES e COLETORES_HIST) ---------- */
+
+const ABA_COLETORES = 'COLETORES', ABA_COLETORES_HIST = 'COLETORES_HIST';
+const CAB_COLETOR = ['ID Coletor', 'Nome Coletor', 'Login Coletor', 'Winthor Usuario', 'Matricula', 'Colaborador', 'Setor', 'Ultimo Inventario', 'Observacoes', 'Termo', 'Data Termo', 'Status', 'Data Atribuicao'];
+function colunasColetor() {
+  abaComCabecalho(ABA_COLETORES, CAB_COLETOR);
+  const info = infoAba(ABA_COLETORES);
+  return { info: info, c: {
+    id: garantirCol(info, ['ID COLETOR', 'ID'], 'ID Coletor'), nome: garantirCol(info, ['NOME COLETOR'], 'Nome Coletor'), login: garantirCol(info, ['LOGIN COLETOR'], 'Login Coletor'),
+    winthor: garantirCol(info, ['WINTHOR USUARIO', 'WINTHOR'], 'Winthor Usuario'), mat: garantirCol(info, ['MATRICULA'], 'Matricula'), colab: garantirCol(info, ['COLABORADOR'], 'Colaborador'),
+    setor: garantirCol(info, ['SETOR'], 'Setor'), inv: garantirCol(info, ['ULTIMO INVENTARIO'], 'Ultimo Inventario'), obs: garantirCol(info, ['OBSERVACOES'], 'Observacoes'),
+    termo: garantirCol(info, ['TERMO'], 'Termo'), dtTermo: garantirCol(info, ['DATA TERMO'], 'Data Termo'), status: garantirCol(info, ['STATUS'], 'Status'), dtAtrib: garantirCol(info, ['DATA ATRIBUICAO'], 'Data Atribuicao') } };
+}
+function coletorListar() {
+  const X = colunasColetor(), info = X.info, c = X.c, ult = info.sh.getLastRow(), itens = [];
+  if (ult >= 2) info.sh.getRange(2, 1, ult - 1, info.ult).getValues().forEach(function (l, i) {
+    const id = texto(l[c.id]); if (!id) return;
+    itens.push({ linha: i + 2, id: id, nome: texto(l[c.nome]), login: texto(l[c.login]), winthor: texto(l[c.winthor]), mat: soDigitos(l[c.mat]), colab: texto(l[c.colab]),
+      setor: texto(l[c.setor]), inv: chaveData(l[c.inv]), obs: texto(l[c.obs]), termo: texto(l[c.termo]), dtTermo: chaveData(l[c.dtTermo]), status: texto(l[c.status]) || 'Ativo', dtAtrib: chaveData(l[c.dtAtrib]) });
+  });
+  abaComCabecalho(ABA_COLETORES_HIST, ['Data', 'ID Coletor', 'Setor', 'Matricula', 'Status', 'Usuario']);
+  const hs = dadosSS().getSheetByName(ABA_COLETORES_HIST), hist = [];
+  if (hs.getLastRow() >= 2) hs.getRange(2, 1, hs.getLastRow() - 1, 6).getValues().forEach(function (l) {
+    const d = chaveData(l[0]), id = texto(l[1]); if (d && id) hist.push({ d: d, id: id, setor: texto(l[2]), mat: soDigitos(l[3]), status: texto(l[4]) || 'Ativo' });
+  });
+  return { ok: true, itens: itens, hist: hist, hoje: hoje() };
+}
+function coletorHist(s, id, setor, mat, status) {
+  abaComCabecalho(ABA_COLETORES_HIST, ['Data', 'ID Coletor', 'Setor', 'Matricula', 'Status', 'Usuario']);
+  const sh = dadosSS().getSheetByName(ABA_COLETORES_HIST), n = Math.max(sh.getLastRow(), 1) + 1;
+  garantirTamanho(sh, n, 6);
+  sh.getRange(n, 1, 1, 6).setValues([[isoParaData(hoje()), id, setor, mat, status, s.nome || s.matricula]]);
+  formatarDatas(sh, 0, n, 1);
+}
+/** Cria (sem linha) ou atualiza (com linha) um coletor. O ID não pode repetir. */
+function coletorSalvar(d, s) {
+  const X = colunasColetor(), info = X.info, c = X.c, id = texto(d.id), linha = Number(d.linha) || 0;
+  if (!id) throw new Error('Informe o ID do coletor.');
+  const mat = soDigitos(d.mat), status = texto(d.status) || 'Ativo', setor = texto(d.setor);
+  if (!setor) throw new Error('Escolha o setor.');
+  const ult = info.sh.getLastRow(), ids = ult >= 2 ? info.sh.getRange(2, c.id + 1, ult - 1, 1).getValues() : [];
+  for (let i = 0; i < ids.length; i++) if (normalizar(texto(ids[i][0])) === normalizar(id) && i + 2 !== linha) throw new Error('Já existe um coletor com o ID ' + id + '.');
+  const colab = mat ? (nomePorMatricula(mat) || texto(d.colab)) : '';
+  if (mat && !colab) throw new Error('Matrícula não encontrada. Confira o número.');
+  let l, antes = null;
+  if (linha) {
+    if (linha < 2 || linha > ult) throw new Error('Registro não encontrado. Recarregue a lista.');
+    l = info.sh.getRange(linha, 1, 1, info.ult).getValues()[0];
+    if (normalizar(texto(l[c.id])) !== normalizar(texto(d.idOriginal))) throw new Error('A planilha mudou desde que a lista foi carregada. Recarregue e tente de novo.');
+    antes = { setor: texto(l[c.setor]), mat: soDigitos(l[c.mat]), status: texto(l[c.status]) || 'Ativo' };
+  } else l = new Array(info.ult).fill('');
+  l[c.id] = id; l[c.nome] = texto(d.nome); l[c.login] = texto(d.login); l[c.winthor] = texto(d.winthor); l[c.mat] = mat; l[c.colab] = colab;
+  l[c.setor] = setor; l[c.inv] = d.inv ? isoParaData(d.inv) : ''; l[c.obs] = texto(d.obs); l[c.status] = status;
+  if (!antes || antes.mat !== mat) l[c.dtAtrib] = mat ? isoParaData(d.dtAtrib || hoje()) : '';
+  let n = linha;
+  if (!linha) { n = Math.max(ult, 1) + 1; garantirTamanho(info.sh, n, info.ult); }
+  info.sh.getRange(n, 1, 1, info.ult).setValues([l]);
+  formatarDatas(info.sh, c.inv, n, 1); formatarDatas(info.sh, c.dtTermo, n, 1); formatarDatas(info.sh, c.dtAtrib, n, 1);
+  // histórico (alimenta o gráfico mês a mês): só quando setor, atribuição ou status mudam
+  if (!antes || antes.setor !== setor || antes.mat !== mat || antes.status !== status) coletorHist(s, id, setor, mat, status);
+  registrarLog(s, linha ? 'Coletor (edição)' : 'Coletor', id + ' · ' + setor + (mat ? ' · ' + mat + ' ' + colab : ''));
+  return { ok: true, linha: n, colab: colab };
+}
+/** Anexa o termo de compromisso assinado (foto/PDF) a um coletor. */
+function coletorTermo(d, s) {
+  const X = colunasColetor(), info = X.info, c = X.c, linha = Number(d.linha) || 0;
+  if (linha < 2 || linha > info.sh.getLastRow()) throw new Error('Registro não encontrado. Recarregue a lista.');
+  const l = info.sh.getRange(linha, 1, 1, info.ult).getValues()[0], id = texto(l[c.id]);
+  if (normalizar(id) !== normalizar(texto(d.idOriginal))) throw new Error('A planilha mudou desde que a lista foi carregada. Recarregue e tente de novo.');
+  if (d.remover) { info.sh.getRange(linha, c.termo + 1, 1, 1).setValue(''); info.sh.getRange(linha, c.dtTermo + 1, 1, 1).setValue(''); registrarLog(s, 'Coletor (termo removido)', id); return { ok: true, termo: '' }; }
+  if (!d.anexo || !d.anexo.base64) throw new Error('Anexe o termo assinado.');
+  const link = salvarAnexo(d.anexo, 'TermoColetor', soDigitos(l[c.mat]) || id.replace(/\W/g, ''), hoje());
+  info.sh.getRange(linha, c.termo + 1, 1, 1).setValue(link);
+  info.sh.getRange(linha, c.dtTermo + 1, 1, 1).setValue(isoParaData(d.dataTermo || hoje()));
+  formatarDatas(info.sh, c.dtTermo, linha, 1);
+  registrarLog(s, 'Coletor (termo assinado)', id + ' · ' + texto(l[c.colab]));
+  return { ok: true, termo: link };
 }
 
 /* ---------- REP.AVARIA ---------- */

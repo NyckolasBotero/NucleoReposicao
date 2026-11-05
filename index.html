@@ -1015,6 +1015,7 @@ button, .btn, .nav-btn, .subnav-btn{ touch-action:manipulation; }
       <div class="pane active" id="pane-lfeedback"></div>
       <div class="pane" id="pane-ladvertencia"></div>
       <div class="pane" id="pane-lsuspensao"></div>
+      <div class="pane" id="pane-lcoletores"></div>
       <div class="pane" id="pane-lavaria"></div>
       <div class="pane" id="pane-lchamada"></div>
       <div class="pane" id="pane-lquadro"></div>
@@ -1057,6 +1058,7 @@ if("serviceWorker" in navigator && /^https?:$/.test(location.protocol)){
 <script src="feedbacks.js"></script>
 <script src="nc.js"></script>
 <script src="lancamentos.js"></script>
+<script src="coletores.js"></script>
 <script>
 // Aguarda as bibliotecas CDN carregarem antes de inicializar a UI
 (window.__libsReady || Promise.resolve()).then(function(){
