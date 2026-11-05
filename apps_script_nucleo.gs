@@ -645,7 +645,7 @@ const SUB_DA_ACAO = {
   lanc_feedback_salvar: 'Lançar Feedback', lanc_feedback_listar: 'Lançar Feedback', lanc_feedback_editar: 'Lançar Feedback', lanc_feedback_anexar: 'Lançar Feedback',
   lanc_advertencia_salvar: 'Lançar Advertência',
   lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
-  lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712',
+  lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712', lanc_avaria_listar: 'Lançar Avaria 9712', lanc_avaria_editar: 'Lançar Avaria 9712',
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
   lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
@@ -676,6 +676,8 @@ function lancamento(d, s) {
     case 'lanc_anexo_ler': return anexoLer(d, s);
     case 'lanc_avaria_verificar': return avariaVerificar(d);
     case 'lanc_avaria_salvar': return avariaSalvar(d, s);
+    case 'lanc_avaria_listar': return avariaListar(d);
+    case 'lanc_avaria_editar': return avariaEditar(d, s);
     case 'lanc_chamada_dia': return chamadaDia(d);
     case 'lanc_chamada_salvar': return chamadaSalvar(d, s);
     case 'lanc_chamada_lote': return chamadaLote(d, s);
@@ -1201,6 +1203,24 @@ function advertenciaEditar(d, s) {
 
 /* ---------- REP.AVARIA ---------- */
 
+/** Colunas da REP.AVARIA: { iN, iT, ini, cols } — a aba pode não ter título (1ª linha já é dado): então A = número e B = tipo. */
+function avariaCols(info) {
+  const iN = acharCol(info, ['NUM LANCAMENTO', 'NUMLANCAMENTO', 'LANCAMENTO']), iT = acharCol(info, ['TIPO', 'TIPO LANCAMENTO', 'TIPO DE LANCAMENTO', 'RELACAO']);
+  if (iN >= 0 && iT >= 0) return { iN: iN, iT: iT, ini: 2, titulos: true };
+  return { iN: 0, iT: 1, ini: 1, titulos: false };
+}
+/** Lê só as colunas de número e tipo (rápido). Devolve [{ linha, num, tipo }]. */
+function avariaLer(sh, ac) {
+  const ult = sh.getLastRow(), out = [];
+  if (ult < ac.ini) return out;
+  const n = ult - ac.ini + 1, ncol = Math.max(ac.iN, ac.iT) + 1;
+  const v = sh.getRange(ac.ini, 1, n, ncol).getValues();
+  for (let i = 0; i < v.length; i++) {
+    const num = soDigitos(v[i][ac.iN]);
+    if (/^\d{5,}$/.test(num)) out.push({ linha: ac.ini + i, num: num, tipo: texto(v[i][ac.iT]) });
+  }
+  return out;
+}
 function numerosAvaria(sh) {
   const set = {};
   if (sh.getLastRow() < 1) return set;
@@ -1209,43 +1229,103 @@ function numerosAvaria(sh) {
   });
   return set;
 }
+/** Colunas da 9712 que interessam: Num.Lançamento (K) e Data. */
+function colunas9712(sh) {
+  const cab = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(normalizar);
+  let col = cab.indexOf('NUMLANCAMENTO'); if (col < 0) col = 10; // coluna K
+  return { num: col, data: cab.indexOf('DATA') };
+}
 function existeNa9712(num) {
   const sh = dadosSS().getSheetByName('9712');
   if (!sh) return { aba: false, existe: false };
   const ult = sh.getLastRow();
   if (ult < 2) return { aba: true, existe: false };
-  const cab = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(normalizar);
-  let col = cab.indexOf('NUMLANCAMENTO');
-  if (col < 0) col = 10; // coluna K
-  const v = sh.getRange(2, col + 1, ult - 1, 1).getValues();
+  const c = colunas9712(sh);
+  const v = sh.getRange(2, c.num + 1, ult - 1, 1).getValues();
   for (let i = 0; i < v.length; i++) if (soDigitos(v[i][0]) === num) return { aba: true, existe: true };
   return { aba: true, existe: false };
+}
+/** Conferência de vários números de uma vez (um só acesso à 9712): { num: true|false } */
+function existemNa9712(nums) {
+  const sh = dadosSS().getSheetByName('9712'), res = {};
+  if (!sh) return { aba: false, mapa: res };
+  const ult = sh.getLastRow();
+  if (ult < 2) { nums.forEach(function (n) { res[n] = false; }); return { aba: true, mapa: res }; }
+  const c = colunas9712(sh), v = sh.getRange(2, c.num + 1, ult - 1, 1).getValues(), set = {};
+  for (let i = 0; i < v.length; i++) { const t = soDigitos(v[i][0]); if (t) set[t] = true; }
+  nums.forEach(function (n) { res[n] = !!set[n]; });
+  return { aba: true, mapa: res };
 }
 function avariaVerificar(d) {
   const num = soDigitos(d.num);
   if (!num) throw new Error('Informe o número do lançamento.');
-  const sh = abaDados('REP.AVARIA');
-  return { ok: true, num: num, jaLancado: !!numerosAvaria(sh)[num], na9712: existeNa9712(num) };
+  const sh = abaDados('REP.AVARIA'), ac = avariaCols(infoAba('REP.AVARIA'));
+  const ja = avariaLer(sh, ac).some(function (x) { return x.num === num; });
+  return { ok: true, num: num, jaLancado: ja, na9712: existeNa9712(num) };
+}
+/** Lista tudo que já foi lançado (mais recente primeiro) + data do lançamento (log) + data na 9712. */
+function avariaListar(d) {
+  const sh = abaDados('REP.AVARIA'), ac = avariaCols(infoAba('REP.AVARIA'));
+  const itens = avariaLer(sh, ac);
+  // quando foi lançado: vem do log de lançamentos (os antigos, de antes do log, ficam sem data)
+  const quando = {}, ss = dadosSS(), lg = ss.getSheetByName(ABA_LOG_LANC);
+  if (lg && lg.getLastRow() > 1) {
+    const ini = Math.max(2, lg.getLastRow() - 20000 + 1);
+    lg.getRange(ini, 1, lg.getLastRow() - ini + 1, 5).getDisplayValues().forEach(function (l) {
+      if (String(l[3]).indexOf('REP.AVARIA') !== 0 || String(l[3]).indexOf('edição') >= 0) return;
+      const num = soDigitos(String(l[4]).split('·')[0]);
+      if (num) quando[num] = String(l[0]);
+    });
+  }
+  // data da transação na 9712 + se existe lá
+  const na = {}, sh9 = ss.getSheetByName('9712');
+  if (sh9 && sh9.getLastRow() > 1) {
+    const c = colunas9712(sh9), ult = sh9.getLastRow(), nx = {};
+    itens.forEach(function (x) { nx[x.num] = true; });
+    const vn = sh9.getRange(2, c.num + 1, ult - 1, 1).getValues();
+    const vd = c.data >= 0 ? sh9.getRange(2, c.data + 1, ult - 1, 1).getValues() : null;
+    for (let i = 0; i < vn.length; i++) {
+      const t = soDigitos(vn[i][0]);
+      if (t && nx[t] && !na[t]) na[t] = vd ? chaveData(vd[i][0]) : '';
+    }
+  }
+  const out = itens.map(function (x) {
+    return { linha: x.linha, num: x.num, tipo: x.tipo, lancadoEm: quando[x.num] || '', data9712: na[x.num] || '', na9712: sh9 ? (x.num in na) : null };
+  }).reverse();
+  return { ok: true, itens: out, tipos: lerConfig().TIPO_REP_AVARIA || [] };
 }
 function avariaSalvar(d, s) {
   const num = soDigitos(d.num), tipo = texto(d.tipo);
   if (!num) throw new Error('Informe o número do lançamento.');
   if (!tipo) throw new Error('Escolha o tipo do lançamento.');
-  const sh = abaDados('REP.AVARIA');
-  if (numerosAvaria(sh)[num]) throw new Error('O lançamento ' + num + ' já existe na REP.AVARIA. Nada foi gravado.');
-  const na = existeNa9712(num);
+  const sh = abaDados('REP.AVARIA'), info = infoAba('REP.AVARIA'), ac = avariaCols(info);
+  if (avariaLer(sh, ac).some(function (x) { return x.num === num; })) throw new Error('O lançamento ' + num + ' já existe na REP.AVARIA. Nada foi gravado.');
+  // o site já conferiu na lista que tem em memória; só acessa a 9712 se ele não soube dizer
+  const na = d.na9712Cliente === true ? { aba: true, existe: true } : existeNa9712(num);
   if (na.aba && !na.existe && d.confirmarSem9712 !== true) return { ok: false, precisaConfirmar: true, erro: 'O número ' + num + ' não foi encontrado na 9712 (coluna K). Confirme para lançar mesmo assim.' };
-  const info = infoAba('REP.AVARIA');
-  const iN = acharCol(info, ['NUM LANCAMENTO', 'NUMLANCAMENTO', 'LANCAMENTO']), iT = acharCol(info, ['TIPO', 'TIPO LANCAMENTO', 'TIPO DE LANCAMENTO', 'RELACAO']);
-  const n = Math.max(sh.getLastRow(), 1) + 1;
-  if (iN >= 0 && iT >= 0) {
-    const l = new Array(info.ult).fill(''); l[iN] = Number(num); l[iT] = tipo;
+  const n = Math.max(sh.getLastRow(), ac.titulos ? 1 : 0) + 1;
+  if (ac.titulos) {
+    const l = new Array(info.ult).fill(''); l[ac.iN] = Number(num); l[ac.iT] = tipo;
     garantirTamanho(sh, n, info.ult); sh.getRange(n, 1, 1, info.ult).setValues([l]);
   } else {  // aba sem títulos reconhecíveis: grava número e tipo nas duas primeiras colunas
     garantirTamanho(sh, n, 2); sh.getRange(n, 1, 1, 2).setValues([[Number(num), tipo]]);
   }
   registrarLog(s, 'REP.AVARIA', num + ' · ' + tipo);
-  return { ok: true, num: num, na9712: na };
+  return { ok: true, num: num, linha: n, na9712: na };
+}
+/** Corrige o tipo (e, se precisar, o número) de um lançamento já gravado. */
+function avariaEditar(d, s) {
+  const orig = soDigitos(d.numOriginal), num = soDigitos(d.num) || orig, tipo = texto(d.tipo);
+  if (!orig) throw new Error('Lançamento não informado.');
+  if (!tipo) throw new Error('Escolha o tipo do lançamento.');
+  const sh = abaDados('REP.AVARIA'), ac = avariaCols(infoAba('REP.AVARIA')), itens = avariaLer(sh, ac);
+  const it = itens.filter(function (x) { return x.num === orig; })[0];
+  if (!it) throw new Error('O lançamento ' + orig + ' não está mais na REP.AVARIA. Atualize a lista.');
+  if (num !== orig && itens.some(function (x) { return x.num === num; })) throw new Error('O número ' + num + ' já existe na REP.AVARIA.');
+  sh.getRange(it.linha, ac.iN + 1).setValue(Number(num));
+  sh.getRange(it.linha, ac.iT + 1).setValue(tipo);
+  registrarLog(s, 'REP.AVARIA (edição)', orig + (num !== orig ? ' → ' + num : '') + ' · ' + it.tipo + ' → ' + tipo);
+  return { ok: true, num: num, tipo: tipo, linha: it.linha };
 }
 
 /* ---------- Chamada (aba QUADRO REP) ---------- */

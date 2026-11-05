@@ -690,3 +690,22 @@ table.data-table tbody tr:hover{ background:var(--blue-light); }
 .aud-sec span{ font-size:12px; font-weight:500; opacity:.75; }
 .aud-sec-ret{ border-color:#2f6fce; background:rgba(47,111,206,.10); }
 .aud-sec-rua{ border-color:#e08a1f; background:rgba(224,138,31,.10); }
+
+/* ---- Não conformidades (nc.js) ---- */
+.aud-sec-nc{ border-color:#d64545; background:rgba(214,69,69,.09); }
+.nc-cards{ grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); }
+.nc-table th.num, .nc-table td.num{ text-align:center; }
+.nc-table td{ vertical-align:middle; }
+.nc-btn{ min-height:32px; min-width:132px; justify-content:center; }
+.btn-danger{ background:#d64545; color:#fff; }
+.btn-danger:hover{ filter:brightness(1.08); }
+.nc-act{ text-align:right; width:1%; }
+.nc-duo{ display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:16px; align-items:start; }
+.nc-sub{ font-weight:800; font-size:13px; margin:4px 0 8px; }
+.nc-badge{ display:inline-flex; align-items:center; height:24px; padding:0 10px; border-radius:12px; font-size:11px; font-weight:800; white-space:nowrap; }
+.nc-fb{ background:rgba(224,138,31,.15); color:#b86a0a; }
+.nc-adv{ background:rgba(214,69,69,.15); color:#c03030; }
+.nc-chips{ display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 14px; }
+.nc-chip{ padding:4px 10px; border-radius:12px; font-size:12px; background:var(--gray-100); color:var(--gray-600); }
+.nc-chip.on{ background:rgba(214,69,69,.12); color:#c03030; }
+tr.av-erro td{ background:rgba(214,69,69,.08); }

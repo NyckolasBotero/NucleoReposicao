@@ -219,3 +219,5 @@ const RetornoQ = {
     document.getElementById("rq-reload").addEventListener("click", async ()=>{ this.dados=null; this.erro=null; await this.carregar(true); this.render(); });
   }
 };
+
+window.RetornoQ = RetornoQ;
