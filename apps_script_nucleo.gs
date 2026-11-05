@@ -26,10 +26,11 @@ const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
-const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias'];
+const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
 const ABA_ADVERTENCIAS = 'ADVERTÊNCIAS';
+const ABA_SUSPENSOES = 'SUSPENSÕES';
 const ABA_FERIAS = 'FÉRIAS AGENDADAS';
 const DIAS_FERIAS = [5, 10, 15, 20, 25, 30, 31];
 const DIAS_SEM_FEEDBACK = 30;
@@ -645,6 +646,7 @@ const SUB_DA_ACAO = {
   lanc_feedback_salvar: 'Lançar Feedback', lanc_feedback_listar: 'Lançar Feedback', lanc_feedback_editar: 'Lançar Feedback', lanc_feedback_anexar: 'Lançar Feedback',
   lanc_advertencia_salvar: 'Lançar Advertência',
   lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
+  lanc_suspensao_salvar: 'Lançar Suspensão', lanc_suspensao_listar: 'Lançar Suspensão', lanc_suspensao_editar: 'Lançar Suspensão',
   lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712', lanc_avaria_listar: 'Lançar Avaria 9712', lanc_avaria_editar: 'Lançar Avaria 9712',
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
@@ -670,6 +672,9 @@ function lancamento(d, s) {
     case 'lanc_advertencia_salvar': return advertenciaSalvar(d, s);
     case 'lanc_advertencia_listar': return advertenciaListar(d);
     case 'lanc_advertencia_editar': return advertenciaEditar(d, s);
+    case 'lanc_suspensao_salvar': return suspensaoSalvar(d, s);
+    case 'lanc_suspensao_listar': return suspensaoListar(d);
+    case 'lanc_suspensao_editar': return suspensaoEditar(d, s);
     case 'lanc_ferias_listar': return feriasListar();
     case 'lanc_ferias_salvar': return feriasSalvar(d, s);
     case 'lanc_ferias_cancelar': return feriasCancelar(d, s);
@@ -924,7 +929,7 @@ function idDoLink(ref) {
 
 /** Devolve o arquivo (base64) para o site mostrar sem baixar. Só arquivos da pasta de documentos do Núcleo. */
 function anexoLer(d, s) {
-  const ok = [['Gestão', 'Feedbacks e Advertências'], ['Lançamentos', 'Lançar Feedback'], ['Lançamentos', 'Lançar Advertência']].some(function (par) {
+  const ok = [['Gestão', 'Feedbacks e Advertências'], ['Lançamentos', 'Lançar Feedback'], ['Lançamentos', 'Lançar Advertência'], ['Lançamentos', 'Lançar Suspensão']].some(function (par) {
     try { exigir(s, par); return true; } catch (e) { return false; }
   });
   if (!ok) throw new Error('Sem permissão para ver documentos.');
@@ -1199,6 +1204,71 @@ function advertenciaEditar(d, s) {
   formatarDatas(info.sh, c.data, linha, 1);
   registrarLog(s, 'Advertência (edição)', mat + ' ' + nome + ' · ' + motivo + ' · ' + d.data);
   return { ok: true, nome: nome, anexo: anexo };
+}
+
+/* ---------- Suspensões disciplinares (aba SUSPENSÕES) ---------- */
+
+const CAB_SUSP = ['Data', 'Cod', 'Nome', 'Motivo', 'Dias', 'Data Fim', 'Resumo Assunto', 'Cod Aplicador', 'Nome Aplicador', 'Anexo'];
+function colunasSuspensao() {
+  abaComCabecalho(ABA_SUSPENSOES, CAB_SUSP);
+  const info = infoAba(ABA_SUSPENSOES);
+  return { info: info, c: {
+    data: garantirCol(info, ['DATA'], 'Data'), mat: garantirCol(info, ['COD', 'MATRICULA'], 'Cod'), nome: garantirCol(info, ['NOME'], 'Nome'),
+    motivo: garantirCol(info, ['MOTIVO'], 'Motivo'), dias: garantirCol(info, ['DIAS'], 'Dias'), fim: garantirCol(info, ['DATA FIM'], 'Data Fim'),
+    resumo: garantirCol(info, ['RESUMO ASSUNTO', 'RESUMO'], 'Resumo Assunto'),
+    matApl: garantirCol(info, ['COD APLICADOR'], 'Cod Aplicador'), nomeApl: garantirCol(info, ['NOME APLICADOR'], 'Nome Aplicador'), anexo: garantirCol(info, ['ANEXO'], 'Anexo') } };
+}
+function suspensaoLinha(d, s, info, c, atual) {
+  const mat = soDigitos(d.mat), matApl = soDigitos(d.matAplicador) || (atual ? soDigitos(atual[c.matApl]) : s.matricula);
+  if (!mat) throw new Error('Informe a matrícula do colaborador.');
+  const nome = nomePorMatricula(mat) || (atual && mat === soDigitos(atual[c.mat]) ? texto(atual[c.nome]) : texto(d.nome));
+  if (!nome) throw new Error('Matrícula não encontrada. Confira o número.');
+  const motivo = texto(d.motivo), resumo = texto(d.resumo), dias = Math.round(Number(d.dias) || 0);
+  if (!motivo) throw new Error('Escolha o motivo da suspensão.');
+  if (!resumo) throw new Error('Escreva o resumo da suspensão.');
+  if (dias < 1 || dias > 30) throw new Error('Informe os dias de suspensão (1 a 30).');
+  const data = isoParaData(d.data), fim = new Date(data.getTime() + (dias - 1) * 864e5);
+  const l = atual ? atual.slice() : new Array(info.ult).fill('');
+  l[c.data] = data; l[c.mat] = mat; l[c.nome] = nome; l[c.motivo] = motivo; l[c.dias] = dias; l[c.fim] = fim; l[c.resumo] = resumo;
+  l[c.matApl] = matApl; l[c.nomeApl] = texto(d.nomeAplicador) || nomePorMatricula(matApl) || (atual ? texto(atual[c.nomeApl]) : s.nome || '');
+  return { l: l, mat: mat, nome: nome, motivo: motivo };
+}
+function suspensaoSalvar(d, s) {
+  const X = colunasSuspensao(), info = X.info, c = X.c;
+  const r = suspensaoLinha(d, s, info, c, null);
+  r.l[c.anexo] = salvarAnexo(d.anexo, 'Suspensao', r.mat, d.data);
+  const n = Math.max(info.sh.getLastRow(), 1) + 1;
+  garantirTamanho(info.sh, n, info.ult);
+  info.sh.getRange(n, 1, 1, info.ult).setValues([r.l]);
+  formatarDatas(info.sh, c.data, n, 1); formatarDatas(info.sh, c.fim, n, 1);
+  registrarLog(s, 'Suspensão', r.mat + ' ' + r.nome + ' · ' + r.motivo + ' · ' + d.dias + ' dia(s)' + (r.l[c.anexo] ? ' · com anexo' : ''));
+  return { ok: true, nome: r.nome, anexo: r.l[c.anexo] };
+}
+function suspensaoListar(d) {
+  const X = colunasSuspensao(), info = X.info, c = X.c, filtro = soDigitos(d.mat), ult = info.sh.getLastRow();
+  if (ult < 2) return { ok: true, itens: [] };
+  const v = info.sh.getRange(2, 1, ult - 1, info.ult).getValues(), itens = [];
+  for (let i = v.length - 1; i >= 0 && itens.length < 300; i--) {
+    const l = v[i], mat = soDigitos(l[c.mat]);
+    if (!mat || (filtro && mat !== filtro)) continue;
+    itens.push({ linha: i + 2, data: chaveData(l[c.data]), fim: chaveData(l[c.fim]), dias: Number(l[c.dias]) || 0, mat: mat, nome: texto(l[c.nome]), motivo: texto(l[c.motivo]), resumo: texto(l[c.resumo]),
+      matApl: soDigitos(l[c.matApl]), nomeApl: texto(l[c.nomeApl]), anexo: texto(l[c.anexo]) });
+  }
+  return { ok: true, itens: itens };
+}
+function suspensaoEditar(d, s) {
+  const X = colunasSuspensao(), info = X.info, c = X.c, linha = Number(d.linha) || 0;
+  if (linha < 2 || linha > info.sh.getLastRow()) throw new Error('Registro não encontrado. Recarregue a lista.');
+  const atual = info.sh.getRange(linha, 1, 1, info.ult).getValues()[0];
+  if (soDigitos(atual[c.mat]) !== soDigitos(d.matOriginal)) throw new Error('A planilha mudou desde que a lista foi carregada. Recarregue a lista e tente de novo.');
+  const r = suspensaoLinha(d, s, info, c, atual);
+  let anexo = texto(atual[c.anexo]);
+  if (d.anexo && d.anexo.base64) anexo = salvarAnexo(d.anexo, 'Suspensao', r.mat, d.data); else if (d.removerAnexo) anexo = '';
+  r.l[c.anexo] = anexo;
+  info.sh.getRange(linha, 1, 1, info.ult).setValues([r.l]);
+  formatarDatas(info.sh, c.data, linha, 1); formatarDatas(info.sh, c.fim, linha, 1);
+  registrarLog(s, 'Suspensão (edição)', r.mat + ' ' + r.nome + ' · ' + r.motivo + ' · ' + d.data);
+  return { ok: true, nome: r.nome, anexo: anexo };
 }
 
 /* ---------- REP.AVARIA ---------- */

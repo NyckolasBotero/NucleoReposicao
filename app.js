@@ -435,7 +435,7 @@ const REQUIRED_SHEETS = ["FEEDBACK REP","QUADRO REP","8271","8460"];
 // "AUDITORIA REP" deixou de ser aba obrigatória do Excel: a fonte agora é a planilha Google Sheets
 // online (AUDITORIA_REP_ONLINE_SHEET_ID). Se a aba ainda existir no Excel, serve só de reserva
 // caso a planilha online não possa ser lida.
-const OPTIONAL_SHEETS = ["AUDITORIA REP", "MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo", "1707", "ADVERTÊNCIAS", "FÉRIAS AGENDADAS"]; // carregadas se existirem, não causam erro se faltarem
+const OPTIONAL_SHEETS = ["AUDITORIA REP", "MISSÕES", "CRONOGRAMA", "TURNOVER", "8457", "8022", "9712", "REP.AVARIA", "8022 Nova", "Capacidade Realizada", "Tipo", "1707", "ADVERTÊNCIAS", "SUSPENSÕES", "FÉRIAS AGENDADAS"]; // carregadas se existirem, não causam erro se faltarem
 
 // Planilha Google Sheets (compartilhada como "qualquer pessoa com o link") que concentra TODAS as abas do
 // painel (mesmos nomes de aba do NUCLEO REPOSIÇÃO.xlsx). O site busca tudo daqui ao abrir.
@@ -704,7 +704,7 @@ const ImportLog = {
   buildLog(raw){
     // "AUDITORIA REP" saiu do log: as bases de auditoria agora são Auditoria_Ruas e Auditoria_Retorno (+ apoio)
     // abas exibidas no log, na ordem pedida (8457 e Tipo não aparecem)
-    const allSheets = ["FEEDBACK REP","ADVERTÊNCIAS","FÉRIAS AGENDADAS","QUADRO REP","CRONOGRAMA","TURNOVER","MISSÕES","REP.AVARIA","Capacidade Realizada","9712","1707","8271","8460","8022","8022 Nova"];
+    const allSheets = ["FEEDBACK REP","ADVERTÊNCIAS","SUSPENSÕES","FÉRIAS AGENDADAS","QUADRO REP","CRONOGRAMA","TURNOVER","MISSÕES","REP.AVARIA","Capacidade Realizada","9712","1707","8271","8460","8022","8022 Nova"];
     const oi0 = OnlineSheets.info;
     return allSheets.map(name0=>{
       const rows = raw[name0];
@@ -1186,6 +1186,20 @@ const DataProcessor = {
       };
     }).filter(r=>r.data && r.codKey);
     out.advertenciasDispo = raw["ADVERTÊNCIAS"]!==null && raw["ADVERTÊNCIAS"]!==undefined;
+
+    // ---- SUSPENSÕES disciplinares (aba opcional, criada por Lançar Suspensão) ----
+    out.suspensoesDisc = (raw["SUSPENSÕES"]||[]).map((r,idx)=>{
+      const data = toDate(r["Data"]);
+      const cod = r["Cod"]!==null && r["Cod"]!==undefined && r["Cod"]!=="" ? String(r["Cod"]).trim() : null;
+      const nome = trimStr(r["Nome"]);
+      return {
+        _row: idx, data, fim: toDate(r["Data Fim"]), dias: Number(r["Dias"])||0, cod, nome, codKey: cod ? normStr(cod) : (nome ? "NOME::"+normStr(nome) : null),
+        motivo: trimStr(getFieldFlexible(r, ["Motivo","MOTIVO"])),
+        resumo: trimStr(getFieldFlexible(r, ["Resumo Assunto","Resumo"])),
+        anexo: trimStr(getFieldFlexible(r, ["Anexo","ANEXO"])),
+        aplicador: trimStr(getFieldFlexible(r, ["Nome Aplicador"]))
+      };
+    }).filter(r=>r.data && r.codKey);
 
     // ---- FÉRIAS AGENDADAS (aba opcional, criada pelo lançamento) ----
     out.feriasAgendadas = (raw["FÉRIAS AGENDADAS"]||[]).map((r,idx)=>{
@@ -3985,6 +3999,7 @@ const UI = {
     lancamentos: [
       { id:"lfeedback", label:"Lançar Feedback" },
       { id:"ladvertencia", label:"Lançar Advertência" },
+      { id:"lsuspensao", label:"Lançar Suspensão" },
       { id:"lavaria", label:"Lançar Avaria 9712", aliases:["Lançar REP.AVARIA"] },
       { id:"lchamada", label:"Lançar Chamada" },
       { id:"lquadro", label:"Lançar Quadro" },
@@ -4254,7 +4269,7 @@ const UI = {
 
   renderPane(pane){
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
-    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','lfeedback','ladvertencia','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias'].includes(pane)){
+    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','lfeedback','ladvertencia','lsuspensao','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias'].includes(pane)){
       const el = $("#pane-"+pane);
       if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">Buscar dados online</button></div>`;
       return;
@@ -4264,7 +4279,7 @@ const UI = {
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
       bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(),
-      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
+      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };
     if(fns[pane]) fns[pane]();

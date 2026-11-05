@@ -469,17 +469,17 @@ const LancUI = {
       }
       const e = FeedbackAdv.statsPorMatricula(mat);
       const motivo = $$("ad-motivo").value, fab = motivo ? e.motivos.find(m=>m.chave === FeedbackAdv.mk(motivo)) : null;
-      const linhas = (e.motivos||[]).map(m=>`<tr${motivo && m.chave === FeedbackAdv.mk(motivo) ? ' style="background:#fff8e1"' : ""}><td>${this.h(m.motivo)}</td><td>${m.fb}</td><td>${m.adv}</td><td>${m.pend ? `<strong style="color:#d64545">${m.pend} a emitir</strong>` : "—"}</td></tr>`).join("");
+      const linhas = (e.motivos||[]).map(m=>`<tr${motivo && m.chave === FeedbackAdv.mk(motivo) ? ' style="background:#fff8e1"' : ""}><td>${this.h(m.motivo)}</td><td>${m.fb}</td><td>${m.adv}</td><td>${m.pend ? `<strong style="color:#d64545">${m.pend} a emitir</strong>` : "—"}</td><td>${m.suspPend ? `<strong style="color:#8e1b1b">⛔ ${m.suspPend} suspensão a emitir</strong>` : `<span class="small-muted">${m.susp} · faltam ${m.faltamSusp} advert.</span>`}</td></tr>`).join("");
       let rec = "";
       if(motivo){
-        rec = fab && fab.pend > 0 ? `<div class="warn-box" style="margin:8px 0 0">🔴 Indicada: ${fab.fb} feedback(s) em "${this.h(motivo)}" e ${fab.adv} advertência(s) — faltam ${fab.pend} advertência(s) pela regra (a cada ${FB_A_CADA} feedbacks).</div>`
-          : `<div class="hint-box" style="margin:8px 0 0">Em "${this.h(motivo)}": ${fab ? fab.fb : 0} feedback(s) e ${fab ? fab.adv : 0} advertência(s). Pela regra de ${FB_A_CADA} feedbacks, ainda <strong>não</strong> há advertência pendente neste motivo.</div>`;
+        rec = fab && fab.pend > 0 ? `<div class="warn-box" style="margin:8px 0 0">🔴 Indicada: ${fab.fb} feedback(s) em "${this.h(motivo)}" e ${fab.adv} advertência(s) — faltam ${fab.pend} advertência(s) pela regra (a cada ${fab ? fab.porAdv : FB_A_CADA} feedbacks).</div>`
+          : `<div class="hint-box" style="margin:8px 0 0">Em "${this.h(motivo)}": ${fab ? fab.fb : 0} feedback(s) e ${fab ? fab.adv : 0} advertência(s). Pela regra de ${fab ? fab.porAdv : FB_A_CADA} feedbacks, ainda <strong>não</strong> há advertência pendente neste motivo.</div>`;
       }
       box.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
           <div class="card" style="min-width:120px"><div class="card-label">Feedbacks</div><div class="card-value">${e.feedbacks.length}</div></div>
           <div class="card" style="min-width:120px"><div class="card-label">Advertências</div><div class="card-value">${e.adv.length}</div></div>
           <div class="card" style="min-width:150px"><div class="card-label">Último feedback</div><div class="card-value" style="font-size:18px">${e.feedbacks[0] ? fmtDateBR(e.feedbacks[0].data) : "—"}</div></div></div>
-        ${linhas ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Motivo</th><th>Feedbacks</th><th>Advertências</th><th>Situação</th></tr></thead><tbody>${linhas}</tbody></table></div>` : `<div class="small-muted">Sem feedbacks nem advertências anteriores.</div>`}${rec}`;
+        ${linhas ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Motivo</th><th>Feedbacks</th><th>Advertências</th><th>Situação</th><th>Suspensão</th></tr></thead><tbody>${linhas}</tbody></table></div>` : `<div class="small-muted">Sem feedbacks nem advertências anteriores.</div>`}${rec}`;
     };
     $$("ad-mat").addEventListener("input", historico); $$("ad-mat").addEventListener("change", historico);
     $$("ad-motivo").addEventListener("change", historico);
@@ -573,6 +573,134 @@ const LancUI = {
       if(!r || !r.ok) return this.aviso("ed-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
       UI.closeModal(); toast("Advertência atualizada. Use Atualizar dados para refletir em Gestão.");
       this.advListar(true);
+    });
+  },
+
+  /* ================================================================== */
+  /* SUSPENSÃO (aba SUSPENSÕES) — 3 advertências no mesmo motivo         */
+  /* ================================================================== */
+  renderSuspensao(){ this.abrir("lsuspensao", this._suspensao); },
+  somaDiasISO(iso, n){ return this.somaDias(iso, n); },
+  _suspensao(pane){
+    const u = this.ctx.usuario || {};
+    const ta = `padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:inherit;text-transform:none;letter-spacing:0;font-weight:500;`;
+    pane.innerHTML = `<div class="panel">
+      ${this.cabecalho("Lançar Suspensão", "Registra a suspensão disciplinar na aba SUSPENSÕES, com o documento (foto digitalizada ou PDF). Ao escolher o colaborador e o motivo você vê as advertências que levaram à suspensão (3 advertências no mesmo motivo).")}
+      <div class="adm-form">
+        <label>Início da suspensão<input type="date" id="sp-data" value="${this.hojeISO()}"></label>
+        <label>Dias de suspensão<input type="number" id="sp-dias" min="1" max="30" step="1" value="1"></label>
+        <label>Último dia (automático)<input type="text" id="sp-fim" readonly placeholder="—"></label>
+      </div>
+      <div class="adm-form">
+        <label>Matrícula do colaborador<input type="text" id="sp-mat" inputmode="numeric" list="dl-sp" placeholder="Ex.: 10002871" autocomplete="off"></label>
+        <label>Nome (automático)<input type="text" id="sp-nome" readonly placeholder="—"></label>
+      </div>
+      ${this.datalistPessoas("dl-sp", false)}
+      <div class="adm-form">${this.motivoSelect("sp-motivo")}</div>
+      ${this.novoItem("MOTIVO_FEEDBACK", "sp-motivo", "novo motivo")}
+      <div id="sp-nc"></div>
+      <div id="sp-hist" style="margin:10px 0"></div>
+      <div class="adm-form">
+        <label>Matrícula do aplicador<input type="text" id="sp-mat-apl" inputmode="numeric" list="dl-sp" value="${this.h(u.matricula||"")}"></label>
+        <label>Nome do aplicador<input type="text" id="sp-nome-apl" value="${this.h(u.nome || this.nomeDe(u.matricula) || "")}"></label>
+      </div>
+      <div class="adm-form"><label style="grid-column:1/-1">Resumo da suspensão<textarea id="sp-resumo" rows="4" style="${ta}" placeholder="Descreva o motivo e as advertências anteriores"></textarea></label></div>
+      ${this.anexoHtml("sp", "Documento da suspensão (opcional)")}
+      <div id="sp-msg"></div>
+      <div class="adm-actions"><button type="button" class="btn btn-primary" id="sp-salvar">Salvar suspensão</button></div>
+      ${this.rodapeAtualizar()}
+    </div>
+    <div class="panel" id="sp-lancadas"></div>`;
+    const $$ = (id)=> document.getElementById(id);
+    const mostrarAnexo = this.ligarAnexo("sp");
+    this.ligarNovoItem(pane);
+    const fim = ()=>{ const d = $$("sp-data").value, n = Math.round(Number($$("sp-dias").value)||0); $$("sp-fim").value = d && n>0 ? this.br(this.somaDias(d, n-1)) : ""; };
+    $$("sp-data").addEventListener("change", fim); $$("sp-dias").addEventListener("input", fim); fim();
+    const contexto = ()=>{
+      const mat = this.soDigitos($$("sp-mat").value), box = $$("sp-hist"), ind = $$("sp-nc");
+      $$("sp-nome").value = this.nomeDe(mat); $$("sp-nome").placeholder = mat ? "matrícula não encontrada" : "—";
+      if(!mat || !(window.APP_STATE && APP_STATE.ready && window.FeedbackAdv)){ box.innerHTML = ""; ind.innerHTML = ""; return; }
+      ind.innerHTML = FeedbackAdv.htmlIndicacaoSusp(mat);
+      const e = FeedbackAdv.statsPorMatricula(mat), motivo = $$("sp-motivo").value;
+      const linhas = (e.motivos||[]).map(m=>`<tr${motivo && m.chave === FeedbackAdv.mk(motivo) ? ' style="background:#fff8e1"' : ""}><td>${this.h(m.motivo)}</td><td>${m.fb}</td><td>${m.adv}</td><td>${m.susp}</td><td>${m.suspPend ? `<strong style="color:#d64545">${m.suspPend} a emitir</strong>` : `<span class="small-muted">faltam ${m.faltamSusp} advert.</span>`}</td></tr>`).join("");
+      box.innerHTML = linhas ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Motivo</th><th>Feedbacks</th><th>Advertências</th><th>Suspensões</th><th>Situação</th></tr></thead><tbody>${linhas}</tbody></table></div>` : `<div class="small-muted">Sem feedbacks, advertências nem suspensões anteriores.</div>`;
+    };
+    $$("sp-mat").addEventListener("input", contexto); $$("sp-mat").addEventListener("change", contexto); $$("sp-motivo").addEventListener("change", contexto);
+    $$("sp-mat-apl").addEventListener("change", ()=>{ const n = this.nomeDe($$("sp-mat-apl").value); if(n) $$("sp-nome-apl").value = n; });
+    this.aplicarPrefill("sp-mat"); contexto();
+    $$("sp-salvar").addEventListener("click", async ()=>{
+      this.aviso("sp-msg", "", "");
+      const mat = this.soDigitos($$("sp-mat").value), dias = Math.round(Number($$("sp-dias").value)||0);
+      if(!mat) return this.aviso("sp-msg", "erro", "Informe a matrícula do colaborador.");
+      if(!this.nomeDe(mat)) return this.aviso("sp-msg", "erro", "Matrícula não encontrada no quadro (aba TURNOVER).");
+      if(!$$("sp-motivo").value) return this.aviso("sp-msg", "erro", "Escolha o motivo da suspensão.");
+      if(dias < 1 || dias > 30) return this.aviso("sp-msg", "erro", "Informe os dias de suspensão (1 a 30).");
+      if(!$$("sp-resumo").value.trim()) return this.aviso("sp-msg", "erro", "Escreva o resumo da suspensão.");
+      const a = this.anexos.sp;
+      const r = await this.enviar($$("sp-salvar"), { acao:"lanc_suspensao_salvar", data:$$("sp-data").value, dias, mat, motivo:$$("sp-motivo").value,
+        matAplicador:$$("sp-mat-apl").value, nomeAplicador:$$("sp-nome-apl").value, resumo:$$("sp-resumo").value,
+        anexo: a ? { nome:a.nome, mime:a.mime, base64:a.base64 } : null });
+      if(!r || !r.ok) return this.aviso("sp-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
+      this.aviso("sp-msg", "ok", `Suspensão de <strong>${this.h(r.nome)}</strong> salva${r.anexo ? " · documento anexado" : ""}. Use <strong>Atualizar dados</strong> para ela aparecer em Gestão.`);
+      toast("Suspensão salva.");
+      $$("sp-mat").value = ""; $$("sp-nome").value = ""; $$("sp-resumo").value = ""; $$("sp-motivo").value = "";
+      this.anexos.sp = null; mostrarAnexo(); contexto();
+      this.spListar(true);
+    });
+    this.spListar(true);
+  },
+  sp: { itens:null, erro:null, filtro:"" },
+  async spListar(buscar){
+    const box = document.getElementById("sp-lancadas"); if(!box) return;
+    const st = this.sp;
+    if(buscar || !st.itens){
+      box.innerHTML = `<h2 class="adm-h">Suspensões já lançadas</h2><p class="small-muted">Carregando...</p>`;
+      try{
+        const r = await Api.call({ acao:"lanc_suspensao_listar" });
+        if(r && r.ok){ st.itens = r.itens||[]; st.erro = null; } else st.erro = (r && r.erro) || "Não foi possível carregar a lista.";
+      }catch(e){ st.erro = e.message; }
+    }
+    this.spDesenhar();
+  },
+  spDesenhar(){
+    const box = document.getElementById("sp-lancadas"); if(!box) return;
+    const st = this.sp, f = (st.filtro||"").toLowerCase().trim();
+    if(st.erro){ box.innerHTML = `<h2 class="adm-h">Suspensões já lançadas</h2><div class="error-box">${this.h(st.erro)}</div><button class="btn btn-outline" id="sp-l-retry">Tentar novamente</button>`; document.getElementById("sp-l-retry").addEventListener("click", ()=> this.spListar(true)); return; }
+    const lista = (st.itens||[]).filter(i=> !f || (i.mat+" "+i.nome+" "+i.motivo).toLowerCase().includes(f));
+    box.innerHTML = `<div class="adm-head"><h2 class="adm-h">Suspensões já lançadas</h2>
+        <div class="adm-head-r"><input type="search" id="sp-l-busca" placeholder="Buscar matrícula, nome ou motivo" value="${this.h(st.filtro||"")}"><button class="btn btn-outline btn-sm" id="sp-l-reload">Atualizar lista</button></div></div>
+      <div class="table-wrap"><table class="adm-table"><thead><tr><th>Início</th><th>Fim</th><th>Dias</th><th>Matrícula</th><th>Nome</th><th>Motivo</th><th>Doc.</th><th></th></tr></thead><tbody>
+      ${lista.slice(0,100).map(i=>`<tr><td>${this.br(i.data)||"—"}</td><td>${this.br(i.fim)||"—"}</td><td>${i.dias||"—"}</td><td><strong>${this.h(i.mat)}</strong></td><td>${this.h(i.nome)}</td><td>${this.h(i.motivo)}</td>
+        <td>${/^https?:/.test(i.anexo) ? `<a href="${this.h(i.anexo)}" target="_blank" rel="noopener">abrir</a>` : "—"}</td>
+        <td><button class="btn btn-outline btn-sm" data-sp-ed="${i.linha}">Editar</button></td></tr>`).join("") || `<tr><td colspan="8" class="small-muted">Nenhuma suspensão encontrada.</td></tr>`}
+      </tbody></table></div>`;
+    document.getElementById("sp-l-busca").addEventListener("input", e=>{ st.filtro = e.target.value; const p = e.target.selectionStart; this.spDesenhar(); const n = document.getElementById("sp-l-busca"); n.focus(); try{ n.setSelectionRange(p,p); }catch(x){} });
+    document.getElementById("sp-l-reload").addEventListener("click", ()=> this.spListar(true));
+    box.querySelectorAll("[data-sp-ed]").forEach(b=> b.addEventListener("click", ()=> this.spEditar(Number(b.dataset.spEd))));
+  },
+  spEditar(linha){
+    const it = (this.sp.itens||[]).find(x=>x.linha===linha); if(!it) return;
+    UI.openModal(`<h3 style="margin-top:0;">Editar suspensão</h3>
+      <div class="adm-form">
+        <label>Início<input type="date" id="sx-data" value="${this.h(it.data)}"></label>
+        <label>Dias<input type="number" id="sx-dias" min="1" max="30" value="${it.dias||1}"></label>
+        <label>Matrícula<input type="text" id="sx-mat" inputmode="numeric" value="${this.h(it.mat)}"></label>
+      </div>
+      <div class="adm-form">${this.motivoSelect("sx-motivo", it.motivo)}</div>
+      <div class="adm-form"><label style="grid-column:1/-1">Resumo<textarea id="sx-resumo" rows="4" style="padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:inherit;text-transform:none;letter-spacing:0;font-weight:500;">${this.h(it.resumo)}</textarea></label></div>
+      <div class="small-muted" style="margin:6px 0">Documento atual: ${/^https?:/.test(it.anexo) ? `<a href="${this.h(it.anexo)}" target="_blank" rel="noopener">abrir</a> · <label><input type="checkbox" id="sx-rm-anexo"> remover</label>` : "nenhum"}</div>
+      ${this.anexoHtml("sx", "Trocar / anexar documento (opcional)")}
+      <div id="sx-msg"></div>
+      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="sx-salvar">Salvar alterações</button></div>`);
+    const $$ = (id)=> document.getElementById(id);
+    this.ligarAnexo("sx");
+    $$("sx-salvar").addEventListener("click", async ()=>{
+      const mat = this.soDigitos($$("sx-mat").value), a = this.anexos.sx, rm = $$("sx-rm-anexo");
+      if(!$$("sx-data").value || !mat || !$$("sx-motivo").value || !$$("sx-resumo").value.trim()) return this.aviso("sx-msg", "erro", "Preencha data, matrícula, motivo e resumo.");
+      const r = await this.enviar($$("sx-salvar"), { acao:"lanc_suspensao_editar", linha, matOriginal:it.mat, data:$$("sx-data").value, dias:Number($$("sx-dias").value)||0, mat,
+        motivo:$$("sx-motivo").value, resumo:$$("sx-resumo").value, removerAnexo: !!(rm && rm.checked), anexo: a ? { nome:a.nome, mime:a.mime, base64:a.base64 } : null });
+      if(!r || !r.ok) return this.aviso("sx-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
+      UI.closeModal(); toast("Suspensão atualizada. Use Atualizar dados para refletir em Gestão."); this.spListar(true);
     });
   },
 

@@ -23,6 +23,8 @@ const NC = {
     { key:"avaria",   label:"Erro Rua Avaria",           curto:"Avaria",        motivo:"NC Rua - Avaria" }
   ],
   tipo(k){ return this.TIPOS.find(t=>t.key===k); },
+  /** esse motivo (já normalizado por FeedbackAdv.mk) é de não conformidade? */
+  ehMotivo(chave){ return this.TIPOS.some(t=>FeedbackAdv.mk(t.motivo)===chave); },
 
   carregado(){ return !!(window.AuditOnline && AuditOnline.rows!==null && window.RetornoOnline && RetornoOnline.rows!==null); },
   /** carrega as duas abas em background e chama cb quando chegar */
@@ -156,6 +158,7 @@ const NC = {
       <ul class="nc-ind-l">${(x.ocorr||[]).map(e=>`<li>${fmtDateBR(e.data)} — ${e.origem==="RETORNO"?"retorno":"rua "+escapeHtml(e.rua||"?")}${e.produto?" — "+escapeHtml(e.produto):""}${e.desc?" ("+escapeHtml(e.desc)+")":""}</li>`).join("")}</ul>
       <button type="button" class="btn btn-primary btn-sm nc-btn" onclick="NC.aplicar('${kind}','${escapeHtml(x.codKey)}','${x.tipo}')">Usar motivo e ocorrências</button></div>`).join("");
   },
+  gerarSusp(codKey, chave){ const al = FeedbackAdv.alertas().suspender.find(x=>x.codKey===codKey && FeedbackAdv.mk(x.motivo)===chave); if(al) FeedbackAdv.gerarSuspensao(al); },
   botoesGerar(x, kind){
     const pane = kind==="adv" ? "ladvertencia" : "lfeedback";
     if(!Auth.can("lancamentos", pane)) return `<span class="small-muted">—</span>`;
@@ -232,7 +235,7 @@ const NC = {
   htmlResumoFeedbacks(){
     const head = `<div class="panel-header"><h3>⚠️ Não conformidades recorrentes</h3><span class="panel-note">${NC_POR_FB} NCs no mesmo motivo → 1 feedback · ${NC_FB_PARA_ADV} feedbacks no mesmo motivo → advertência</span></div>`;
     if(!this.carregado()){ this.garantir(()=>{ if(document.getElementById("fb-content")) FeedbackAdv.render(); }); return `<div class="panel">${head}<div class="hint-box">Carregando as não conformidades da planilha de auditoria…</div></div>`; }
-    const al = this.alertas();
+    const al = this.alertas(), su = FeedbackAdv.alertas().suspender;
     const evs = this.eventos();
     const hoje = new Date(), ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
     const mes = evs.filter(e=>dateOnly(e.data)>=ini).length;
@@ -244,6 +247,7 @@ const NC = {
       <div class="cards-grid nc-cards">
         <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Gerar feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">${NC_POR_FB} NCs no motivo</div></div>
         <div class="card ${al.advertencia.length?'neg':''}"><div class="card-label">Gerar advertência</div><div class="card-value ${al.advertencia.length?'neg':''}">${al.advertencia.length}</div><div class="small-muted">${NC_FB_PARA_ADV} feedbacks no motivo</div></div>
+        <div class="card ${su.length?'neg':''}"><div class="card-label">Solicitar suspensão</div><div class="card-value ${su.length?'neg':''}">${su.length}</div><div class="small-muted">${FB_ADV_PARA_SUSP} advertências no motivo</div></div>
         <div class="card"><div class="card-label">NCs no mês</div><div class="card-value">${fmtNum(mes)}</div></div>
         <div class="card"><div class="card-label">NCs no total</div><div class="card-value">${fmtNum(evs.length)}</div></div>
       </div>
@@ -255,6 +259,10 @@ const NC = {
           <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">Feedb.</th><th class="num">Advert.</th><th class="num">A emitir</th><th></th></tr></thead>
           <tbody>${al.advertencia.length ? al.advertencia.map(linhaAd).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${NC_FB_PARA_ADV} feedbacks sem advertência no mesmo motivo.</td></tr>`}</tbody></table></div></div>
       </div>
+      <div class="nc-sub" style="margin-top:16px">⛔ Pedem suspensão <span class="small-muted">(${su.length}) · ${FB_ADV_PARA_SUSP} advertências no mesmo motivo</span></div>
+      <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">Advert.</th><th class="num">Suspensões</th><th class="num">A emitir</th><th></th></tr></thead>
+        <tbody>${su.length ? su.map(x=>`<tr><td><strong>${escapeHtml(x.nome)}</strong> <span class="small-muted">${escapeHtml(x.cod||"")}</span></td><td>${escapeHtml(x.motivo)}</td><td class="num">${x.adv}</td><td class="num">${x.susp}</td><td class="num"><strong class="cell-neg">${x.pend}</strong></td>
+          <td class="nc-act">${Auth.can("lancamentos","lsuspensao") ? `<button type="button" class="btn btn-danger btn-sm nc-btn" onclick="NC.gerarSusp('${escapeHtml(x.codKey)}','${escapeHtml(FeedbackAdv.mk(x.motivo))}')">Gerar suspensão</button>` : '<span class="small-muted">—</span>'}</td></tr>`).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${FB_ADV_PARA_SUSP} advertências sem suspensão no mesmo motivo.</td></tr>`}</tbody></table></div>
       <div class="small-muted" style="margin-top:8px">Os motivos usados são: ${this.TIPOS.map(t=>`<em>${escapeHtml(t.motivo)}</em>`).join(", ")}. O botão já abre o lançamento com colaborador, motivo e resumo preenchidos; o contador reinicia a cada feedback lançado nesse motivo.</div>
     </div>`;
   }
