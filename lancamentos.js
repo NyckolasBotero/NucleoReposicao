@@ -794,19 +794,92 @@ const LancUI = {
   /** Num.Lançamento da 9712 que o site já tem em memória (carregados com os dados): conferência instantânea, sem rede. */
   nums9712(){
     const pr = window.APP_STATE && window.APP_STATE.processed;
-    if(!pr) return { set:new Set(), data:new Map(), ok:false };
+    if(!pr) return { set:new Set(), data:new Map(), rows:new Map(), transacao:new Map(), ok:false };
     if(this._n9712 && this._n9712.src === pr.p9712) return this._n9712;
-    const set = new Set(), data = new Map();
-    (pr.p9712||[]).forEach(r=>{ const n = this.soDigitos(r.numLanc); if(n){ set.add(n); if(r.dt && !data.has(n)) data.set(n, r.dt); } });
-    return (this._n9712 = { src:pr.p9712, set, data, ok:!!pr.p9712dispo && set.size>0 });
+    const set = new Set(), data = new Map(), rows = new Map(), transacao = new Map();
+    (pr.p9712||[]).forEach(r=>{
+      const n = this.soDigitos(r.numLanc);
+      if(n){ set.add(n); if(r.dt && !data.has(n)) data.set(n, r.dt); if(!rows.has(n)) rows.set(n, []); rows.get(n).push(r); }
+      const t = this.soDigitos(r.numReg);
+      if(t && n){ if(!transacao.has(t)) transacao.set(t, new Set()); transacao.get(t).add(n); }
+    });
+    return (this._n9712 = { src:pr.p9712, set, data, rows, transacao, ok:!!pr.p9712dispo && set.size>0 });
+  },
+  /** número digitado → Num.Lançamento efetivo (aceita também o Num. Transação, quando ele aponta para um único lançamento) */
+  resolver9712(num){
+    const d = this.nums9712();
+    if(d.set.has(num)) return { num, via:"lancamento" };
+    const t = d.transacao.get(num);
+    if(t && t.size === 1) return { num:Array.from(t)[0], via:"transacao", original:num };
+    return { num, via:"lancamento" };
+  },
+  /** resumo de um lançamento da 9712: quem lançou, data, motivo (Cód.Motivo) e itens */
+  info9712(num){
+    const rows = this.nums9712().rows.get(num); if(!rows || !rows.length) return null;
+    const p = rows[0], cods = Array.from(new Set(rows.map(r=>r.codMotivo).filter(Boolean)));
+    const rec = rows.some(r=>r.codMotivo === "1886");
+    return { num, rows, func:p.funcLanc, nomeFunc:p.nome, dt:(rows.find(r=>r.dt)||{}).dt || null, motivo:p.motivo || "", codMotivo: rec ? "1886" : (cods[0] || ""), cods, rec,
+      total: rows.reduce((n,r)=>n+(r.valor||0),0), qtd: rows.reduce((n,r)=>n+(r.qtd||0),0) };
+  },
+  /** quem é o Func.Lançamento: está no quadro atual, já esteve (histórico) ou não consta */
+  quemE(func){
+    const mat = this.soDigitos(func); if(!mat) return { cls:"off", txt:"Func.Lançamento não informado na 9712" };
+    const p = (this.ctx.pessoas||[]).find(x=>this.soDigitos(x.mat) === mat);
+    if(p) return p.ativo ? { cls:"acc", txt:`👤 ${this.h(p.nome)} (${mat}) — no quadro atual` } : { cls:"rep", txt:`👤 ${this.h(p.nome)} (${mat}) — já esteve no quadro (não está mais ativo)` };
+    const reg = window.APP_STATE && window.APP_STATE.nameRegistry, k = reg && typeof normStr==="function" ? normStr(mat) : null;
+    if(reg && k && reg.get(k)) return { cls:"rep", txt:`👤 ${this.h(reg.get(k))} (${mat}) — consta no histórico da chamada, fora do quadro atual` };
+    return { cls:"err", txt:`👤 Func.Lançamento ${mat} — não consta no quadro nem no histórico` };
+  },
+  /** tipo de lançamento esperado pelo Cód.Motivo da 9712 (1886 = Recuperado Repositor) */
+  tipoLista(chaveNorm, padrao){
+    const l = (this.ctx.listas.TIPO_REP_AVARIA||[]).find(t=>normStr(t) === chaveNorm);
+    return l || padrao;
+  },
+  tipoPorMotivo(tipoAtual, inf){
+    if(!inf || !inf.codMotivo) return tipoAtual;
+    const recup = this.tipoLista("RECUPERADO REPOSITOR", "Recuperado Repositor"), rel = this.tipoLista("RELACAO REPOSITOR", "Relação Repositor"), n = normStr(tipoAtual||"");
+    if(inf.rec) return recup;
+    if(n === "RECUPERADO REPOSITOR") return rel;
+    return tipoAtual;
+  },
+  tabelaItens(rows){
+    const f = (v)=> (Number(v)||0).toLocaleString("pt-BR",{ minimumFractionDigits:2, maximumFractionDigits:2 });
+    return `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Cód.Produto</th><th>Descrição</th><th style="text-align:right">Qtd</th><th style="text-align:right">Valor</th><th>Cód.Motivo</th><th>Motivo</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td>${this.h(r.codProd||"")}</td><td>${this.h(r.descr||"")}</td><td style="text-align:right">${this.h(r.qtd||0)}</td><td style="text-align:right">${f(r.valor)}</td><td>${this.h(r.codMotivo||"")}</td><td>${this.h(r.motivo||"")}</td></tr>`).join("")}
+      </tbody></table></div>`;
   },
   dataBR(d){ return d ? (d instanceof Date ? fmtDateBR(d) : this.br(d)) : ""; },
   agoraBR(){ const d = new Date(), p = (n)=>String(n).padStart(2,"0"); return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; },
 
+  resumoInfo(inf){
+    const q = this.quemE(inf.func);
+    return `<div style="margin:2px 0 8px;display:flex;flex-wrap:wrap;gap:4px"><span class="adm-tag ${q.cls}">${q.txt}</span><span class="adm-tag off">📅 ${this.dataBR(inf.dt) || "—"}</span><span class="adm-tag ${inf.rec?"acc":"off"}">Motivo: ${this.h(inf.motivo||"—")}${inf.codMotivo?" ("+this.h(inf.codMotivo)+")":""}</span><span class="adm-tag off">${inf.rows.length} item(ns) · valor ${(inf.total||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}</span></div>`;
+  },
+  avItensModal(num){
+    const inf = this.info9712(num);
+    if(!inf) return UI.openModal(`<h3 style="margin-top:0">Itens do lançamento ${this.h(num)}</h3><p class="small-muted">Este número não está na 9712 carregada no site. Use <strong>Atualizar dados</strong> ou confira a planilha.</p><div class="adm-actions"><button class="btn btn-primary" onclick="UI.closeModal()">Fechar</button></div>`);
+    UI.openModal(`<h3 style="margin-top:0">Itens do lançamento ${this.h(num)}</h3>${this.resumoInfo(inf)}<div style="max-height:380px;overflow:auto">${this.tabelaItens(inf.rows)}</div><div class="adm-actions"><button class="btn btn-primary" onclick="UI.closeModal()">Fechar</button></div>`);
+  },
+  /** busca por Cód.Produto: quais Num.Lançamento (no intervalo de Data) contêm o produto */
+  produtoBuscar(cod, ini, fim){
+    const pr = window.APP_STATE && window.APP_STATE.processed, alvo = String(cod||"").trim().replace(/^0+/, "");
+    const di = ini ? dateOnly(this.isoParaData(ini)) : null, df = fim ? dateOnly(this.isoParaData(fim)) : null;
+    const mapa = new Map();
+    ((pr && pr.p9712)||[]).forEach(r=>{
+      if(!r.codProd || String(r.codProd).trim().replace(/^0+/,"") !== alvo) return;
+      if((di || df) && !r.dt) return;
+      if(di && dateOnly(r.dt) < di) return; if(df && dateOnly(r.dt) > df) return;
+      const n = this.soDigitos(r.numLanc); if(!n) return;
+      if(!mapa.has(n)) mapa.set(n, { num:n, dt:r.dt, qtd:0, valor:0, linhas:0 });
+      const e = mapa.get(n); e.qtd += r.qtd||0; e.valor += r.valor||0; e.linhas++;
+    });
+    return Array.from(mapa.values()).sort((a,b)=>(b.dt||0)-(a.dt||0));
+  },
+
   _avaria(pane){
     const L = this;
     // estado da tela: sobrevive a trocar de aba para não perder a fila
-    const av = this.av = this.av || { fila:[], rodando:false, itens:null, carregando:false, erroLista:"", filtro:"", tipoFiltro:"", limite:100, srv:new Map() };
+    const av = this.av = this.av || { abertos:new Set(), fila:[], rodando:false, itens:null, carregando:false, erroLista:"", filtro:"", tipoFiltro:"", limite:100, srv:new Map() };
     const proc = window.APP_STATE && window.APP_STATE.processed;
     const jaLocal = (num)=>{
       const it = (av.itens||[]).find(x=>x.num === num); if(it) return it.tipo || "—";
@@ -824,7 +897,15 @@ const LancUI = {
       <div id="av-ind" style="min-height:34px;margin-top:10px"></div>
       <div id="av-conf" style="display:none;margin:4px 0;min-height:34px"><label class="adm-chk"><input type="checkbox" id="av-conf-ck"> Confirmo lançar mesmo sem constar na 9712</label></div>
       <div id="av-msg"></div>
-      <div class="adm-actions"><button type="button" class="btn btn-outline" id="av-ver">Conferir na planilha</button><button type="button" class="btn btn-primary" id="av-salvar">Lançar (Enter)</button></div>
+      <div class="adm-actions"><button type="button" class="btn btn-outline" id="av-itens">Ver itens</button><button type="button" class="btn btn-outline" id="av-ver">Conferir na planilha</button><button type="button" class="btn btn-primary" id="av-salvar">Lançar (Enter)</button></div>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <h3 class="adm-h2" style="margin:0 0 4px">Buscar por Cód.Produto</h3>
+      <p class="small-muted" style="margin:0 0 8px">Veja em quais Num.Lançamento da 9712 o produto aparece, dentro do intervalo de Data.</p>
+      <div class="adm-form"><label>Cód.Produto<input type="text" id="avp-cod" inputmode="numeric" autocomplete="off" placeholder="Ex.: 69"></label>
+        <label>Data de<input type="date" id="avp-ini" value="${this.somaDias(this.hojeISO(), -30)}"></label><label>Data até<input type="date" id="avp-fim" value="${this.hojeISO()}"></label></div>
+      <div class="adm-actions" style="margin-top:8px"><button type="button" class="btn btn-primary" id="avp-go">Buscar</button></div>
+      <div id="avp-res" style="margin-top:10px"></div>
     </div>
     <div class="panel" style="margin-top:14px">
       <div class="adm-head"><h3 class="adm-h2" style="margin:0">Lançamentos <span class="small-muted" id="av-cont"></span></h3>
@@ -835,6 +916,21 @@ const LancUI = {
     const $$ = (id)=> document.getElementById(id);
     const vivo = (id)=> document.getElementById(id);   // a tela pode ter sido trocada enquanto a fila roda
     if(av.tipo) $$("av-tipo").value = av.tipo;
+
+    /* ---------------- busca por produto ---------------- */
+    const buscarProd = ()=>{
+      const cod = $$("avp-cod").value.trim(), box = $$("avp-res");
+      if(!cod){ box.innerHTML = `<span class="small-muted">Digite o código do produto.</span>`; return; }
+      const r = this.produtoBuscar(cod, $$("avp-ini").value, $$("avp-fim").value);
+      const f = (v)=> (Number(v)||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+      box.innerHTML = r.length ? `<div class="small-muted" style="margin-bottom:4px">${r.length} lançamento(s) com o produto ${this.h(cod)}. Clique na linha para ver os itens.</div><div class="table-wrap"><table class="adm-table"><thead><tr><th>Num.Lançamento</th><th>Data</th><th style="text-align:right">Qtd do produto</th><th style="text-align:right">Valor</th><th>Func.Lançamento</th><th>Tipo lançado</th></tr></thead><tbody>
+        ${r.map(x=>{ const inf = this.info9712(x.num), it = (av.itens||[]).find(i=>i.num === x.num);
+          return `<tr data-avp="${this.h(x.num)}" style="cursor:pointer"><td><strong>${this.h(x.num)}</strong></td><td>${this.dataBR(x.dt)}</td><td style="text-align:right">${this.h(x.qtd)}</td><td style="text-align:right">${f(x.valor)}</td><td>${inf ? this.h(inf.nomeFunc||"")+' <span class="small-muted">'+this.h(inf.func||"")+'</span>' : "—"}</td><td>${it ? this.h(it.tipo||"—") : '<span class="small-muted">não lançado</span>'}</td></tr>`; }).join("")}</tbody></table></div>`
+        : `<span class="small-muted">Nenhum lançamento da 9712 com esse produto no intervalo.</span>`;
+      box.querySelectorAll("[data-avp]").forEach(tr=> tr.addEventListener("click", ()=> this.avItensModal(tr.dataset.avp)));
+    };
+    $$("avp-go").addEventListener("click", buscarProd);
+    $$("avp-cod").addEventListener("keydown", (e)=>{ if(e.key === "Enter"){ e.preventDefault(); buscarProd(); } });
 
     /* ---------------- lista ---------------- */
     const statusTxt = { fila:"⏳ na fila", enviando:"⏳ gravando…", ok:"✔ gravado", erro:"⛔ erro" };
@@ -847,19 +943,54 @@ const LancUI = {
       const sel = vivo("av-tf"); if(sel) sel.innerHTML = `<option value="">Todos os tipos</option>` + tipos.map(t=>`<option ${t===tf?"selected":""}>${this.h(t)}</option>`).join("");
       const cont = vivo("av-cont"); if(cont) cont.textContent = av.itens ? `· ${srv.length} de ${av.itens.length}` : "";
       const d9 = this.nums9712();
-      const linhaPend = (x)=>`<tr class="${x.status==="erro"?"av-erro":""}"><td><strong>${this.h(x.num)}</strong></td><td>${this.h(x.tipo)}</td><td>${statusTxt[x.status]||x.status}${x.erro?` <span class="small-muted">${this.h(x.erro)}</span>`:""}</td><td></td><td></td>
+      const linhaPend = (x)=>`<tr class="${x.status==="erro"?"av-erro":""}"><td></td><td><strong>${this.h(x.num)}</strong></td><td>${this.h(x.tipo)}</td><td>${statusTxt[x.status]||x.status}${x.erro?` <span class="small-muted">${this.h(x.erro)}</span>`:""}</td><td></td><td></td><td></td>
         <td style="text-align:right">${x.status==="erro"?`<button type="button" class="btn btn-outline btn-sm" data-av-rm="${x.id}">Descartar</button>`:""}</td></tr>`;
-      const linha = (x)=>{ const dt = x.data9712 || this.dataBR(d9.data.get(x.num)) ; const na = x.na9712===true || d9.set.has(x.num);
-        return `<tr><td><strong>${this.h(x.num)}</strong></td><td>${this.h(x.tipo||"—")}</td><td>${this.h(x.lancadoEm||"—")}</td><td>${this.h(x.data9712 ? this.br(x.data9712) : this.dataBR(d9.data.get(x.num)) || "—")}</td>
+      const linha = (x)=>{
+        const inf = this.info9712(x.num), na = x.na9712===true || d9.set.has(x.num), aberto = av.abertos.has(x.num);
+        const dt = x.data9712 ? this.br(x.data9712) : (inf && inf.dt ? this.dataBR(inf.dt) : "—");
+        const quem = inf ? `${this.h(inf.nomeFunc || "")} <span class="small-muted">${this.h(inf.func||"")}</span>` : "—";
+        return `<tr class="av-lin" data-av-ex="${this.h(x.num)}" style="cursor:pointer"><td style="width:26px;color:#7a8798">${inf ? (aberto ? "▾" : "▸") : ""}</td><td><strong>${this.h(x.num)}</strong></td><td>${this.h(x.tipo||"—")}</td><td>${this.h(x.lancadoEm||"—")}</td><td>${dt}</td><td>${quem}</td>
         <td>${na ? '<span class="adm-tag acc">✔</span>' : (x.na9712===false ? '<span class="adm-tag rep">⚠</span>' : "—")}</td>
-        <td style="text-align:right"><button type="button" class="btn btn-outline btn-sm" data-av-ed="${this.h(x.num)}">✏️ Editar</button></td></tr>`; };
+        <td style="text-align:right;white-space:nowrap"><button type="button" class="btn btn-outline btn-sm" data-av-ed="${this.h(x.num)}">✏️ Editar</button></td></tr>`
+        + (aberto && inf ? `<tr><td></td><td colspan="7" style="background:#f7f9fc">${this.resumoInfo(inf)}${this.tabelaItens(inf.rows)}</td></tr>` : "");
+      };
       let corpo = pend.map(linhaPend).join("") + srv.slice(0, av.limite).map(linha).join("");
-      if(!corpo) corpo = `<tr><td colspan="6" class="small-muted">${av.itens ? "Nenhum lançamento encontrado." : (av.erroLista ? this.h(av.erroLista) : "Carregando a lista…")}</td></tr>`;
-      box.innerHTML = `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Num.Lançamento</th><th>Tipo</th><th>Lançado em</th><th>Data na 9712</th><th>9712</th><th></th></tr></thead><tbody>${corpo}</tbody></table></div>
+      if(!corpo) corpo = `<tr><td colspan="8" class="small-muted">${av.itens ? "Nenhum lançamento encontrado." : (av.erroLista ? this.h(av.erroLista) : "Carregando a lista…")}</td></tr>`;
+      const div = divergentes();
+      box.innerHTML = (div.length ? `<div class="warn-box" style="margin-bottom:10px">⚠️ <strong>${div.length}</strong> lançamento(s) com tipo diferente do motivo da 9712 (Cód.Motivo 1886 = Recuperado Repositor). <button type="button" class="btn btn-outline btn-sm" id="av-div" style="margin-left:8px">Revisar e corrigir</button></div>` : "")
+        + `<div class="table-wrap"><table class="adm-table"><thead><tr><th></th><th>Num.Lançamento</th><th>Tipo</th><th>Lançado em</th><th>Data na 9712</th><th>Func.Lançamento</th><th>9712</th><th></th></tr></thead><tbody>${corpo}</tbody></table></div>
         ${srv.length > av.limite ? `<div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" id="av-mais">Mostrar mais (${srv.length - av.limite})</button></div>` : ""}`;
+      box.querySelectorAll("[data-av-ex]").forEach(tr=> tr.addEventListener("click", (e)=>{ if(e.target.closest("button")) return; const n = tr.dataset.avEx; if(!this.info9712(n)) return toast("Este número não está na 9712 carregada — sem itens para mostrar.", "error"); av.abertos.has(n) ? av.abertos.delete(n) : av.abertos.add(n); lista(); }));
       box.querySelectorAll("[data-av-ed]").forEach(b=> b.addEventListener("click", ()=> editar(b.dataset.avEd)));
       box.querySelectorAll("[data-av-rm]").forEach(b=> b.addEventListener("click", ()=>{ av.fila = av.fila.filter(x=>String(x.id) !== b.dataset.avRm); lista(); }));
       const mais = vivo("av-mais"); if(mais) mais.addEventListener("click", ()=>{ av.limite += 200; lista(); });
+      const dv = vivo("av-div"); if(dv) dv.addEventListener("click", ()=> corrigirTipos());
+    };
+    /** lançamentos "Recuperado Repositor" sem motivo 1886 → Relação Repositor, e "Relação Repositor" com motivo 1886 → Recuperado Repositor */
+    const divergentes = ()=>{
+      const out = [];
+      (av.itens||[]).forEach(x=>{
+        const n = normStr(x.tipo||""); if(n !== "RECUPERADO REPOSITOR" && n !== "RELACAO REPOSITOR") return;
+        const inf = this.info9712(x.num); if(!inf) return;
+        const certo = inf.rec ? this.tipoLista("RECUPERADO REPOSITOR", "Recuperado Repositor") : this.tipoLista("RELACAO REPOSITOR", "Relação Repositor");
+        if(normStr(certo) !== n) out.push({ num:x.num, de:x.tipo, para:certo, cod:inf.codMotivo || "—" });
+      });
+      return out;
+    };
+    const corrigirTipos = ()=>{
+      const div = divergentes(); if(!div.length) return;
+      UI.openModal(`<h3 style="margin-top:0">Corrigir tipos pelo Cód.Motivo da 9712</h3>
+        <p class="small-muted" style="margin-top:0">Motivo 1886 vira <strong>Recuperado Repositor</strong>; os demais que estavam como Recuperado Repositor viram <strong>Relação Repositor</strong>.</p>
+        <div class="table-wrap" style="max-height:320px;overflow:auto"><table class="adm-table"><thead><tr><th>Num.Lançamento</th><th>Cód.Motivo</th><th>Tipo atual</th><th>Novo tipo</th></tr></thead><tbody>
+        ${div.map(d=>`<tr><td>${this.h(d.num)}</td><td>${this.h(d.cod)}</td><td>${this.h(d.de)}</td><td><strong>${this.h(d.para)}</strong></td></tr>`).join("")}</tbody></table></div>
+        <div id="avc-msg"></div>
+        <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="avc-ok">Corrigir ${div.length} lançamento(s)</button></div>`);
+      document.getElementById("avc-ok").addEventListener("click", async ()=>{
+        const r = await this.enviar(document.getElementById("avc-ok"), { acao:"lanc_avaria_corrigir", itens: div.map(d=>({ num:d.num, tipo:d.para })) });
+        if(!r || !r.ok) return this.aviso("avc-msg", "erro", this.h((r && r.erro) || "Não foi possível corrigir."));
+        div.forEach(d=>{ const it = (av.itens||[]).find(x=>x.num === d.num); if(it) it.tipo = d.para; });
+        UI.closeModal(); toast(`${r.corrigidos} lançamento(s) corrigido(s).`); lista();
+      });
     };
     const carregarLista = async (forcar)=>{
       if(av.carregando || (av.itens && !forcar)) return;
@@ -873,8 +1004,9 @@ const LancUI = {
     /* ---------------- conferência instantânea ---------------- */
     const indicador = ()=>{
       const ind = vivo("av-ind"), cf = vivo("av-conf"); if(!ind) return null;
-      const num = this.soDigitos($$("av-num").value);
-      if(!num){ ind.innerHTML = ""; cf.style.display = "none"; return null; }
+      const digitado = this.soDigitos($$("av-num").value);
+      if(!digitado){ ind.innerHTML = ""; cf.style.display = "none"; return null; }
+      const rs = this.resolver9712(digitado), num = rs.num;
       const b = (cls, txt)=> `<span class="adm-tag ${cls}" style="margin:2px 6px 2px 0">${txt}</span>`;
       const ja = jaLocal(num), d9 = this.nums9712(), srv = av.srv.get(num);
       const na = d9.set.has(num) ? true : (srv !== undefined ? srv : null);   // true/false/null (não sabe)
@@ -882,10 +1014,23 @@ const LancUI = {
       if(na === true) html += b("acc", "✔ Existe na 9712");
       else if(na === false) html += b("rep", "⚠ Não encontrado na 9712 (coluna K)");
       else html += b("off", d9.ok ? "Não está na lista carregada — tecle Enter para conferir na planilha" : "Conferindo na planilha…");
+      const inf = this.info9712(num);
+      if(rs.via === "transacao") html += b("off", `Num. Transação ${this.h(digitado)} → Num.Lançamento ${this.h(num)}`);
+      if(inf){
+        const q = this.quemE(inf.func);
+        html += `<br>` + b(q.cls, q.txt);
+        html += b("off", `📅 Data na 9712: ${this.dataBR(inf.dt) || "—"}`);
+        html += b(inf.rec ? "acc" : "off", `Motivo: ${this.h(inf.motivo || "—")}${inf.codMotivo ? " (Cód. "+this.h(inf.codMotivo)+")" : ""} · ${inf.rows.length} item(ns)`);
+        const atual = $$("av-tipo").value, novo = this.tipoPorMotivo(atual, inf);
+        if(novo && novo !== atual && Array.from($$("av-tipo").options).some(o=>o.value === novo)){
+          $$("av-tipo").value = novo; av.tipo = novo;
+          html += `<br>` + b("acc", `Cód.Motivo ${inf.rec ? "1886" : this.h(inf.codMotivo)} → tipo definido como <strong>${this.h(novo)}</strong>`);
+        } else if(inf.rec && atual === novo) html += b("acc", "Tipo: " + this.h(novo) + " (motivo 1886)");
+      }
       ind.innerHTML = html;
       cf.style.display = (na === false && ja === null) ? "block" : "none";
       if(cf.style.display === "none") $$("av-conf-ck").checked = false;
-      return { ja, na };
+      return { ja, na, num, inf };
     };
     /** pergunta ao servidor só quando a lista local não conhece o número */
     const conferirServidor = async (num)=>{
@@ -915,9 +1060,11 @@ const LancUI = {
       } finally { av.rodando = false; }
     };
     const lancar = async ()=>{
-      const num = this.soDigitos($$("av-num").value), tipo = $$("av-tipo").value;
+      const digitado = this.soDigitos($$("av-num").value);
+      let tipo = $$("av-tipo").value;
       this.aviso("av-msg", "", "");
-      if(!num) return this.aviso("av-msg", "erro", "Informe o número do lançamento.");
+      if(!digitado) return this.aviso("av-msg", "erro", "Informe o número do lançamento.");
+      const num = this.resolver9712(digitado).num;
       if(!tipo) return this.aviso("av-msg", "erro", "Escolha o tipo do lançamento.");
       const ind = indicador();
       if(ind.ja !== null) return this.aviso("av-msg", "erro", `O lançamento ${this.h(num)} já foi lançado${ind.ja && ind.ja!=="—" ? " ("+this.h(ind.ja)+")" : ""}.`);
@@ -926,6 +1073,7 @@ const LancUI = {
         $$("av-conf").style.display = "block";
         return this.aviso("av-msg", "aviso", `O número ${this.h(num)} não foi encontrado na 9712 (coluna K). Marque a confirmação e lance de novo.`);
       }
+      tipo = this.tipoPorMotivo(tipo, this.info9712(num)) || tipo;        // Cód.Motivo 1886 = Recuperado Repositor
       av.tipo = tipo;
       av.fila.unshift({ id:Date.now()+"_"+num, num, tipo, status:"fila", confirma: ind.na === false, na9712Cliente: ind.na === true });
       // libera o campo na hora para o próximo código
@@ -934,7 +1082,8 @@ const LancUI = {
     };
     $$("av-salvar").addEventListener("click", lancar);
     $$("av-num").addEventListener("keydown", (e)=>{ if(e.key === "Enter"){ e.preventDefault(); lancar(); } });
-    $$("av-ver").addEventListener("click", async ()=>{ const n = this.soDigitos($$("av-num").value); if(!n) return; av.srv.delete(n); await conferirServidor(n); indicador(); });
+    $$("av-ver").addEventListener("click", async ()=>{ const n = this.resolver9712(this.soDigitos($$("av-num").value)).num; if(!n) return; av.srv.delete(n); await conferirServidor(n); indicador(); });
+    $$("av-itens").addEventListener("click", ()=>{ const n = this.resolver9712(this.soDigitos($$("av-num").value)).num; if(!n) return this.aviso("av-msg","erro","Digite o número para ver os itens."); this.avItensModal(n); });
     $$("av-tipo").addEventListener("change", ()=>{ av.tipo = $$("av-tipo").value; });
 
     /* ---------------- edição ---------------- */
@@ -1043,7 +1192,7 @@ const LancUI = {
         : `<div class="hint-box" style="margin:0">Nenhuma chamada lançada para <strong>${this.br(c.data)}</strong>. Marque o status de cada colaborador.</div>`;
       const stat = this.ctx.listas.STATUS_CHAMADA;
       $$("ch-tab").innerHTML = c.itens.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Matrícula</th><th>Colaborador</th><th>Status (toque para marcar)</th></tr></thead><tbody>
-        ${c.itens.map((it,i)=>`<tr><td>${this.h(it.mat)}</td><td>${this.h(it.nome)}${it.sugerido ? `<div class="small-muted" style="font-size:11px">🏖️ férias agendadas</div>` : ""}</td>
+        ${c.itens.map((it,i)=>`<tr><td>${this.h(it.mat)}</td><td>${this.h(it.nome)}${it.sugerido ? `<div class="small-muted" style="font-size:11px">${it.status==="SUSPENSÃO" ? "⛔ suspensão lançada (Lançar Suspensão)" : "🏖️ férias agendadas"}</div>` : ""}</td>
           <td style="min-width:260px">${stat.map(st=> chip(st, it.status === st, `data-i="${i}" data-st="${this.h(st)}" class="ch-chip"`)).join("")}</td></tr>`).join("")}</tbody></table></div>`
         : `<div class="warn-box">Nenhum colaborador ativo na aba TURNOVER.</div>`;
       $$("ch-tab").querySelectorAll(".ch-chip").forEach(b=> b.addEventListener("click", ()=>{

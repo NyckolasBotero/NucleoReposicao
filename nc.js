@@ -5,13 +5,13 @@
      · Auditoria_Ruas    (Possui_NC = TRUE)  → 1 erro de rua para CADA critério TRUE da linha:
                             Erro_Produto · Prox_Vencimento · Sem_Saldo · Avaria
    Regras de alerta (por colaborador e por motivo):
-     · NC_POR_FB (2) NCs do mesmo motivo desde o último feedback desse motivo → gerar FEEDBACK (2 NC = 1 feedback)
-     · NC_FB_PARA_ADV (2) feedbacks do mesmo motivo → gerar ADVERTÊNCIA (2 NC + 2 NC = 2 feedbacks = 1 advertência)
+     · NC_POR_FB (4) NCs do mesmo motivo desde o último feedback desse motivo → gerar FEEDBACK (4 NC = 1 feedback)
+     · NC_FB_PARA_ADV (3) feedbacks do mesmo motivo → gerar ADVERTÊNCIA (3 feedbacks = 1 advertência)
      · cada alerta carrega as ocorrências (NCs) que o motivaram, mostradas em Lançar Feedback / Lançar Advertência
    Depende de app.js (AuditOnline, helpers) e feedbacks.js (RetornoOnline, FeedbackAdv).
    ========================================================================= */
-const NC_POR_FB = 2;         // NCs do mesmo motivo (desde o último feedback desse motivo) que geram 1 alerta de feedback
-const NC_FB_PARA_ADV = 2;    // feedbacks do mesmo motivo que geram alerta de advertência
+const NC_POR_FB = 4;         // NCs do mesmo motivo (desde o último feedback desse motivo) que geram 1 alerta de feedback
+const NC_FB_PARA_ADV = 3;    // feedbacks do mesmo motivo que geram alerta de advertência
 
 const NC = {
   /** motivo = texto usado no lançamento do feedback/advertência (e para casar com os já lançados) */
