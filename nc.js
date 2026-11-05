@@ -5,11 +5,12 @@
      · Auditoria_Ruas    (Possui_NC = TRUE)  → 1 erro de rua para CADA critério TRUE da linha:
                             Erro_Produto · Prox_Vencimento · Sem_Saldo · Avaria
    Regras de alerta (por colaborador e por motivo):
-     · mais de NC_LIMITE_FB (3) NCs do mesmo motivo desde o último feedback desse motivo → gerar FEEDBACK
-     · NC_FB_PARA_ADV (2) feedbacks do mesmo motivo → gerar ADVERTÊNCIA (1 a cada 2 feedbacks)
+     · NC_POR_FB (2) NCs do mesmo motivo desde o último feedback desse motivo → gerar FEEDBACK (2 NC = 1 feedback)
+     · NC_FB_PARA_ADV (2) feedbacks do mesmo motivo → gerar ADVERTÊNCIA (2 NC + 2 NC = 2 feedbacks = 1 advertência)
+     · cada alerta carrega as ocorrências (NCs) que o motivaram, mostradas em Lançar Feedback / Lançar Advertência
    Depende de app.js (AuditOnline, helpers) e feedbacks.js (RetornoOnline, FeedbackAdv).
    ========================================================================= */
-const NC_LIMITE_FB = 3;      // alerta de feedback quando as NCs do motivo ULTRAPASSAM este número
+const NC_POR_FB = 2;         // NCs do mesmo motivo (desde o último feedback desse motivo) que geram 1 alerta de feedback
 const NC_FB_PARA_ADV = 2;    // feedbacks do mesmo motivo que geram alerta de advertência
 
 const NC = {
@@ -99,27 +100,61 @@ const NC = {
       const a = ads.filter(r=>r.codKey===codKey && FeedbackAdv.mk(r.motivo)===mk);
       const base = { codKey, cod:lista[0].cod, nome:lista[0].nome, tipo:tipoKey, label:t.label, motivo:t.motivo, fb:f.length, adv:a.length, totalNc:lista.length };
       const advPend = Math.floor(f.length / NC_FB_PARA_ADV) - a.length;
-      if(advPend > 0){ res.advertencia.push({ ...base, pend:advPend }); return; }
+      if(advPend > 0){
+        // ocorrências por trás da advertência: NCs até o último feedback e depois da última advertência desse motivo
+        const lastFb = dateOnly(f[0].data), lastAd = a.length ? dateOnly(a.map(r=>r.data).sort((x,y)=>y-x)[0]) : null;
+        const ocorr = lista.filter(e=>{ const d = dateOnly(e.data); return d <= lastFb && (!lastAd || d > lastAd); }).sort((x,y)=>x.data-y.data);
+        res.advertencia.push({ ...base, pend:advPend, ocorr }); return;
+      }
       const corte = f.length ? dateOnly(f[0].data) : null;
       const desde = lista.filter(e=> !corte || dateOnly(e.data) > corte);
-      if(desde.length > NC_LIMITE_FB){
+      if(desde.length >= NC_POR_FB){
         const prim = desde.reduce((m,e)=> e.data<m ? e.data : m, desde[0].data);
-        res.feedback.push({ ...base, ncs:desde.length, desdeData:prim, proxFb:f.length+1 });
+        res.feedback.push({ ...base, ncs:desde.length, desdeData:prim, proxFb:f.length+1, ocorr:desde.sort((x,y)=>x.data-y.data) });
       }
     });
     res.feedback.sort((x,y)=>y.ncs-x.ncs); res.advertencia.sort((x,y)=>y.pend-x.pend);
     return res;
   },
 
-  /** abre Lançar Feedback / Advertência já com colaborador, motivo e resumo preenchidos */
-  gerar(kind, codKey, tipoKey){
-    const al = this.alertas()[kind==="adv" ? "advertencia" : "feedback"].find(x=>x.codKey===codKey && x.tipo===tipoKey);
-    if(!al) return;
-    const resumo = kind==="adv"
-      ? `Recorrência de não conformidade — ${al.label}: ${al.fb} feedback(s) já aplicado(s) pelo mesmo motivo.`
+  /** texto com as ocorrências (NCs) que motivaram o alerta */
+  ocorrTxt(lista){
+    return (lista||[]).map(e=>`- ${fmtDateBR(e.data)} — ${e.origem==="RETORNO"?"retorno":"rua "+(e.rua||"?")}${e.produto?" — produto "+e.produto:""}${e.desc?" ("+e.desc+")":""}${e.auditor?" — auditor "+e.auditor:""}`).join("\n");
+  },
+  resumoPara(al, kind){
+    const cab = kind==="adv"
+      ? `Recorrência de não conformidade — ${al.label}: ${al.fb} feedback(s) já aplicado(s) pelo mesmo motivo, com as ocorrências abaixo.`
       : `Recorrência de não conformidade — ${al.label}: ${al.ncs} ocorrência(s) desde ${fmtDateBR(al.desdeData)}.`;
-    LancUI.prefill = { mat:al.cod||"", motivo:al.motivo, resumo };
+    return cab + "\nOcorrências:\n" + this.ocorrTxt(al.ocorr);
+  },
+  achar(kind, codKey, tipoKey){ return this.alertas()[kind==="adv" ? "advertencia" : "feedback"].find(x=>x.codKey===codKey && x.tipo===tipoKey); },
+  /** abre Lançar Feedback / Advertência já com colaborador, motivo e resumo (com as ocorrências) preenchidos */
+  gerar(kind, codKey, tipoKey){
+    const al = this.achar(kind, codKey, tipoKey); if(!al) return;
+    LancUI.prefill = { mat:al.cod||"", motivo:al.motivo, resumo:this.resumoPara(al, kind) };
     UI.goTo("lancamentos", kind==="adv" ? "ladvertencia" : "lfeedback");
+  },
+  /** dentro do formulário já aberto: aplica motivo e ocorrências */
+  aplicar(kind, codKey, tipoKey){
+    const al = this.achar(kind, codKey, tipoKey); if(!al) return;
+    const p = kind==="adv" ? "ad" : "fb", sel = document.getElementById(p+"-motivo"), rs = document.getElementById(p+"-resumo");
+    if(sel){
+      if(!Array.from(sel.options).some(o=>o.value===al.motivo)){ const o = document.createElement("option"); o.value = o.textContent = al.motivo; sel.appendChild(o); }
+      sel.value = al.motivo; sel.dispatchEvent(new Event("change"));
+    }
+    if(rs) rs.value = this.resumoPara(al, kind);
+  },
+  /** aviso dentro de Lançar Feedback / Lançar Advertência: o colaborador tem NC recorrente pedindo este lançamento */
+  htmlIndicacao(mat, kind){
+    const key = normStr(String(mat||"").trim()); if(!key) return "";
+    if(!this.carregado()){ this.garantir(()=>{ const f = LancUI.ncIndicar; if(f) f.call(LancUI, kind==="adv"?"ad":"fb"); }); return ""; }
+    const lista = this.alertas()[kind==="adv" ? "advertencia" : "feedback"].filter(x=>x.codKey===key);
+    if(!lista.length) return "";
+    return lista.map(x=>`<div class="warn-box nc-ind">
+      <div class="nc-ind-h"><strong>⚠️ ${kind==="adv" ? "Advertência indicada" : "Feedback indicado"} por não conformidade</strong> — ${escapeHtml(x.label)}
+        ${kind==="adv" ? `· ${x.fb} feedback(s) no motivo, ${x.adv} advertência(s) · <strong>${x.pend} a emitir</strong>` : `· <strong>${x.ncs} NC(s)</strong> desde ${fmtDateBR(x.desdeData)}`}</div>
+      <ul class="nc-ind-l">${(x.ocorr||[]).map(e=>`<li>${fmtDateBR(e.data)} — ${e.origem==="RETORNO"?"retorno":"rua "+escapeHtml(e.rua||"?")}${e.produto?" — "+escapeHtml(e.produto):""}${e.desc?" ("+escapeHtml(e.desc)+")":""}</li>`).join("")}</ul>
+      <button type="button" class="btn btn-primary btn-sm nc-btn" onclick="NC.aplicar('${kind}','${escapeHtml(x.codKey)}','${x.tipo}')">Usar motivo e ocorrências</button></div>`).join("");
   },
   botoesGerar(x, kind){
     const pane = kind==="adv" ? "ladvertencia" : "lfeedback";
@@ -159,7 +194,7 @@ const NC = {
         <div class="card"><div class="card-label">Erro de Retorno</div><div class="card-value">${fmtNum(tot.retorno)}</div></div>
         <div class="card"><div class="card-label">Erros de Rua</div><div class="card-value">${fmtNum(ruas)}</div><div class="small-muted">soma dos 4 tipos</div></div>
         ${this.TIPOS.filter(t=>t.key!=="retorno").map(t=>`<div class="card"><div class="card-label">${t.label}</div><div class="card-value">${fmtNum(tot[t.key])}</div></div>`).join("")}
-        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Alerta de feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">mais de ${NC_LIMITE_FB} NCs no motivo</div></div>
+        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Alerta de feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">${NC_POR_FB} NCs no motivo</div></div>
         <div class="card ${al.advertencia.length?'neg':''}"><div class="card-label">Alerta de advertência</div><div class="card-value ${al.advertencia.length?'neg':''}">${al.advertencia.length}</div><div class="small-muted">${NC_FB_PARA_ADV} feedbacks no mesmo motivo</div></div>
       </div>
       <div class="panel">
@@ -195,7 +230,7 @@ const NC = {
   /* Gestão > Feedbacks e Advertências: resumo + botões                   */
   /* ------------------------------------------------------------------ */
   htmlResumoFeedbacks(){
-    const head = `<div class="panel-header"><h3>⚠️ Não conformidades recorrentes</h3><span class="panel-note">Mais de ${NC_LIMITE_FB} NCs no mesmo motivo → feedback · ${NC_FB_PARA_ADV} feedbacks no mesmo motivo → advertência</span></div>`;
+    const head = `<div class="panel-header"><h3>⚠️ Não conformidades recorrentes</h3><span class="panel-note">${NC_POR_FB} NCs no mesmo motivo → 1 feedback · ${NC_FB_PARA_ADV} feedbacks no mesmo motivo → advertência</span></div>`;
     if(!this.carregado()){ this.garantir(()=>{ if(document.getElementById("fb-content")) FeedbackAdv.render(); }); return `<div class="panel">${head}<div class="hint-box">Carregando as não conformidades da planilha de auditoria…</div></div>`; }
     const al = this.alertas();
     const evs = this.eventos();
@@ -207,7 +242,7 @@ const NC = {
       <td class="num">${x.fb}</td><td class="num">${x.adv}</td><td class="num"><strong class="cell-neg">${x.pend}</strong></td><td class="nc-act">${this.botoesGerar(x,"adv")}</td></tr>`;
     return `<div class="panel nc-panel">${head}
       <div class="cards-grid nc-cards">
-        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Gerar feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">mais de ${NC_LIMITE_FB} NCs no motivo</div></div>
+        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Gerar feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">${NC_POR_FB} NCs no motivo</div></div>
         <div class="card ${al.advertencia.length?'neg':''}"><div class="card-label">Gerar advertência</div><div class="card-value ${al.advertencia.length?'neg':''}">${al.advertencia.length}</div><div class="small-muted">${NC_FB_PARA_ADV} feedbacks no motivo</div></div>
         <div class="card"><div class="card-label">NCs no mês</div><div class="card-value">${fmtNum(mes)}</div></div>
         <div class="card"><div class="card-label">NCs no total</div><div class="card-value">${fmtNum(evs.length)}</div></div>
@@ -215,7 +250,7 @@ const NC = {
       <div class="nc-duo">
         <div><div class="nc-sub">📝 Pedem feedback <span class="small-muted">(${al.feedback.length})</span></div>
           <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">NCs</th><th class="num">Feedb.</th><th>Desde</th><th></th></tr></thead>
-          <tbody>${al.feedback.length ? al.feedback.map(linhaFb).join("") : `<tr><td colspan="6" class="small-muted">Ninguém passou de ${NC_LIMITE_FB} NCs no mesmo motivo.</td></tr>`}</tbody></table></div></div>
+          <tbody>${al.feedback.length ? al.feedback.map(linhaFb).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${NC_POR_FB} NCs no mesmo motivo desde o último feedback.</td></tr>`}</tbody></table></div></div>
         <div><div class="nc-sub">🔴 Pedem advertência <span class="small-muted">(${al.advertencia.length})</span></div>
           <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">Feedb.</th><th class="num">Advert.</th><th class="num">A emitir</th><th></th></tr></thead>
           <tbody>${al.advertencia.length ? al.advertencia.map(linhaAd).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${NC_FB_PARA_ADV} feedbacks sem advertência no mesmo motivo.</td></tr>`}</tbody></table></div></div>

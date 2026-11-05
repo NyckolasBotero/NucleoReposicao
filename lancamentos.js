@@ -170,6 +170,16 @@ const LancUI = {
       if(rs && !rs.value) rs.value = pf.resumo;
     }
   },
+  /** mostra, abaixo da matrícula, a indicação de feedback/advertência vinda das não conformidades (p = "fb" | "ad") */
+  ncIndicar(p){
+    const box = document.getElementById(p+"-nc"), mat = document.getElementById(p+"-mat"); if(!box || !mat) return;
+    box.innerHTML = (typeof NC!=="undefined" && window.APP_STATE && APP_STATE.ready) ? NC.htmlIndicacao(this.soDigitos(mat.value), p==="ad" ? "adv" : "fb") : "";
+  },
+  ligarNcIndicar(p){
+    const mat = document.getElementById(p+"-mat"); if(!mat) return;
+    ["input","change"].forEach(ev=> mat.addEventListener(ev, ()=> this.ncIndicar(p)));
+    this.ncIndicar(p);
+  },
   /** Chamadas são de segunda a sexta: recua até o último dia útil. */
   diaUtilAte(iso){ let d = iso; for(let i=0;i<3 && [0,6].includes(this.isoParaData(d).getDay()); i++) d = this.somaDias(d, -1); return d; },
   ehFimDeSemana(iso){ return [0,6].includes(this.isoParaData(iso).getDay()); },
@@ -196,6 +206,7 @@ const LancUI = {
         ${this.motivoSelect("fb-motivo")}
       </div>
       ${this.novoItem("MOTIVO_FEEDBACK", "fb-motivo", "novo motivo")}
+      <div id="fb-nc"></div>
       <div id="fb-sem"></div>
       <div class="adm-form">
         <label>Matrícula do aplicador<input type="text" id="fb-mat-apl" inputmode="numeric" list="dl-fb" value="${this.h(u.matricula||"")}"></label>
@@ -241,6 +252,7 @@ const LancUI = {
         <div style="margin-top:6px;font-size:13px">${lista.slice(0,25).map(x=>`${this.h(x.nome)} — ${x.dias===null ? "nunca recebeu" : x.dias + " dias"}`).join("<br>")}${lista.length>25 ? `<br>+ ${lista.length-25} outros` : ""}</div></details>`;
     };
     semFb(this.ctx.semFeedback);
+    this.ligarNcIndicar("fb");
     this.aplicarPrefill("fb-mat");
 
     $$("fb-salvar").addEventListener("click", async ()=>{
@@ -432,6 +444,7 @@ const LancUI = {
       ${this.datalistPessoas("dl-ad", false)}
       <div class="adm-form">${this.motivoSelect("ad-motivo")}</div>
       ${this.novoItem("MOTIVO_FEEDBACK", "ad-motivo", "novo motivo")}
+      <div id="ad-nc"></div>
       <div id="ad-hist" style="margin:10px 0"></div>
       <div class="adm-form">
         <label>Matrícula do aplicador<input type="text" id="ad-mat-apl" inputmode="numeric" list="dl-ad" value="${this.h(u.matricula||"")}"></label>
@@ -471,6 +484,7 @@ const LancUI = {
     $$("ad-mat").addEventListener("input", historico); $$("ad-mat").addEventListener("change", historico);
     $$("ad-motivo").addEventListener("change", historico);
     $$("ad-mat-apl").addEventListener("change", ()=>{ const n = this.nomeDe($$("ad-mat-apl").value); if(n) $$("ad-nome-apl").value = n; });
+    this.ligarNcIndicar("ad");
     this.aplicarPrefill("ad-mat"); historico();
     $$("ad-salvar").addEventListener("click", async ()=>{
       this.aviso("ad-msg", "", "");
