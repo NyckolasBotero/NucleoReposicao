@@ -3550,7 +3550,9 @@ const FeedbackDoc = {
 
   // Gera 1 PDF único com 1 página por funcionário selecionado, cada página com os
   // indicadores/gráficos calculados individualmente para aquele funcionário.
-  async generateMultiple(employees){
+  async generateMultiple(employees, opts){
+    opts = opts || {};
+    const PER = FeedbackFolha.periodo(opts.periodo || "3m");
     if(typeof html2canvas === "undefined" || typeof window.jspdf === "undefined"){
       toast("As bibliotecas de exportação (html2canvas/jsPDF) ainda não carregaram. Aguarde e tente novamente.", "error");
       return;
@@ -3584,9 +3586,9 @@ const FeedbackDoc = {
         // garante que Production.state.employees está setado no momento de renderCharts (usa snapshot para o rows filter)
         Production.state.employees = [employee.codKey];
 
-        const container = this.buildContainer(employee, hist, snap, i, indData);
+        const pgs = FeedbackFolha.paginasProducao(employee, hist, snap, i, indData, PER);
         this.renderCharts(snap.proj, i);
-        containers.push(container);
+        pgs.forEach(pg=>containers.push(pg));
 
         // dá um tick pro Chart.js terminar de desenhar antes de seguir pro próximo
         await new Promise(r=>setTimeout(r, 100));
@@ -3597,7 +3599,7 @@ const FeedbackDoc = {
         ? "Feedback_" + (employees[0].nome||"funcionario").replace(/[^a-zA-Z0-9]+/g,"_")
         : "Feedback_" + employees.length + "_funcionarios";
 
-      await Export.toPDFMultiPage(containers, filename, "landscape");
+      await Export.toPDFMultiPage(containers, filename, "portrait");
     }catch(err){
       console.error(err);
       toast("Falha ao gerar o documento: " + err.message, "error");
@@ -5503,7 +5505,7 @@ function renderFeedbacksContent(){
     if(!selectedFeedbackEmployees.size) return;
     const data = getFeedbackRankingData();
     const emps = data.filter(e=>selectedFeedbackEmployees.has(e.codKey));
-    if(emps.length) FeedbackDoc.generateMultiple(emps);
+    if(emps.length) FeedbackFolha.escolher(emps);
   });
 
   const selectAllChk = $("#feedback-select-all");
