@@ -146,10 +146,10 @@ const ComissaoCalc = {
   lancadoresRec(P, ini, fim){
     const alvo = normStr(P.recuperacao.motivo||""), i = dateOnly(ini), f = dateOnly(fim), por = new Map();
     (window.APP_STATE.processed.p9712||[]).forEach(r=>{
-      if(!r.dt || dateOnly(r.dt)<i || dateOnly(r.dt)>f || normStr(r.motivo||"")!==alvo) return;
+      if(!r.dt || dateOnly(r.dt)<i || dateOnly(r.dt)>f || (r.codMotivo!=="1886" && normStr(r.motivo||"")!==alvo)) return;
       const k = this.digits(r.funcLanc); if(!k) return;
       const e = por.get(k) || { cod:k, nome: this.nomeDe(k) || r.nome || ("Cód. "+k), itens:0, lanc:0 };
-      e.itens += r.qtd||0; e.lanc++; por.set(k, e);
+      e.itens++; e.lanc++; por.set(k, e);
     });
     return Array.from(por.values()).sort((a,b)=>b.itens-a.itens);
   },
@@ -223,8 +223,9 @@ const ComissaoCalc = {
       const alvo = normStr(P.recuperacao.motivo||"");
       const cods = new Set([this.digits(P.recuperacao.cod)].concat((P.recuperacao.extras||[]).map(c=>this.digits(c))).filter(Boolean));
       const i = ini ? dateOnly(ini) : new Date(2000,0,1), f = fim ? dateOnly(fim) : new Date(2999,0,1);
-      const lin = (window.APP_STATE.processed.p9712||[]).filter(r=> r.dt && dateOnly(r.dt)>=i && dateOnly(r.dt)<=f && normStr(r.motivo||"")===alvo && cods.has(this.digits(r.funcLanc)));
-      const itensAuto = Math.round(sum(lin.map(r=>r.qtd)) * fator), valorItem = Number(P.recuperacao.valorItem)||0;
+      // recuperado = Cód.Motivo 1886 (ou o texto do motivo configurado); cada linha de Descrição conta 1 item
+      const lin = (window.APP_STATE.processed.p9712||[]).filter(r=> r.dt && dateOnly(r.dt)>=i && dateOnly(r.dt)<=f && (r.codMotivo==="1886" || normStr(r.motivo||"")===alvo) && cods.has(this.digits(r.funcLanc)));
+      const itensAuto = Math.round(lin.length * fator), valorItem = Number(P.recuperacao.valorItem)||0;
       const itens = M.itensManual!=null ? M.itensManual : itensAuto;
       const bruto = itens*valorItem, metaR = Number(P.recuperacao.metaItens)||0, bateuMeta = !(metaR>0) || itens >= metaR, pct = Number(P.recuperacao.pctSeNaoBater);
       const apos = bateuMeta ? bruto : bruto * ((isNaN(pct)?100:pct)/100);
@@ -353,7 +354,7 @@ const ComissaoResumo = {
       c.aud.metaA>0 ? (c.aud.bateuMeta ? `Meta de ${fmtNum(c.aud.metaA)} auditorias atingida` : `Meta de ${fmtNum(c.aud.metaA)} auditorias NÃO atingida: recebe ${fmtNum(c.aud.pct,0)}%`) : "Sem meta de auditorias definida"
     ] : ["Nenhum código definido para a função Auditor"];
     const rec = c.rec ? [
-      `${c.rec.nome}: ${fmtBRL(c.rec.valorItem)} por item (motivo "${P.recuperacao.motivo}", 9712) × ${fmtNum(c.rec.itens)} = ${fmtBRL(c.rec.bruto)}`,
+      `${c.rec.nome}: ${fmtBRL(c.rec.valorItem)} por item (Cód.Motivo 1886 · "${P.recuperacao.motivo}", 9712 — cada Descrição conta 1 item) × ${fmtNum(c.rec.itens)} = ${fmtBRL(c.rec.bruto)}`,
       c.rec.metaR>0 ? (c.rec.bateuMeta ? `Meta de ${fmtNum(c.rec.metaR)} itens atingida` : `Meta de ${fmtNum(c.rec.metaR)} itens NÃO atingida: recebe ${fmtNum(c.rec.pct,0)}%`) : "Sem meta de recuperação definida"
     ] : ["Nenhum código definido para a função Recuperação"];
     return { fixa, auditor, rec };

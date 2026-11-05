@@ -1439,26 +1439,38 @@ const DataProcessor = {
     // Mapa código → nome correto do QUADRO REP
     const nomeRep = new Map((out.quadro||[]).map(r=>[r.codigo, r.nome]).filter(([k,v])=>k&&v));
 
+    // acesso tolerante às colunas da 9712 (ignora acento, espaço, ponto e maiúsculas: "Cód.Motivo" = "COD MOTIVO")
+    const kn = (k)=> String(k).normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9]/g,"").toLowerCase();
+    const mapaCols = new Map(); if(raw9712 && raw9712[0]) Object.keys(raw9712[0]).forEach(k=> mapaCols.set(kn(k), k));
+    const col = (r, nome)=>{ const k = mapaCols.get(kn(nome)); return k!==undefined ? r[k] : r[nome]; };
+    const paraData = (v)=>{
+      if(v instanceof Date) return isNaN(v) ? null : v;
+      if(typeof v === "number" && v > 20000 && v < 80000) return new Date(1899, 11, 30 + Math.floor(v));   // serial do Excel
+      if(typeof v === "string"){ const m = v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/); if(m) return new Date(Number(m[3].length===2?"20"+m[3]:m[3]), Number(m[2])-1, Number(m[1])); const t = Date.parse(v); if(!isNaN(t)) return new Date(t); }
+      return null;
+    };
     out.p9712 = raw9712 ? raw9712.map((r,idx)=>{
-      const funcLanc = r["Func.Lançamento"]!=null ? String(r["Func.Lançamento"]).trim() : null;
+      const funcLanc = col(r,"Func.Lançamento")!=null ? String(col(r,"Func.Lançamento")).trim() : null;
       if(!funcLanc) return null;
       const soRep = codigosRep.has(funcLanc);
       const codProd = r["Cód.Produto"]!=null ? String(r["Cód.Produto"]).trim() : null;
-      const dt      = r["Data"] instanceof Date ? r["Data"] : null;
+      const dt      = paraData(col(r,"Data"));
       const valorRaw = r["Valor(Total)"]!=null ? Number(r["Valor(Total)"])||0 : 0;
       const valor   = valorRaw > 0 && valorRaw <= 999999 ? valorRaw : 0;
       const numLanc = r["Num.Lançamento"]!=null ? String(r["Num.Lançamento"]).trim() : null;
       const numReg  = r["Num. Transação"]!=null ? String(r["Num. Transação"]).trim() : null;
       const descr   = r["Descrição"]  ? String(r["Descrição"]).trim()  : null;
       const motivo  = r["Motivo"]     ? String(r["Motivo"]).trim()     : null;
+      const codMotivo = col(r,"Cód.Motivo")!=null ? String(col(r,"Cód.Motivo")).replace(/\.0+$/,"").trim() : "";
       const setor   = r["Setor"]      ? String(r["Setor"]).trim()      : null;
       const qtd     = r["Quantidade"] !=null ? Number(r["Quantidade"])||0 : 0;
       // Nome do repositor vem do QUADRO REP (col "Nome" na 9712 é o comprador, não o repositor)
       const nome = nomeRep.get(funcLanc) || `(Cód. ${funcLanc})`;
       const info = codProd ? (prod2info8022.get(codProd)||{}) : {};
-      const isRecuperado = motivo === 'RECUPERADO (REP) STO';
+      // Cód.Motivo 1886 = RECUPERADO (REP) STO (vale o código mesmo que o texto do motivo venha diferente)
+      const isRecuperado = codMotivo === "1886" || motivo === 'RECUPERADO (REP) STO';
       return { _row:idx, funcLanc, nome, codProd, descr, dt, valor, qtd,
-               numLanc, numReg, motivo, setor, soRep, isRecuperado,
+               numLanc, numReg, motivo, codMotivo, setor, soRep, isRecuperado,
                rua: info.rua||null, depto: info.depto||null, unidade: info.unidade||null };
     }).filter(Boolean) : [];
     out.p9712dispo = !!raw9712;
@@ -4003,6 +4015,7 @@ const UI = {
       { id:"ladvertencia", label:"Lançar Advertência" },
       { id:"lsuspensao", label:"Lançar Suspensão" },
       { id:"lcoletores", label:"Controle de Coletores" },
+      { id:"ldevolucao", label:"Devolução de Mercadorias" },
       { id:"lavaria", label:"Lançar Avaria 9712", aliases:["Lançar REP.AVARIA"] },
       { id:"lchamada", label:"Lançar Chamada" },
       { id:"lquadro", label:"Lançar Quadro" },
@@ -4282,7 +4295,7 @@ const UI = {
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
       bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(),
-      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
+      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };
     if(fns[pane]) fns[pane]();

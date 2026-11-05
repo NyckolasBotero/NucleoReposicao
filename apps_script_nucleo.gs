@@ -26,7 +26,7 @@ const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
-const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores'];
+const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
 const ABA_ADVERTENCIAS = 'ADVERTÊNCIAS';
@@ -649,7 +649,7 @@ const SUB_DA_ACAO = {
   lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
   lanc_coletor_listar: 'Controle de Coletores', lanc_coletor_salvar: 'Controle de Coletores', lanc_coletor_termo: 'Controle de Coletores',
   lanc_suspensao_salvar: 'Lançar Suspensão', lanc_suspensao_listar: 'Lançar Suspensão', lanc_suspensao_editar: 'Lançar Suspensão',
-  lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712', lanc_avaria_listar: 'Lançar Avaria 9712', lanc_avaria_editar: 'Lançar Avaria 9712',
+  lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712', lanc_avaria_listar: 'Lançar Avaria 9712', lanc_avaria_editar: 'Lançar Avaria 9712', lanc_avaria_corrigir: 'Lançar Avaria 9712', lanc_base_atualizada: 'Devolução de Mercadorias',
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
   lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
@@ -688,6 +688,8 @@ function lancamento(d, s) {
     case 'lanc_avaria_salvar': return avariaSalvar(d, s);
     case 'lanc_avaria_listar': return avariaListar(d);
     case 'lanc_avaria_editar': return avariaEditar(d, s);
+    case 'lanc_avaria_corrigir': return avariaCorrigir(d, s);
+    case 'lanc_base_atualizada': return baseAtualizada(d);
     case 'lanc_chamada_dia': return chamadaDia(d);
     case 'lanc_chamada_salvar': return chamadaSalvar(d, s);
     case 'lanc_chamada_lote': return chamadaLote(d, s);
@@ -1486,6 +1488,30 @@ function avariaEditar(d, s) {
   return { ok: true, num: num, tipo: tipo, linha: it.linha };
 }
 
+/** Corrige o tipo de vários lançamentos de uma vez (ex.: Recuperado Repositor × Relação Repositor pelo Cód.Motivo da 9712).
+ *  d.itens = [{ num, tipo }] — só altera a coluna de tipo; números que não existem são ignorados. */
+function avariaCorrigir(d, s) {
+  const lista = (d.itens || []).slice(0, 500);
+  if (!lista.length) throw new Error('Nada para corrigir.');
+  const sh = abaDados('REP.AVARIA'), ac = avariaCols(infoAba('REP.AVARIA')), itens = avariaLer(sh, ac), porNum = {};
+  itens.forEach(function (x) { porNum[x.num] = x; });
+  let feitos = 0; const log = [];
+  lista.forEach(function (it) {
+    const num = soDigitos(it.num), tipo = texto(it.tipo), x = porNum[num];
+    if (!x || !tipo || x.tipo === tipo) return;
+    sh.getRange(x.linha, ac.iT + 1).setValue(tipo);
+    log.push(num + ': ' + x.tipo + ' → ' + tipo); feitos++;
+  });
+  if (feitos) registrarLog(s, 'REP.AVARIA (correção de tipos)', feitos + ' lançamento(s) · ' + log.slice(0, 8).join(' | '));
+  return { ok: true, corrigidos: feitos };
+}
+
+/** Última carga de uma base (ex.: 8022) feita pelo site em Administração > Bases — usada para saber se os endereços podem estar velhos. */
+function baseAtualizada(d) {
+  const nome = texto(d.base) || '8022', c = ultimasCargas(dadosSS())[nome];
+  return { ok: true, base: nome, quando: c ? c.quando : '', usuario: c ? c.usuario : '', arquivo: c ? c.arquivo : '' };
+}
+
 /* ---------- Chamada (aba QUADRO REP) ---------- */
 
 const ALIAS_Q = { data: ['DATA'], cod: ['CODIGO', 'COD', 'MATRICULA'], nome: ['NOME'], status: ['STATUS'], cargo: ['CARGO'] };
@@ -1509,8 +1535,17 @@ function chamadaDia(d) {
   const ativos = funcionariosAtivos();
   const emFerias = {};
   feriasLer(false).forEach(function (f) { if (f.status !== 'CANCELADA' && f.ini <= iso && iso <= f.fim) emFerias[f.mat] = true; });
+  const suspensos = {};   // suspensão lançada em Lançar Suspensão (Data … Data Fim) já vem marcada na chamada, com ou sem anexo
+  try {
+    const X = colunasSuspensao(), ult = X.info.sh.getLastRow();
+    if (ult >= 2) X.info.sh.getRange(2, 1, ult - 1, X.info.ult).getValues().forEach(function (l) {
+      const mat = soDigitos(l[X.c.mat]), ini = chaveData(l[X.c.data]), fim = chaveData(l[X.c.fim]) || ini;
+      if (mat && ini && ini <= iso && iso <= fim) suspensos[mat] = true;
+    });
+  } catch (e) { /* sem aba de suspensões: segue sem sugestão */ }
   const itens = ativos.map(function (p) {
     if (dia[p.mat]) return { mat: p.mat, nome: p.nome, status: dia[p.mat] };
+    if (suspensos[p.mat]) return { mat: p.mat, nome: p.nome, status: 'SUSPENSÃO', sugerido: true };
     return { mat: p.mat, nome: p.nome, status: emFerias[p.mat] ? 'FÉRIAS' : '', sugerido: !!emFerias[p.mat] };   // férias agendadas já vêm marcadas
   });
   const foraDoQuadro = Object.keys(dia).filter(function (m) { return !ativos.some(function (p) { return p.mat === m; }); }).length;
