@@ -35,20 +35,38 @@ const NC = {
     if(ps.length && cb) Promise.all(ps).then(()=>cb()).catch(()=>cb());
   },
 
-  /** todas as ocorrências: 1 por critério TRUE (rua) ou 1 por NC de retorno */
-  eventos(){
+  /** Não conformidades (NC) = 1 por colaborador + data + rua (várias falhas na mesma rua no mesmo dia = 1 NC).
+   *  Retorno: 1 por colaborador + data (+ rua, se informada). Cada NC guarda os tipos de erro, a quantidade
+   *  de linhas/produtos com erro e os itens. Ex.: 20 erros na rua 34 e 10 na rua 33 no mesmo dia = 2 NC. */
+  grupos(){
     const reg = window.APP_STATE && window.APP_STATE.nameRegistry;
-    const out = [];
-    const add = (r, tipoKey)=>{
+    const m = new Map();
+    const add = (r, tipoKeys)=>{
       const codKey = r.cod ? normStr(r.cod) : (r.nome ? "NOME::"+normStr(r.nome) : null);
-      if(!codKey) return;
-      out.push({ data:r.data, codKey, cod:r.cod||"", nome:(reg && reg.get(codKey)) || r.nome || r.cod || codKey,
-        tipo:tipoKey, origem:r.origem, rua:r.rua||"", produto:r.produto||"", desc:r.desc||"", endereco:r.endereco||"", auditor:r.auditor||"" });
+      if(!codKey || !r.data) return;
+      const k = codKey+"|"+ymdKey(r.data)+"|"+r.origem+"|"+(r.rua||"");
+      if(!m.has(k)) m.set(k, { codKey, cod:r.cod||"", nome:(reg && reg.get(codKey)) || r.nome || r.cod || codKey, data:r.data, origem:r.origem, rua:r.rua||"",
+        auditor:r.auditor||"", tipos:{}, qtd:0, itens:[] });
+      const g = m.get(k); g.qtd++;
+      if(!g.auditor && r.auditor) g.auditor = r.auditor;
+      tipoKeys.forEach(t=>{ g.tipos[t] = (g.tipos[t]||0) + 1; });
+      g.itens.push({ produto:r.produto||"", desc:r.desc||"", endereco:r.endereco||"", tipos:tipoKeys.slice() });
     };
-    ((window.AuditOnline && AuditOnline.ncRuas) || []).forEach(r=>{
-      ["produto","proxvenc","semsaldo","avaria"].forEach(k=>{ if(r.tipos && r.tipos[k]) add(r, k); });
+    ((window.AuditOnline && AuditOnline.ncRuas) || []).forEach(r=> add(r, ["produto","proxvenc","semsaldo","avaria"].filter(k=>r.tipos && r.tipos[k])));
+    ((window.RetornoOnline && RetornoOnline.ncs) || []).forEach(r=> add(r, ["retorno"]));
+    return Array.from(m.values()).filter(g=>Object.keys(g.tipos).length).sort((a,b)=>a.data-b.data);
+  },
+
+  /** ocorrências por motivo: cada NC conta 1 vez em cada tipo (motivo) que ela contém */
+  eventos(){
+    const out = [];
+    this.grupos().forEach(g=>{
+      const prim = g.itens[0] || {};
+      Object.keys(g.tipos).forEach(tipo=>{
+        out.push({ data:g.data, codKey:g.codKey, cod:g.cod, nome:g.nome, tipo, origem:g.origem, rua:g.rua, produto:prim.produto||"", desc:prim.desc||"",
+          endereco:prim.endereco||"", auditor:g.auditor, qtd:g.tipos[tipo] });
+      });
     });
-    ((window.RetornoOnline && RetornoOnline.ncs) || []).forEach(r=> add(r, "retorno"));
     return out;
   },
 
