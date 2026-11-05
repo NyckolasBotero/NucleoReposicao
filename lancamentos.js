@@ -159,6 +159,16 @@ const LancUI = {
     const pf = this.prefill; this.prefill = null;
     const el = document.getElementById(idMat);
     if(pf && pf.mat && el){ el.value = this.soDigitos(pf.mat); el.dispatchEvent(new Event("input")); el.dispatchEvent(new Event("change")); }
+    // vindo de um alerta de não conformidade: já seleciona o motivo e sugere o resumo
+    if(pf && pf.motivo){
+      const sel = document.getElementById(idMat.replace(/-mat$/, "-motivo"));
+      if(sel){
+        if(!Array.from(sel.options).some(o=>o.value === pf.motivo)){ const o = document.createElement("option"); o.value = o.textContent = pf.motivo; sel.appendChild(o); }
+        sel.value = pf.motivo; sel.dispatchEvent(new Event("change"));
+      }
+      const rs = pf.resumo && document.getElementById(idMat.replace(/-mat$/, "-resumo"));
+      if(rs && !rs.value) rs.value = pf.resumo;
+    }
   },
   /** Chamadas são de segunda a sexta: recua até o último dia útil. */
   diaUtilAte(iso){ let d = iso; for(let i=0;i<3 && [0,6].includes(this.isoParaData(d).getDay()); i++) d = this.somaDias(d, -1); return d; },
@@ -638,68 +648,182 @@ const LancUI = {
   /* AVARIA 9712 (aba REP.AVARIA)                                         */
   /* ================================================================== */
   renderAvaria(){ this.abrir("lavaria", this._avaria); },
+
+  /** Num.Lançamento da 9712 que o site já tem em memória (carregados com os dados): conferência instantânea, sem rede. */
+  nums9712(){
+    const pr = window.APP_STATE && window.APP_STATE.processed;
+    if(!pr) return { set:new Set(), data:new Map(), ok:false };
+    if(this._n9712 && this._n9712.src === pr.p9712) return this._n9712;
+    const set = new Set(), data = new Map();
+    (pr.p9712||[]).forEach(r=>{ const n = this.soDigitos(r.numLanc); if(n){ set.add(n); if(r.dt && !data.has(n)) data.set(n, r.dt); } });
+    return (this._n9712 = { src:pr.p9712, set, data, ok:!!pr.p9712dispo && set.size>0 });
+  },
+  dataBR(d){ return d ? (d instanceof Date ? fmtDateBR(d) : this.br(d)) : ""; },
+  agoraBR(){ const d = new Date(), p = (n)=>String(n).padStart(2,"0"); return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; },
+
   _avaria(pane){
-    this.avVer = null;
+    const L = this;
+    // estado da tela: sobrevive a trocar de aba para não perder a fila
+    const av = this.av = this.av || { fila:[], rodando:false, itens:null, carregando:false, erroLista:"", filtro:"", tipoFiltro:"", limite:100, srv:new Map() };
+    const proc = window.APP_STATE && window.APP_STATE.processed;
+    const jaLocal = (num)=>{
+      const it = (av.itens||[]).find(x=>x.num === num); if(it) return it.tipo || "—";
+      const q = av.fila.find(x=>x.num === num && x.status !== "erro"); if(q) return q.tipo;
+      if(!av.itens && proc && proc.numLancAvaria && proc.numLancAvaria.has(num)) return "—";
+      return null;
+    };
     pane.innerHTML = `<div class="panel">
-      ${this.cabecalho("Lançar Avaria 9712", "Lança o número da transação (Num.Lançamento) da 9712 na aba REP.AVARIA. Antes de gravar, o sistema confere se o número já foi lançado e se existe na 9712 (coluna K).")}
+      ${this.cabecalho("Lançar Avaria 9712", "Digite o Num.Lançamento e tecle Enter: a conferência é instantânea (lista da 9712 já carregada) e a gravação roda em segundo plano — pode ir digitando o próximo.")}
       <div class="adm-form">
         <label>Num.Lançamento<input type="text" id="av-num" inputmode="numeric" placeholder="Ex.: 597172" autocomplete="off"></label>
-        <label>Tipo de lançamento<select id="av-tipo" data-vazio="">${this.options(this.ctx.listas.TIPO_REP_AVARIA, null)}</select></label>
+        <label>Tipo de lançamento<select id="av-tipo" data-vazio="">${this.options(this.ctx.listas.TIPO_REP_AVARIA, av.tipo || null)}</select></label>
       </div>
       ${this.novoItem("TIPO_REP_AVARIA", "av-tipo", "novo tipo de lançamento")}
-      <div style="margin:12px 0"><button type="button" class="btn btn-outline" id="av-ver">Verificar número</button></div>
-      <div id="av-ind" style="min-height:34px"></div>
-      <div id="av-conf" style="display:none;margin:8px 0;min-height:34px"><label class="adm-chk"><input type="checkbox" id="av-conf-ck"> Confirmo lançar mesmo sem constar na 9712</label></div>
+      <div id="av-ind" style="min-height:34px;margin-top:10px"></div>
+      <div id="av-conf" style="display:none;margin:4px 0;min-height:34px"><label class="adm-chk"><input type="checkbox" id="av-conf-ck"> Confirmo lançar mesmo sem constar na 9712</label></div>
       <div id="av-msg"></div>
-      <div class="adm-actions"><button type="button" class="btn btn-primary" id="av-salvar">Lançar</button></div>
-      <h3 class="adm-h2" style="margin-top:18px">Lançados nesta sessão</h3>
-      <div id="av-hist" class="small-muted">Nenhum ainda.</div>
+      <div class="adm-actions"><button type="button" class="btn btn-outline" id="av-ver">Conferir na planilha</button><button type="button" class="btn btn-primary" id="av-salvar">Lançar (Enter)</button></div>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <div class="adm-head"><h3 class="adm-h2" style="margin:0">Lançamentos <span class="small-muted" id="av-cont"></span></h3>
+        <div class="adm-head-r"><input type="search" id="av-busca" placeholder="Buscar número ou tipo" value="${this.h(av.filtro)}" autocomplete="off"><select id="av-tf"></select><button type="button" class="btn btn-outline btn-sm" id="av-reload">Atualizar lista</button></div></div>
+      <div id="av-lista" class="small-muted">Carregando…</div>
     </div>`;
     this.ligarNovoItem(pane);
     const $$ = (id)=> document.getElementById(id);
-    this.avHist = this.avHist || [];
-    const hist = ()=>{ $$("av-hist").innerHTML = this.avHist.length ? `<table class="adm-table"><thead><tr><th>Num.Lançamento</th><th>Tipo</th><th>Na 9712</th></tr></thead><tbody>${this.avHist.map(x=>`<tr><td>${this.h(x.num)}</td><td>${this.h(x.tipo)}</td><td>${x.na9712}</td></tr>`).join("")}</tbody></table>` : "Nenhum ainda."; };
-    hist();
-    const indicador = (r)=>{
-      const b = (cls, txt)=> `<span class="adm-tag ${cls}" style="margin:2px 6px 2px 0">${txt}</span>`;
-      let html = "";
-      if(r.jaLancado) html += b("err", "⛔ Já lançado na REP.AVARIA");
-      else html += b("acc", "✔ Ainda não lançado");
-      if(!r.na9712.aba) html += b("off", "Aba 9712 não encontrada");
-      else if(r.na9712.existe) html += b("acc", "✔ Existe na 9712 (coluna K)");
-      else html += b("rep", "⚠ Não encontrado na 9712 (coluna K)");
-      $$("av-ind").innerHTML = html;
-      $$("av-conf").style.display = (r.na9712.aba && !r.na9712.existe && !r.jaLancado) ? "block" : "none";
-      if($$("av-conf").style.display === "none") $$("av-conf-ck").checked = false;
+    const vivo = (id)=> document.getElementById(id);   // a tela pode ter sido trocada enquanto a fila roda
+    if(av.tipo) $$("av-tipo").value = av.tipo;
+
+    /* ---------------- lista ---------------- */
+    const statusTxt = { fila:"⏳ na fila", enviando:"⏳ gravando…", ok:"✔ gravado", erro:"⛔ erro" };
+    const lista = ()=>{
+      const box = vivo("av-lista"); if(!box) return;
+      const f = normStr(av.filtro||""), tf = av.tipoFiltro;
+      const pend = av.fila.filter(x=>x.status !== "ok");
+      const srv = (av.itens||[]).filter(x=> (!tf || x.tipo === tf) && (!f || normStr(x.num + " " + x.tipo).includes(f)));
+      const tipos = Array.from(new Set((av.itens||[]).map(x=>x.tipo).filter(Boolean).concat(this.ctx.listas.TIPO_REP_AVARIA||[])));
+      const sel = vivo("av-tf"); if(sel) sel.innerHTML = `<option value="">Todos os tipos</option>` + tipos.map(t=>`<option ${t===tf?"selected":""}>${this.h(t)}</option>`).join("");
+      const cont = vivo("av-cont"); if(cont) cont.textContent = av.itens ? `· ${srv.length} de ${av.itens.length}` : "";
+      const d9 = this.nums9712();
+      const linhaPend = (x)=>`<tr class="${x.status==="erro"?"av-erro":""}"><td><strong>${this.h(x.num)}</strong></td><td>${this.h(x.tipo)}</td><td>${statusTxt[x.status]||x.status}${x.erro?` <span class="small-muted">${this.h(x.erro)}</span>`:""}</td><td></td><td></td>
+        <td style="text-align:right">${x.status==="erro"?`<button type="button" class="btn btn-outline btn-sm" data-av-rm="${x.id}">Descartar</button>`:""}</td></tr>`;
+      const linha = (x)=>{ const dt = x.data9712 || this.dataBR(d9.data.get(x.num)) ; const na = x.na9712===true || d9.set.has(x.num);
+        return `<tr><td><strong>${this.h(x.num)}</strong></td><td>${this.h(x.tipo||"—")}</td><td>${this.h(x.lancadoEm||"—")}</td><td>${this.h(x.data9712 ? this.br(x.data9712) : this.dataBR(d9.data.get(x.num)) || "—")}</td>
+        <td>${na ? '<span class="adm-tag acc">✔</span>' : (x.na9712===false ? '<span class="adm-tag rep">⚠</span>' : "—")}</td>
+        <td style="text-align:right"><button type="button" class="btn btn-outline btn-sm" data-av-ed="${this.h(x.num)}">✏️ Editar</button></td></tr>`; };
+      let corpo = pend.map(linhaPend).join("") + srv.slice(0, av.limite).map(linha).join("");
+      if(!corpo) corpo = `<tr><td colspan="6" class="small-muted">${av.itens ? "Nenhum lançamento encontrado." : (av.erroLista ? this.h(av.erroLista) : "Carregando a lista…")}</td></tr>`;
+      box.innerHTML = `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Num.Lançamento</th><th>Tipo</th><th>Lançado em</th><th>Data na 9712</th><th>9712</th><th></th></tr></thead><tbody>${corpo}</tbody></table></div>
+        ${srv.length > av.limite ? `<div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" id="av-mais">Mostrar mais (${srv.length - av.limite})</button></div>` : ""}`;
+      box.querySelectorAll("[data-av-ed]").forEach(b=> b.addEventListener("click", ()=> editar(b.dataset.avEd)));
+      box.querySelectorAll("[data-av-rm]").forEach(b=> b.addEventListener("click", ()=>{ av.fila = av.fila.filter(x=>String(x.id) !== b.dataset.avRm); lista(); }));
+      const mais = vivo("av-mais"); if(mais) mais.addEventListener("click", ()=>{ av.limite += 200; lista(); });
     };
-    const verificar = async ()=>{
+    const carregarLista = async (forcar)=>{
+      if(av.carregando || (av.itens && !forcar)) return;
+      av.carregando = true; av.erroLista = "";
+      const r = await Api.call({ acao:"lanc_avaria_listar" }).catch(e=>({ ok:false, erro:e.message }));
+      av.carregando = false;
+      if(r && r.ok){ av.itens = r.itens || []; } else av.erroLista = (r && r.erro) || "Não foi possível carregar a lista.";
+      lista(); if(vivo("av-num")) indicador();
+    };
+
+    /* ---------------- conferência instantânea ---------------- */
+    const indicador = ()=>{
+      const ind = vivo("av-ind"), cf = vivo("av-conf"); if(!ind) return null;
       const num = this.soDigitos($$("av-num").value);
-      if(!num){ $$("av-ind").innerHTML = ""; $$("av-conf").style.display = "none"; return null; }
-      // não mexe no layout enquanto confere (senão o botão "Lançar" sai de baixo do dedo/mouse)
-      const r = await Api.call({ acao:"lanc_avaria_verificar", num }).catch(e=>({ ok:false, erro:e.message }));
-      if(!r || !r.ok){ $$("av-ind").innerHTML = ""; this.aviso("av-msg", "erro", this.h((r && r.erro) || "Falha ao conferir.")); return null; }
-      this.aviso("av-msg", "", "");
-      this.avVer = r; indicador(r); return r;
+      if(!num){ ind.innerHTML = ""; cf.style.display = "none"; return null; }
+      const b = (cls, txt)=> `<span class="adm-tag ${cls}" style="margin:2px 6px 2px 0">${txt}</span>`;
+      const ja = jaLocal(num), d9 = this.nums9712(), srv = av.srv.get(num);
+      const na = d9.set.has(num) ? true : (srv !== undefined ? srv : null);   // true/false/null (não sabe)
+      let html = ja !== null ? b("err", `⛔ Já lançado${ja && ja!=="—" ? " ("+this.h(ja)+")" : ""}`) : b("acc", "✔ Ainda não lançado");
+      if(na === true) html += b("acc", "✔ Existe na 9712");
+      else if(na === false) html += b("rep", "⚠ Não encontrado na 9712 (coluna K)");
+      else html += b("off", d9.ok ? "Não está na lista carregada — tecle Enter para conferir na planilha" : "Conferindo na planilha…");
+      ind.innerHTML = html;
+      cf.style.display = (na === false && ja === null) ? "block" : "none";
+      if(cf.style.display === "none") $$("av-conf-ck").checked = false;
+      return { ja, na };
     };
-    $$("av-ver").addEventListener("click", verificar);
-    $$("av-num").addEventListener("change", verificar);
-    $$("av-num").addEventListener("keydown", (e)=>{ if(e.key === "Enter"){ e.preventDefault(); verificar(); } });
-    $$("av-salvar").addEventListener("click", async ()=>{
+    /** pergunta ao servidor só quando a lista local não conhece o número */
+    const conferirServidor = async (num)=>{
+      if(!num || this.nums9712().set.has(num) || av.srv.has(num)) return;
+      const r = await Api.call({ acao:"lanc_avaria_verificar", num }).catch(e=>({ ok:false, erro:e.message }));
+      if(r && r.ok){ if(r.na9712 && r.na9712.aba) av.srv.set(num, !!r.na9712.existe); if(r.jaLancado && jaLocal(num) === null) (av.itens = av.itens || []).unshift({ num, tipo:"", lancadoEm:"", data9712:"", na9712:null }); }
+      else this.aviso("av-msg", "erro", this.h((r && r.erro) || "Falha ao conferir."));
+      if(vivo("av-num") && this.soDigitos(vivo("av-num").value) === num) indicador();
+    };
+    $$("av-num").addEventListener("input", ()=>{ this.aviso("av-msg", "", ""); indicador(); });
+
+    /* ---------------- fila de gravação (em segundo plano) ---------------- */
+    const rodar = async ()=>{
+      if(av.rodando) return; av.rodando = true;
+      try{
+        let x; while((x = av.fila.find(i=>i.status === "fila"))){
+          x.status = "enviando"; lista();
+          const r = await Api.call({ acao:"lanc_avaria_salvar", num:x.num, tipo:x.tipo, confirmarSem9712:x.confirma, na9712Cliente:x.na9712Cliente }).catch(e=>({ ok:false, erro:e.message }));
+          if(r && r.ok){
+            x.status = "ok"; const d9 = this.nums9712();
+            (av.itens = av.itens || []).unshift({ linha:r.linha, num:x.num, tipo:x.tipo, lancadoEm:this.agoraBR(), data9712:"", na9712: r.na9712 && r.na9712.aba ? !!r.na9712.existe : null });
+            av.fila = av.fila.filter(i=>i !== x);
+            toast(`Avaria ${x.num} lançada.`);
+          } else { x.status = "erro"; x.erro = (r && r.erro) || "Não foi possível lançar."; }
+          lista(); if(vivo("av-num")) indicador();          // só atualiza a lista e o indicador — nunca mexe no que está sendo digitado
+        }
+      } finally { av.rodando = false; }
+    };
+    const lancar = async ()=>{
       const num = this.soDigitos($$("av-num").value), tipo = $$("av-tipo").value;
       this.aviso("av-msg", "", "");
       if(!num) return this.aviso("av-msg", "erro", "Informe o número do lançamento.");
       if(!tipo) return this.aviso("av-msg", "erro", "Escolha o tipo do lançamento.");
-      const r = await this.enviar($$("av-salvar"), { acao:"lanc_avaria_salvar", num, tipo, confirmarSem9712: $$("av-conf-ck").checked });
-      if(r && r.precisaConfirmar){
+      const ind = indicador();
+      if(ind.ja !== null) return this.aviso("av-msg", "erro", `O lançamento ${this.h(num)} já foi lançado${ind.ja && ind.ja!=="—" ? " ("+this.h(ind.ja)+")" : ""}.`);
+      if(ind.na === null){ await conferirServidor(num); const i2 = indicador(); ind.na = i2 ? i2.na : null; ind.ja = i2 ? i2.ja : ind.ja; if(ind.ja !== null) return this.aviso("av-msg", "erro", `O lançamento ${this.h(num)} já foi lançado.`); }
+      if(ind.na === false && !$$("av-conf-ck").checked){
         $$("av-conf").style.display = "block";
-        return this.aviso("av-msg", "aviso", this.h(r.erro) + " Marque a confirmação e lance de novo.");
+        return this.aviso("av-msg", "aviso", `O número ${this.h(num)} não foi encontrado na 9712 (coluna K). Marque a confirmação e lance de novo.`);
       }
-      if(!r || !r.ok){ if(r && /já existe/i.test(r.erro||"")) verificar(); return this.aviso("av-msg", "erro", this.h((r && r.erro) || "Não foi possível lançar.")); }
-      this.avHist.unshift({ num, tipo, na9712: r.na9712 && r.na9712.aba ? (r.na9712.existe ? "✔ sim" : "⚠ não") : "—" });
-      hist(); this.aviso("av-msg", "ok", `Lançamento <strong>${this.h(num)}</strong> gravado (${this.h(tipo)}).`);
-      toast("Avaria 9712 lançada.");
+      av.tipo = tipo;
+      av.fila.unshift({ id:Date.now()+"_"+num, num, tipo, status:"fila", confirma: ind.na === false, na9712Cliente: ind.na === true });
+      // libera o campo na hora para o próximo código
       $$("av-num").value = ""; $$("av-ind").innerHTML = ""; $$("av-conf").style.display = "none"; $$("av-conf-ck").checked = false; $$("av-num").focus();
-    });
+      lista(); rodar();
+    };
+    $$("av-salvar").addEventListener("click", lancar);
+    $$("av-num").addEventListener("keydown", (e)=>{ if(e.key === "Enter"){ e.preventDefault(); lancar(); } });
+    $$("av-ver").addEventListener("click", async ()=>{ const n = this.soDigitos($$("av-num").value); if(!n) return; av.srv.delete(n); await conferirServidor(n); indicador(); });
+    $$("av-tipo").addEventListener("change", ()=>{ av.tipo = $$("av-tipo").value; });
+
+    /* ---------------- edição ---------------- */
+    const editar = (num)=>{
+      const it = (av.itens||[]).find(x=>x.num === num); if(!it) return;
+      const tipos = Array.from(new Set((this.ctx.listas.TIPO_REP_AVARIA||[]).concat(it.tipo ? [it.tipo] : [])));
+      UI.openModal(`<h3 style="margin-top:0">Editar lançamento</h3>
+        <div class="adm-form">
+          <label>Num.Lançamento<input type="text" id="avx-num" inputmode="numeric" value="${this.h(it.num)}"></label>
+          <label>Tipo de lançamento<select id="avx-tipo">${this.options(tipos, it.tipo, "Selecione")}</select></label>
+        </div>
+        <div class="small-muted" style="margin:6px 0">Use para corrigir um tipo lançado por engano (ou um número digitado errado).</div>
+        <div id="avx-msg"></div>
+        <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="avx-salvar">Salvar alterações</button></div>`);
+      document.getElementById("avx-salvar").addEventListener("click", async ()=>{
+        const novo = this.soDigitos(document.getElementById("avx-num").value), tipo = document.getElementById("avx-tipo").value;
+        if(!novo) return this.aviso("avx-msg", "erro", "Informe o número.");
+        if(!tipo) return this.aviso("avx-msg", "erro", "Escolha o tipo.");
+        if(novo !== it.num && jaLocal(novo) !== null) return this.aviso("avx-msg", "erro", `O número ${this.h(novo)} já está na lista.`);
+        const r = await this.enviar(document.getElementById("avx-salvar"), { acao:"lanc_avaria_editar", numOriginal:it.num, num:novo, tipo });
+        if(!r || !r.ok) return this.aviso("avx-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
+        it.num = r.num; it.tipo = r.tipo; UI.closeModal(); toast("Lançamento atualizado."); lista(); if(vivo("av-num")) indicador();
+      });
+    };
+
+    $$("av-busca").addEventListener("input", (e)=>{ av.filtro = e.target.value; av.limite = 100; lista(); });
+    $$("av-tf").addEventListener("change", (e)=>{ av.tipoFiltro = e.target.value; av.limite = 100; lista(); });
+    $$("av-reload").addEventListener("click", ()=> carregarLista(true));
+    lista(); carregarLista(false);
+    if(av.fila.some(x=>x.status === "fila")) rodar();
+    $$("av-num").focus();
   },
 
   /* ================================================================== */

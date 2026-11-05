@@ -2675,6 +2675,9 @@ const AuditOnline = {
     const isTrue = (v) => /^(true|verdadeiro|sim|s|1|x)$/i.test(trimStr(v));
     const cell = (cols, i) => i!==-1 ? trimStr(cols[i]) : "";
 
+    // 0) Não conformidades (Possui_NC = TRUE): cada critério TRUE da linha = 1 erro de rua daquele tipo,
+    //    atribuído ao colaborador de Matricula_Colaborador_NC / Nome_Colaborador_NC (usado por NCs / Feedbacks)
+    const ncRuas = [], ncInfo = { linhasNC:0, semCriterio:0, semColab:0, semColuna:iPossuiNC===-1 };
     // 1) agrupa as linhas (produtos) por dia + rua + repositor
     const grupos = new Map();
     for(let li=1; li<lines.length; li++){
@@ -2693,6 +2696,13 @@ const AuditOnline = {
       const aud = cell(cols,iAuditor); if(aud) g.auditores.add(aud);
       const pe = isTrue(cols[iPickErrado]), av = isTrue(cols[iAvariado]), pv = isTrue(cols[iProxVenc]), ss = isTrue(cols[iSemSaldo]);
       if(pe) g.pickErrado++; if(av) g.avariado++; if(pv) g.proxVenc++; if(ss) g.semSaldo++;
+      if(iPossuiNC!==-1 && isTrue(cols[iPossuiNC])){
+        ncInfo.linhasNC++;
+        if(!cod && !nome) ncInfo.semColab++;
+        else if(!(pe||av||pv||ss)) ncInfo.semCriterio++;
+        else ncRuas.push({ origem:"RUA", data, rua, cod, nome, auditor:cell(cols,iAuditor), produto:cell(cols,iProduto), desc:cell(cols,iDescProd), endereco:cell(cols,iEndereco),
+          tipos:{ produto:pe, proxvenc:pv, semsaldo:ss, avaria:av } });
+      }
       if(pe||av||pv||ss){
         const tipos = [pe?"Picking errado":"", av?"Avaria":"", pv?"Próx. vencimento":"", ss?"Sem saldo":""].filter(Boolean).join(", ");
         g.itens.push({ produto:cell(cols,iProduto), desc:cell(cols,iDescProd), endereco:cell(cols,iEndereco), tipos });
@@ -2710,6 +2720,7 @@ const AuditOnline = {
       return !(vazio && temOutro.has(ymdKey(g.data)+"|"+g.rua));
     }).sort((x,y)=> x.data-y.data || String(x.rua).localeCompare(String(y.rua),undefined,{numeric:true}));
 
+    this.ncRuas = ncRuas; this.ncInfo = ncInfo;
     // 3) converte cada grupo em uma "auditoria" com as contagens de ocorrência
     const pesos = AUDITORIA_PESOS_CRITERIOS;
     const pesoTotal = pesos.avariado + pesos.pickErrado + pesos.proxVenc + pesos.semSaldo;
@@ -4100,6 +4111,7 @@ const UI = {
       window.APP_STATE.ready = true;
       try{ if(window.ComissaoParams) ComissaoParams.carregarRemoto(); }catch(e){}
       if(window.FeedbackAdv) FeedbackAdv.atualizarAlertas();
+      if(window.NC){ NC.garantir(); let n=0; const t=setInterval(()=>{ if(NC.carregado() || ++n>40){ clearInterval(t); try{ FeedbackAdv.atualizarAlertas(); }catch(e){} } }, 1500); }
 
       // inicializa o Cronograma a partir da sheet CRONOGRAMA (se existir) — continua 100% editável na tela depois
       CronogramaState.activities = processed.cronogramaSheet.map(r=>({
@@ -6270,12 +6282,14 @@ function renderAuditoria(){
       <button class="btn btn-outline btn-sm" id="aud-clear">Limpar filtros</button>
     </div>
     <div id="aud-topo"></div>
+    <div id="aud-nc"></div>
     <div class="aud-sec aud-sec-ret"><strong>🔁 Auditoria de Retornos</strong><span>fonte: Auditoria_Retorno + Rotina_Retorno + Quadro_Repositores</span></div>
     <div id="aud-retornos"></div>
     <div class="aud-sec aud-sec-rua"><strong>📍 Auditoria de Ruas</strong><span>fonte: Auditoria_Ruas · % de qualidade por rua e por repositor</span></div>
     <div id="aud-content"></div>
   `;
   if(typeof RetornoQ!=="undefined") RetornoQ.render();
+  if(typeof NC!=="undefined") NC.renderAuditoria();
   $("#aud-data-ini").addEventListener("change", e=>{ st.dataInicial = e.target.value?new Date(e.target.value+"T00:00:00"):null; st.atalhoSel=null; renderAuditoria(); });
   $("#aud-data-fim").addEventListener("change", e=>{ st.dataFinal = e.target.value?new Date(e.target.value+"T00:00:00"):null; st.atalhoSel=null; renderAuditoria(); });
   $("#aud-rua").addEventListener("change", e=>{ st.rua = e.target.value||null; renderAuditoria(); });
@@ -14190,3 +14204,6 @@ function abastExportarSaldo(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dados), "Saldo Baixo");
   XLSX.writeFile(wb, "Saldo_Baixo_Picking.xlsx");
 }
+
+// expõe as fontes de auditoria para os demais módulos (const de topo não vira propriedade de window)
+window.AuditOnline = AuditOnline;

@@ -22,7 +22,7 @@ const ComissaoParams = {
       bands: this.clone(d.bands||[]), exceptions: this.clone(d.exceptions||[]),
       aplicarDesconto: "SIM", considerarMissoes: "SIM",
       teto: 15000, metaFaturamento: 100000000, pontosMinimos: 660, valorFixoAbaixo: 300,
-      auditor:    { cod:"", valorAudit:0.5, metaAuditorias:0, pctSeNaoBater:30, faixas:[{ min:0, max:49.99, value:0 }, { min:50, max:100, value:0 }] },
+      auditor:    { cod:"", valorAudit:0.5, bonusNC:0, metaAuditorias:0, pctSeNaoBater:30, faixas:[{ min:0, max:49.99, value:0 }, { min:50, max:100, value:0 }] },
       recuperacao:{ cod:"", valorItem:0, metaItens:0, pctSeNaoBater:30, motivo:"RECUPERADO (REP) STO", extras:[] },
       fixos: [],      // [{ cod, tipo, valor }]  comissão fixa por código
       excecoes: []    // códigos que não contam como repositor (nem na meta do quadro)
@@ -183,6 +183,7 @@ const ComissaoCalc = {
     const linhas = [];
     // ---- auditor ----
     let aud = null;
+    const bonusNC = Number(P.auditor.bonusNC)||0;
     if(this.digits(P.auditor.cod)){
       const nome = this.nomeDe(P.auditor.cod) || ("Cód. " + P.auditor.cod);
       let auds = (window.RetornoOnline && RetornoOnline.rows) ? RetornoOnline.contarPorAuditor(ini || new Date(2000,0,1), fim || new Date(), P.auditor.cod, this.nomeDe(P.auditor.cod)) : undefined;
@@ -191,12 +192,29 @@ const ComissaoCalc = {
       const porAud = (auds||0) * (Number(P.auditor.valorAudit)||0);
       const faixa = pctQuadro==null ? null : (P.auditor.faixas||[]).find(f=> pctQuadro>=f.min && pctQuadro<=f.max);
       const premio = faixa ? Number(faixa.value)||0 : 0;
-      const bruto = porAud + premio, metaA = Number(P.auditor.metaAuditorias)||0;
+      // bônus por erro de retorno encontrado (Possui_NC = TRUE na auditoria feita por ele) — não sofre o desconto de meta
+      const ncsAuto = (window.RetornoOnline && RetornoOnline.rows) ? RetornoOnline.ncPorAuditor(ini || new Date(2000,0,1), fim || new Date(), P.auditor.cod, this.nomeDe(P.auditor.cod)) : null;
+      const ncs = ncsAuto==null ? 0 : Math.round(ncsAuto*fator), valorBonus = ncs * bonusNC;
+      const base = porAud + premio, metaA = Number(P.auditor.metaAuditorias)||0;
       const bateuMeta = !(metaA>0) || (auds||0) >= metaA, pct = Number(P.auditor.pctSeNaoBater);
-      const apos = bateuMeta ? bruto : bruto * ((isNaN(pct)?100:pct)/100);
-      aud = { cod:P.auditor.cod, nome, auds, audsAuto, manual: M.audsManual!=null, porAud, faixa, premio, bruto, apos, final: apos*fatFat, bateuMeta, metaA, pct };
+      const baseApos = bateuMeta ? base : base * ((isNaN(pct)?100:pct)/100);
+      const bruto = base + valorBonus, apos = baseApos + valorBonus;
+      aud = { cod:P.auditor.cod, nome, auds, audsAuto, manual: M.audsManual!=null, porAud, faixa, premio, ncs, valorBonus, bruto, apos, final: apos*fatFat, bateuMeta, metaA, pct };
       linhas.push({ chave:"esp:aud", tipo:"Auditor", cod:P.auditor.cod, nome, comissaoBase:bruto, posQualidade:apos, comissaoComDesconto:apos, comissaoTotal:aud.final,
-        regra: `Auditor — ${auds==null?"—":fmtNum(auds)} auditoria(s) de retorno${M.audsManual!=null?" (ajustado manualmente)":""} × ${fmtBRL(Number(P.auditor.valorAudit)||0)}` + (premio? ` + prêmio quadro ${fmtBRL(premio)}` : "") + (metaA>0 ? (bateuMeta ? ` · meta de ${fmtNum(metaA)} atingida` : ` · meta de ${fmtNum(metaA)} NÃO atingida: paga ${fmtNum(aud.pct,0)}%`) : "") });
+        regra: `Auditor — ${auds==null?"—":fmtNum(auds)} auditoria(s) de retorno${M.audsManual!=null?" (ajustado manualmente)":""} × ${fmtBRL(Number(P.auditor.valorAudit)||0)}` + (premio? ` + prêmio quadro ${fmtBRL(premio)}` : "") + (bonusNC>0 ? ` + ${fmtNum(ncs)} erro(s) de retorno achado(s) × ${fmtBRL(bonusNC)}` : "") + (metaA>0 ? (bateuMeta ? ` · meta de ${fmtNum(metaA)} atingida` : ` · meta de ${fmtNum(metaA)} NÃO atingida: paga ${fmtNum(aud.pct,0)}%`) : "") });
+    }
+    // ---- bônus de outros auditores do quadro (qualquer pessoa da equipe que audite retornos e ache erros) ----
+    let bonusOutrosB = 0, bonusOutrosF = 0;
+    if(bonusNC > 0 && window.RetornoOnline && RetornoOnline.rows){
+      const mapaNc = RetornoOnline.auditoresComNC(ini || new Date(2000,0,1), fim || new Date(2999,0,1));
+      const doQuadro = new Map(team.members.map(m=>[this.digits(m.codigo), m]).filter(x=>x[0]));
+      mapaNc.forEach((a, dig)=>{
+        if(!a.ncs || dig===this.digits(P.auditor.cod) || !doQuadro.has(dig)) return;
+        const n = Math.round(a.ncs*fator), v = n*bonusNC;
+        bonusOutrosB += v; bonusOutrosF += v*fatFat;
+        linhas.push({ chave:"esp:bon"+dig, tipo:"Auditor (bônus)", cod:dig, nome: this.nomeDe(dig) || a.nome || ("Cód. "+dig), comissaoBase:v, posQualidade:v, comissaoComDesconto:v, comissaoTotal:v*fatFat,
+          regra:`Bônus de auditoria — ${fmtNum(n)} erro(s) de retorno achado(s) × ${fmtBRL(bonusNC)}` });
+      });
     }
     // ---- recuperação ----
     let rec = null;
@@ -230,14 +248,14 @@ const ComissaoCalc = {
     const manuais = sum(linhas.filter(l=>l.chave.indexOf("esp:man")===0).map(l=>l.comissaoTotal));
     const repBase = sum(rep.map(e=>e.comissaoBase)), repQual = sum(rep.map(e=>e.posQualidade)), repFinal = sum(rep.map(e=>e.preAvaria)), repAvaria = sum(rep.map(e=>e.avariaCota));
     const audB = aud?aud.bruto:0, audA = aud?aud.apos:0, audF = aud?aud.final:0, recB = rec?rec.bruto:0, recA = rec?rec.apos:0, recF = rec?rec.final:0;
-    const semDesc = repBase + audB + recB + fixos + manuais;
-    const subtotal = repFinal + audF + recF + fixos + manuais;
+    const semDesc = repBase + audB + bonusOutrosB + recB + fixos + manuais;
+    const subtotal = repFinal + audF + bonusOutrosF + recF + fixos + manuais;
     const avariaDesc = repAvaria;                 // quanto realmente foi descontado (limitado ao que cada repositor tem a receber)
     const total = subtotal - avariaDesc;
     const tot = {
-      qtdOs: sum(rep.map(e=>e.pontos)), fixa: repFinal, fixaBase: repBase, aud: audF, rec: recF, fixos, manuais,
+      qtdOs: sum(rep.map(e=>e.pontos)), fixa: repFinal, fixaBase: repBase, aud: audF + bonusOutrosF, rec: recF, fixos, manuais,
       semDesc, total, descontos: semDesc - total, descQual: repBase - repQual, descMeta: (audB-audA)+(recB-recA),
-      ajusteFat: (repFinal-repQual)+(audF-audA)+(recF-recA), avariaDesc, teto: Number(P.teto)||0, margem: (Number(P.teto)||0) - total
+      ajusteFat: (repFinal-repQual)+(audF-audA)+(bonusOutrosF-bonusOutrosB)+(recF-recA), avariaDesc, teto: Number(P.teto)||0, margem: (Number(P.teto)||0) - total
     };
     rep.forEach(e=>{ e.chave = e.codKey; e.tipo = "Repositor"; });
     return { P, ym, M, fatFat, rep, esp: linhas, tot, quadro:{ baseN, bateu, nao, pct:pctQuadro, minimo, faixa: aud?aud.faixa:null, premio: aud?aud.premio:0 }, aud, rec };
@@ -249,19 +267,37 @@ window.ComissaoCalc = ComissaoCalc;
 /* Resumo mensal (3 meses + projeção), qualidade e regras aplicadas        */
 /* ---------------------------------------------------------------------- */
 const ComissaoResumo = {
+  /** mesma conta dos cards de Gestão > Auditoria: Retornos (RetornoQ), Ruas (AuditOnline) e Geral = média simples dos dois */
   qualidadeBruta(ini, fim){
     const i = dateOnly(ini), f = dateOnly(fim);
     const ar = (window.AuditOnline && AuditOnline.rows ? AuditOnline.rows : []).filter(r=>{ const d=dateOnly(r.data); return d>=i && d<=f; });
-    const rr = (window.RetornoOnline && RetornoOnline.rows ? RetornoOnline.rows : []).filter(r=>{ const d=dateOnly(r.data); return d>=i && d<=f && !r.soAuditor; });
     const ruas = { q: ar.length ? AuditOnline.qualidadeDe(ar) : null, n: ar.length };
-    const ret  = { q: rr.length ? rr.filter(r=>!r.nc).length/rr.length*100 : null, n: rr.length };
-    const n = ruas.n + ret.n;
-    return { ruas, ret, geral:{ q: n ? (((ruas.q||0)*ruas.n) + ((ret.q||0)*ret.n))/n : null, n } };
+    let ret;
+    if(window.RetornoQ && RetornoQ.dados && !(RetornoQ.dados.diag.falta||[]).length){
+      const t = RetornoQ.calcular(i, f).tot;
+      ret = { q: t.auditados ? t.qualidade : null, n: t.auditados||0 };
+    } else {
+      const rr = (window.RetornoOnline && RetornoOnline.rows ? RetornoOnline.rows : []).filter(r=>{ const d=dateOnly(r.data); return d>=i && d<=f && !r.soAuditor; });
+      ret = { q: rr.length ? rr.filter(r=>!r.nc).length/rr.length*100 : null, n: rr.length };
+    }
+    return { ruas, ret, geral:{ q: this.media(ret.q, ruas.q), n: ruas.n + ret.n } };
   },
+  media(a, b){ const v = [a,b].filter(x=>x!=null); return v.length ? v.reduce((s,x)=>s+x,0)/v.length : null; },
+  /** período do mês atual (referência da tela) até a última data com dados */
+  periodoMesAtual(){
+    const ref = this.mesRef(), max = Production.maxDataDate();
+    let fim = new Date(ref.getFullYear(), ref.getMonth()+1, 0);
+    if(max && max >= ref && max < fim) fim = dateOnly(max);
+    return { ini: ref, fim };
+  },
+  /** Mês sem % de qualidade (ruas/retornos) usa a qualidade do MÊS ATUAL; só se o atual também não tiver, cai na média dos meses anteriores. */
   qualidadeComFallback(ini, fim){
     const base = this.qualidadeBruta(ini, fim), out = {};
+    let atual = null;
     ["ruas","ret"].forEach(k=>{
       if(base[k].q!==null){ out[k] = { q:base[k].q, n:base[k].n, estimada:false }; return; }
+      if(!atual){ const pa = this.periodoMesAtual(); atual = this.qualidadeBruta(pa.ini, pa.fim); }
+      if(atual[k].q!==null){ out[k] = { q:atual[k].q, n:0, estimada:true, doMesAtual:true }; return; }
       const qs = [];
       for(let m=0;m>=-5;m--){
         const a = new Date(dateOnly(ini).getFullYear(), dateOnly(ini).getMonth()+m, 1), b = new Date(a.getFullYear(), a.getMonth()+1, 0);
@@ -270,8 +306,7 @@ const ComissaoResumo = {
       }
       out[k] = { q: qs.length ? qs.reduce((x,y)=>x+y,0)/qs.length : null, n:0, estimada:qs.length>0 };
     });
-    const w = o=> o.q===null ? 0 : Math.max(o.n, 1), tw = w(out.ruas) + w(out.ret);
-    out.geral = { q: tw ? ((out.ruas.q||0)*w(out.ruas) + (out.ret.q||0)*w(out.ret))/tw : null, n: out.ruas.n + out.ret.n, estimada: out.ruas.estimada || out.ret.estimada };
+    out.geral = { q: this.media(out.ruas.q, out.ret.q), n: out.ruas.n + out.ret.n, estimada: out.ruas.estimada || out.ret.estimada };
     return out;
   },
   mesRef(){
@@ -313,6 +348,7 @@ const ComissaoResumo = {
     const q = c.quadro;
     const auditor = c.aud ? [
       `${c.aud.nome}: ${fmtBRL(Number(P.auditor.valorAudit)||0)} por auditoria de retorno × ${c.aud.auds==null?"—":fmtNum(c.aud.auds)} = ${fmtBRL(c.aud.porAud)}`,
+      Number(P.auditor.bonusNC)>0 ? `Bônus por erro de retorno achado (Possui_NC = TRUE): ${fmtNum(c.aud.ncs)} × ${fmtBRL(Number(P.auditor.bonusNC))} = ${fmtBRL(c.aud.valorBonus)} (qualquer pessoa do quadro que audite retornos recebe o mesmo bônus)` : "Bônus por erro de retorno não definido",
       `Prêmio pelo quadro (≥ ${fmtNum(q.minimo)} pts): ${q.bateu.length} de ${q.baseN} (${q.pct==null?"—":fmtNum(q.pct,1)+"%"}) → ${c.aud.faixa ? fmtNum(c.aud.faixa.min,2)+"%–"+fmtNum(c.aud.faixa.max,2)+"% = "+fmtBRL(c.aud.premio) : "nenhuma faixa atingida"}`,
       c.aud.metaA>0 ? (c.aud.bateuMeta ? `Meta de ${fmtNum(c.aud.metaA)} auditorias atingida` : `Meta de ${fmtNum(c.aud.metaA)} auditorias NÃO atingida: recebe ${fmtNum(c.aud.pct,0)}%`) : "Sem meta de auditorias definida"
     ] : ["Nenhum código definido para a função Auditor"];
@@ -322,7 +358,7 @@ const ComissaoResumo = {
     ] : ["Nenhum código definido para a função Recuperação"];
     return { fixa, auditor, rec };
   },
-  fmtQ(o){ return o.q===null ? "—" : fmtNum(o.q,1)+"%"+(o.estimada?" (média)":""); },
+  fmtQ(o){ return o.q===null ? "—" : fmtNum(o.q,1)+"%"+(o.estimada?(o.doMesAtual?" (mês atual)":" (média)"):""); },
   linhasTabela(){
     return [
       ["Qtd O.S. (pontos)", t=>fmtNum(t.qtdOs), false, true],
@@ -361,7 +397,7 @@ const ComissaoResumo = {
           ${qrow("Qualidade ruas","ruas")}
         </tbody>
       </table></div>
-      <p class="panel-note">A coluna de projeção (só na tela, fora das extrações) extrapola o mês pelo ritmo de dias úteis; qualidade não é projetada. Sem auditoria no mês, a qualidade usa a média dos meses anteriores com dados e é marcada "(média)".</p>
+      <p class="panel-note">A coluna de projeção (só na tela, fora das extrações) extrapola o mês pelo ritmo de dias úteis; qualidade não é projetada. Mês sem auditoria usa a qualidade do mês atual (marcada "(mês atual)").</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0">
         ${chip("#2f6fce","Comissão Fixa — regra aplicada ("+r.meses[2].rot+")", r.regras.fixa)}
         ${chip("#e08a1f","Comissão Auditor — regra aplicada", r.regras.auditor)}
@@ -544,6 +580,7 @@ const ComissaoParamsUI = {
             <div class="cp-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
               ${fld("Código", this.inp("auditor.cod", a.cod, {t:"text", re:1}))}
               ${fld("Valor por auditoria de retorno", this.inp("auditor.valorAudit", a.valorAudit, {step:0.01, pre:"R$"}))}
+              ${fld("Bônus por erro de retorno encontrado", this.inp("auditor.bonusNC", a.bonusNC||0, {step:0.01, pre:"R$"}))}
               ${fld("Meta de auditorias (mês)", this.inp("auditor.metaAuditorias", a.metaAuditorias))}
               ${fld("Recebe se não bater a meta", this.inp("auditor.pctSeNaoBater", a.pctSeNaoBater, {suf:"%"}))}
             </div>

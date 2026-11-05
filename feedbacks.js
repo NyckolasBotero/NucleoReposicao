@@ -128,7 +128,7 @@ const FeedbackAdv = {
 
   alertas(){
     const p = this.proc(), ct = window.APP_STATE && window.APP_STATE.currentTeam;
-    if(!p) return { probatorio:[], advertir:[], semFeedback:[], ferias:[], total:0 };
+    if(!p) return { probatorio:[], advertir:[], semFeedback:[], ferias:[], ncFb:[], ncAdv:[], total:0 };
     const hoje = this.hoje();
     const fora = this.dispensados();
     const probatorio = (p.turnover||[]).filter(t=>t.ativo && t.dtAdm && !fora.has(t.codKey)).map(t=>{
@@ -149,7 +149,9 @@ const FeedbackAdv = {
     advertir.sort((a,b)=>b.pend-a.pend);
     semFeedback.sort((a,b)=>(b.dias===null?1e9:b.dias)-(a.dias===null?1e9:a.dias));
     const ferias = this.feriasConflitos();
-    return { probatorio, advertir, semFeedback, ferias, total: probatorio.length + advertir.length + semFeedback.length + ferias.length };
+    const nc = (typeof NC!=="undefined") ? NC.alertas() : { feedback:[], advertencia:[] };
+    return { probatorio, advertir, semFeedback, ferias, ncFb:nc.feedback, ncAdv:nc.advertencia,
+      total: probatorio.length + advertir.length + semFeedback.length + ferias.length + nc.feedback.length + nc.advertencia.length };
   },
 
   atualizarAlertas(){
@@ -169,6 +171,8 @@ const FeedbackAdv = {
     const lin = (html, codKey)=> `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:8px 10px;font-size:13px;${codKey?"cursor:pointer;":""}" ${codKey?`onclick="UI.closeModal();FeedbackAdv.abrirFuncionario('${escapeHtml(codKey)}')"`:""}>${html}</div>`;
     UI.openModal(`
       <h3 style="margin-top:0">Alertas</h3>
+      ${sec("⚠️ NC recorrente — gerar advertência ("+NC_FB_PARA_ADV+" feedbacks no mesmo motivo)", "#d64545", (a.ncAdv||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.label)}: ${x.fb} feedback(s), ${x.adv} advertência(s) → <strong>${x.pend} a emitir</strong>`, x.codKey)), "Nenhuma NC recorrente pedindo advertência.")}
+      ${sec("⚠️ NC recorrente — gerar feedback (mais de "+NC_LIMITE_FB+" NCs no mesmo motivo)", "#e08a1f", (a.ncFb||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.label)}: <strong>${x.ncs} NCs</strong> desde ${fmtDateBR(x.desdeData)}`, x.codKey)), "Ninguém passou de "+NC_LIMITE_FB+" NCs no mesmo motivo.")}
       ${sec("🔴 Precisam de advertência (3 feedbacks no mesmo motivo)", "#d64545", a.advertir.map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.motivo)}: ${x.fb} feedback(s), ${x.adv} advertência(s) → <strong>${x.pend} advertência(s) a emitir</strong>`, x.codKey)), "Ninguém atingiu 3 feedbacks sem advertência no mesmo motivo.")}
       ${sec("⏳ Período probatório acabando (até "+FB_PROBATORIO_AVISO+" dias)", "#e08a1f", a.probatorio.map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — termina em ${fmtDateBR(x.fim)} (${x.restam===0?"hoje":"faltam "+x.restam+" dia(s)"})`, x.codKey)), "Nenhum probatório vencendo nos próximos dias.")}
       ${sec("📝 Sem feedback há mais de "+FB_DIAS_SEM_FEEDBACK+" dias", "#2f6fce", a.semFeedback.slice(0,40).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${x.dias===null?"nunca recebeu feedback":x.dias+" dias sem feedback"}`, x.codKey)), "Toda a equipe recebeu feedback recentemente.") + (a.semFeedback.length>40 ? `<div class="small-muted">+ ${a.semFeedback.length-40} outros na tabela da aba.</div>` : "")}
@@ -342,6 +346,7 @@ const FeedbackAdv = {
         </table></div>
       </div>
 
+      ${typeof NC!=="undefined" ? NC.htmlResumoFeedbacks() : ""}
       ${this.htmlInsights(ins)}
       ${renderFeedbackRankingPanel()}
     `;
@@ -564,7 +569,7 @@ document.addEventListener("DOMContentLoaded", ()=>{
    (Possui_NC falso e sem divergência entre etiqueta e físico).
    ========================================================================= */
 const RetornoOnline = {
-  rows: null, loading: false, error: null,
+  rows: null, ncs: [], ncInfo: null, loading: false, error: null,
   csvUrl(){ return `https://docs.google.com/spreadsheets/d/${AUDITORIA_ONLINE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent("Auditoria_Retorno")}&_ts=${Date.now()}`; },
   async load(force){
     if(this.loading || (this.rows && !force)) return;
@@ -588,28 +593,57 @@ const RetornoOnline = {
     if(iData<0 || iMat<0 || (iFoto<0 && iEtq<0)) throw new Error("A aba Auditoria_Retorno não foi encontrada na planilha de auditoria (ou está sem as colunas esperadas).");
     const sim = (v)=> /^(true|verdadeiro|sim|s|1|x)$/i.test(trimStr(v));
     const num = (v)=>{ const n = parseFloat(String(v).replace(/\./g,"").replace(",",".")); return isNaN(n) ? null : n; };
-    const out = [];
+    const out = [], ncs = [], ncInfo = { linhasNC:0, semColab:0, semColuna:iNC<0 };
+    const iRua = col("Rua"), iProd = col("Produto"), iDesc = col("Descricao_Produto");
     for(let i=1;i<lines.length;i++){
       const c = lines[i]; const data = AuditOnline.parseDateFlexible(c[iData]); if(!data) continue;
       const mat = trimStr(c[iMat]), nome = iNome>=0 ? trimStr(c[iNome]) : "";
       const audMat = iAM>=0 ? trimStr(c[iAM]) : "", audNome = iAN>=0 ? trimStr(c[iAN]) : "";
-      if(!mat && !nome){ if(audMat || audNome) out.push({ data, codKey:"", nc:false, audMat, audNome, soAuditor:true }); continue; }     // sem repositor atribuído: não entra no ranking individual
+      // Não conformidade estrita (Possui_NC = TRUE) → erro de retorno do colaborador (usado por NCs / Feedbacks)
+      if(iNC>=0 && sim(c[iNC])){
+        ncInfo.linhasNC++;
+        if(!mat && !nome) ncInfo.semColab++;
+        else ncs.push({ origem:"RETORNO", data, rua:iRua>=0?trimStr(c[iRua]):"", cod:mat||null, nome, auditor:audNome, produto:iProd>=0?trimStr(c[iProd]):"", desc:iDesc>=0?trimStr(c[iDesc]):"", endereco:"", tipos:{ retorno:true } });
+      }
+      const ncFlag = iNC>=0 && sim(c[iNC]);
+      if(!mat && !nome){ if(audMat || audNome) out.push({ data, codKey:"", nc:false, ncFlag, audMat, audNome, soAuditor:true }); continue; }     // sem repositor atribuído: não entra no ranking individual
       const etq = iEtq>=0 ? num(c[iEtq]) : null, fis = iFis>=0 ? num(c[iFis]) : null, dv = iDiv>=0 ? num(c[iDiv]) : null;
       const nc = (iNC>=0 && sim(c[iNC])) || (dv!==null && dv!==0) || (etq!==null && fis!==null && etq!==fis);
-      out.push({ data, codKey: mat ? normStr(mat) : "NOME::"+normStr(nome), nc, audMat, audNome });
+      out.push({ data, codKey: mat ? normStr(mat) : "NOME::"+normStr(nome), nc, ncFlag, audMat, audNome });
     }
+    this.ncs = ncs; this.ncInfo = ncInfo;
     return out;
   },
   /** Auditorias de retorno feitas por um auditor (matrícula ou nome) no intervalo. null se a planilha não tem colunas de auditor. */
-  contarPorAuditor(ini, fim, cod, nome){
+  /** linhas de Auditoria_Retorno feitas por um auditor (matrícula ou nome) no intervalo. */
+  linhasDoAuditor(ini, fim, cod, nome){
     const i = dateOnly(ini), f = dateOnly(fim), dig = (v)=>String(v||"").replace(/\D/g,""), nn = normStr(nome||"");
-    const rows = this.rows||[];
-    if(!rows.some(r=>r.audMat || r.audNome)) return null;
-    return rows.filter(r=>{
+    return (this.rows||[]).filter(r=>{
       const d = dateOnly(r.data); if(d<i || d>f) return false;
       if(cod && dig(r.audMat) && dig(r.audMat)===dig(cod)) return true;
       return !!(nn && r.audNome && normStr(r.audNome).includes(nn));
-    }).length;
+    });
+  },
+  /** Auditorias de retorno feitas por um auditor (matrícula ou nome) no intervalo. null se a planilha não tem colunas de auditor. */
+  contarPorAuditor(ini, fim, cod, nome){
+    if(!(this.rows||[]).some(r=>r.audMat || r.audNome)) return null;
+    return this.linhasDoAuditor(ini, fim, cod, nome).length;
+  },
+  /** Erros de retorno (Possui_NC = TRUE) encontrados por um auditor no intervalo. */
+  ncPorAuditor(ini, fim, cod, nome){
+    if(!(this.rows||[]).some(r=>r.audMat || r.audNome)) return null;
+    return this.linhasDoAuditor(ini, fim, cod, nome).filter(r=>r.ncFlag).length;
+  },
+  /** Map matrícula(só dígitos) → { nome, ncs, auditorias } dos auditores com erro encontrado no intervalo. */
+  auditoresComNC(ini, fim){
+    const i = dateOnly(ini), f = dateOnly(fim), m = new Map();
+    (this.rows||[]).forEach(r=>{
+      const d = dateOnly(r.data); if(d<i || d>f || !r.audMat) return;
+      const k = String(r.audMat).replace(/\D/g,""); if(!k) return;
+      if(!m.has(k)) m.set(k, { cod:k, nome:r.audNome||"", ncs:0, auditorias:0 });
+      const e = m.get(k); e.auditorias++; if(r.ncFlag) e.ncs++;
+    });
+    return m;
   },
   /** Map codKey → { auditorias, qualidade } no intervalo. */
   porRepositor(ini, fim){
