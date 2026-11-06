@@ -71,56 +71,37 @@ const ConferenciaRapida = {
     return { ok:true, dias, minDia, maxDia, semData, repetidas, unicas, temOS: iO >= 0 };
   },
 
-  // compara o arquivo com o resumo do último mês da base (resposta de bases_resumo)
-  comparar(arq, base){
-    const r = { pode:false, problemas:[], avisos:[], dias:[], ultimaBase:base.ultimaData||"", mes:base.mes||"", ate:arq.maxDia||"", de:"",
-                conferidos:0, fora:0, anteriores:0, ultimo:null, aGravar:0, linhasEnviar:[] };
-    const ult = base.ultimaData, F = d=>this.fmtDia(d);
-    if(base.vazia || !ult){ r.problemas.push("A base está vazia ou sem datas válidas. Use a verificação completa."); return r; }
+  /* Plano de carga por dia: só os dias que o arquivo e a base têm em comum são comparados.
+     Dia novo → entra. Arquivo com MAIS linhas no dia → o dia da base é refeito com as linhas do arquivo
+     (equivale a "manter o maior"). Mesmo nº de linhas → nada a fazer. Base com MAIS linhas → mantém a base
+     (a menos que o usuário peça "carregar mesmo assim"). Dias da base que não estão no arquivo não são tocados. */
+  planejar(arq, base, forcarMenor){
+    const F = d=>this.fmtDia(d), bd = base.dias || {};
+    const r = { pode:false, problemas:[], avisos:[], dias:[], substituir:[], aGravar:0, removidas:0, novos:{ n:0, linhas:0, de:"", ate:"" },
+                linhasEnviar:[], ultimaBase: base.ultimaData||"", de: arq.minDia||"", ate: arq.maxDia||"", ultimaCarga: base.ultimaCarga||null, temMenor:false, mantidos:0 };
     if(!arq.maxDia){ r.problemas.push("Não encontrei datas válidas no arquivo."); return r; }
-    if(arq.maxDia < ult){ r.problemas.push(`O arquivo termina em ${F(arq.maxDia)}, antes da última data da base (${F(ult)}). Provavelmente é um arquivo antigo.`); return r; }
-    if(!arq.dias[ult]){ r.problemas.push(`O arquivo não tem o último dia da base (${F(ult)}), então não dá para garantir que não fica lacuna. Use um arquivo que comece até esse dia, ou a verificação completa.`); return r; }
-
-    const mes = base.mes, bd = base.dias || {};
-    const osComparavel = !!(base.temOS && arq.temOS);
-    const dias = new Set(Object.keys(bd));
-    Object.keys(arq.dias).forEach(d=>{ if(d.slice(0,7)===mes && d<=ult) dias.add(d); });
-    Object.keys(arq.dias).forEach(d=>{ if(d.slice(0,7) < mes) r.anteriores += arq.dias[d].l; });
-
-    [...dias].sort().forEach(d=>{
-      const b = bd[d] || { l:0, o:0 }, f = arq.dias[d] || { l:0, o:0 };
-      const osIgual = !osComparavel || b.o===f.o;
+    const sel = new Set();
+    Object.keys(arq.dias).sort().forEach(d=>{
+      const f = arq.dias[d].l, b = bd[d] || 0;
       let sit;
-      if(d < arq.minDia) sit = "fora";                       // o arquivo começa depois deste dia
-      else if(d === ult){
-        if(f.l===b.l && osIgual) sit = "completo";
-        else if(f.l > b.l) sit = "parcial";                   // a base parou no meio do dia
-        else if(f.l < b.l) sit = "duplicado";                 // a base tem mais linhas que o arquivo
-        else sit = "diverge";                                 // mesmo nº de linhas, O.S. diferentes
-      } else sit = (b.l===f.l && osIgual) ? "ok" : "diverge";
-      r.dias.push({ dia:d, bl:b.l, bo:b.o, fl:f.l, fo:f.o, sit });
+      if(!b) sit = "novo";
+      else if(f > b) sit = "maior";
+      else if(f === b) sit = "igual";
+      else sit = "menor";
+      const usa = sit==="novo" || sit==="maior" || (sit==="menor" && forcarMenor);
+      if(sit==="menor") r.temMenor = true;
+      if(usa) sel.add(d);
+      if(b){ r.dias.push({ dia:d, bl:b, fl:f, sit, usa }); }
+      if(sit==="novo"){ r.novos.n++; r.novos.linhas += f; if(!r.novos.de) r.novos.de = d; r.novos.ate = d; }
+      if(usa && b){ r.substituir.push(d); r.removidas += b; }
+      if(!usa && b) r.mantidos++;
+      if(usa) r.aGravar += f;
     });
-
-    const ruins = r.dias.filter(x=>x.sit==="diverge" && x.dia!==ult);
-    const u = r.dias.find(x=>x.dia===ult);
-    r.ultimo = u;
-    r.conferidos = r.dias.filter(x=>x.sit==="ok").length;
-    r.fora = r.dias.filter(x=>x.sit==="fora").length;
-    if(ruins.length) r.problemas.push(`${ruins.length} dia(s) do mês não batem com a base: ${ruins.slice(0,6).map(x=>F(x.dia).slice(0,5)).join(", ")}${ruins.length>6?"…":""}.`);
-    if(u.sit==="duplicado") r.problemas.push(`O último dia da base (${F(ult)}) tem ${u.bl} linha(s), mas o arquivo tem só ${u.fl}: possível duplicidade na base (ou arquivo cortado).`);
-    if(u.sit==="diverge") r.problemas.push(`O último dia da base (${F(ult)}) tem o mesmo nº de linhas do arquivo, mas O.S. diferentes (${u.bo} na base x ${u.fo} no arquivo).`);
-    if(r.fora) r.avisos.push(`${r.fora} dia(s) do início do mês estão na base mas não no arquivo (não conferidos).`);
-    if(r.anteriores) r.avisos.push(`${r.anteriores.toLocaleString("pt-BR")} linha(s) do arquivo são de meses anteriores ao conferido e ficaram de fora.`);
-    if(arq.semData) r.avisos.push(`${arq.semData.toLocaleString("pt-BR")} linha(s) do arquivo estão sem data válida e não entram na conferência rápida (a verificação completa as considera).`);
-    if(arq.repetidas) r.avisos.push(`${arq.repetidas.toLocaleString("pt-BR")} linha(s) idênticas dentro do arquivo serão ignoradas, como na verificação completa.`);
-    if(r.problemas.length) return r;
-
-    r.pode = true;
-    const parcial = u.sit === "parcial";
-    const novos = Object.keys(arq.dias).filter(d=>d>ult).sort();
-    r.de = novos.length ? novos[0] : "";
-    r.aGravar = novos.reduce((s,d)=>s+arq.dias[d].l, 0) + (parcial ? u.fl - u.bl : 0);
-    r.linhasEnviar = arq.unicas.filter(x=> x.dia>ult || (parcial && x.dia===ult)).sort((a,b)=> a.dia<b.dia?-1:a.dia>b.dia?1:0).map(x=>x.linha);
+    r.linhasEnviar = arq.unicas.filter(x=>sel.has(x.dia)).sort((x,y)=> x.dia<y.dia?-1:x.dia>y.dia?1:0).map(x=>x.linha);
+    if(base.ultimaData && arq.maxDia < base.ultimaData) r.avisos.push(`O arquivo termina em ${F(arq.maxDia)}, antes da última data da base (${F(base.ultimaData)}). Se for um arquivo antigo, confira antes de gravar.`);
+    if(arq.semData) r.avisos.push(`${arq.semData.toLocaleString("pt-BR")} linha(s) do arquivo estão sem data válida e não serão gravadas.`);
+    if(arq.repetidas) r.avisos.push(`${arq.repetidas.toLocaleString("pt-BR")} linha(s) idênticas dentro do arquivo serão ignoradas.`);
+    r.pode = r.aGravar > 0;
     return r;
   }
 };
@@ -292,7 +273,7 @@ const AdminUI = {
     const rap = a.rapido && a.rapido.res;
     const podeGravar = a.ultimaVerif==="rapido" ? !!(rap && rap.pode && rap.aGravar>0) : !!a.sim;
     const verificado = !!(a.sim || (rap && rap.pode));
-    const passo2 = verificado ? "verificação feita ✓" : (rapidoOk ? "clique em “Conferir último mês”" : "clique em “Verificar duplicidade”");
+    const passo2 = verificado ? "verificação feita ✓" : (rapidoOk ? "clique em “Conferir por dia”" : "clique em “Verificar duplicidade”");
     box.innerHTML = `
       <div class="panel">
         <h3 class="adm-h2">Conferir antes de enviar — ${escapeHtml(a.base.base)}</h3>
@@ -311,7 +292,7 @@ const AdminUI = {
           : (rapidoOk ? this.htmlRapido(a) : `<span class="small-muted">Clique em <strong>Verificar duplicidade</strong> para ver quantas linhas são novas antes de gravar.</span>`)}</div>
         <div class="adm-actions">
           <button class="btn btn-outline" id="bases-cancel" ${st.enviando?"disabled":""}>Cancelar</button>
-          ${rapidoOk ? `<button class="btn btn-outline" id="bases-rapido-btn" ${st.enviando?"disabled":""} title="Compara só o último mês da base com o arquivo, dia a dia">Conferir último mês (rápido)</button>` : ""}
+          ${rapidoOk ? `<button class="btn btn-outline" id="bases-rapido-btn" ${st.enviando?"disabled":""} title="Compara só os dias que o arquivo e a base têm em comum e grava o que falta">Conferir por dia (recomendado)</button>` : ""}
           <button class="btn btn-outline" id="bases-sim-btn" ${st.enviando?"disabled":""} title="${rapidoOk?"Compara linha a linha com a base inteira (demora mais)":""}">${rapidoOk?"Verificação completa (mais lenta)":"Verificar duplicidade"}</button>
           <button class="btn btn-primary" id="bases-go" ${(!podeGravar||st.enviando)?"disabled":""} title="${podeGravar?"":"Faça a verificação primeiro"}">Gravar na base</button>
         </div>
@@ -320,11 +301,13 @@ const AdminUI = {
     document.getElementById("bases-cancel").addEventListener("click", ()=>{ st.arq = null; box.innerHTML = ""; });
     const rb = document.getElementById("bases-rapido-btn");
     if(rb) rb.addEventListener("click", ()=> this.conferirRapido());
+    const fc = document.getElementById("bases-forcar");
+    if(fc) fc.addEventListener("change", ()=>{ a.rapido.forcar = fc.checked; a.rapido.res = ConferenciaRapida.planejar(a.contagem, a.rapido.base, fc.checked); this.desenharPreview(); });
     document.getElementById("bases-sim-btn").addEventListener("click", ()=> this.enviar(true));
     document.getElementById("bases-go").addEventListener("click", ()=> a.ultimaVerif==="rapido" ? this.enviarRapido() : this.enviar(false));
   },
 
-  // ---- conferência rápida: só o último mês da base, dia a dia ----
+  // ---- conferência por dia: compara só os dias que o arquivo e a base têm em comum ----
   async conferirRapido(){
     const st = this.basesState, a = st.arq;
     if(!a || st.enviando) return;
@@ -333,9 +316,9 @@ const AdminUI = {
     try{
       if(!a.contagem) a.contagem = ConferenciaRapida.contarArquivo(a.cab, a.linhas, a.base.colData, a.base.colOS, normStr);
       if(!a.contagem.ok) throw new Error(a.contagem.erro);
-      const r = await Api.call({ acao:"bases_resumo", base:a.base.base });
+      const r = await Api.call({ acao:"bases_dias", base:a.base.base, de:a.contagem.minDia });
       if(!r || !r.ok) throw new Error((r && r.erro) || "O servidor não devolveu o resumo da base.");
-      a.rapido = { res: ConferenciaRapida.comparar(a.contagem, r), linhasTotal: r.linhasTotal };
+      a.rapido = { base:r, forcar:false, res: ConferenciaRapida.planejar(a.contagem, r, false), linhasTotal: r.linhasTotal };
       a.sim = null;
     }catch(e){
       a.rapido = { erro:String(e.message||e) };
@@ -345,52 +328,54 @@ const AdminUI = {
 
   htmlRapido(a){
     const q = a.rapido, CR = ConferenciaRapida;
-    if(!q) return `<span class="small-muted">Clique em <strong>Conferir último mês (rápido)</strong> para comparar só o último mês da base com este arquivo, ou em <strong>Verificação completa</strong> para checar linha a linha (mais lento).</span>`;
-    if(q.carregando) return `<div class="loading-line"><span class="spinner"></span> Conferindo o último mês da base…</div>`;
+    if(!q) return `<span class="small-muted">Clique em <strong>Conferir por dia</strong>: o sistema compara só os dias que o arquivo e a base têm em comum e grava o que falta, em um único envio.</span>`;
+    if(q.carregando) return `<div class="loading-line"><span class="spinner"></span> Conferindo os dias do arquivo com a base…</div>`;
     if(q.erro) return `<div class="error-box">${escapeHtml(q.erro)}</div>`;
     const r = q.res, F = d=>CR.fmtDia(d), n = x=>this.fmtNum(x);
     const avisos = r.avisos.map(t=>`<div class="small-muted" style="margin-top:6px;">• ${escapeHtml(t)}</div>`).join("");
-    // dias que merecem atenção + o último dia da base
-    const tabela = r.dias.filter(x=>x.sit!=="ok" || x.dia===r.ultimaBase);
-    const rotulo = { completo:"✓ completo", parcial:"⚠ incompleto na base", duplicado:"⚠ possível duplicidade", diverge:"⚠ não bate", fora:"não conferido" };
-    const linhas = tabela.map(x=>`<tr><td>${F(x.dia)}${x.dia===r.ultimaBase?" <span class=\"small-muted\">(último da base)</span>":""}</td><td>${n(x.bl)}${x.bo?` <span class="small-muted">(${n(x.bo)} O.S.)</span>`:""}</td><td>${n(x.fl)}${x.fo?` <span class="small-muted">(${n(x.fo)} O.S.)</span>`:""}</td><td>${rotulo[x.sit]||x.sit}</td></tr>`).join("");
-    const tab = tabela.length ? `<div class="table-wrap" style="margin-top:10px;"><table class="adm-table"><thead><tr><th>Dia</th><th>Linhas na base</th><th>Linhas no arquivo</th><th>Situação</th></tr></thead><tbody>${linhas}</tbody></table></div>` : "";
+    const rot = { maior:"⚠ base incompleta → será refeito com o arquivo", igual:"✓ já está igual", menor:"⚠ a base tem MAIS linhas que o arquivo" };
+    const linhas = r.dias.map(x=>{
+      const sit = x.sit==="menor" && x.usa ? "⚠ será substituído mesmo assim" : (x.sit==="menor" ? "⚠ a base tem mais linhas — será mantida" : rot[x.sit]);
+      return `<tr><td>${F(x.dia)}</td><td>${n(x.bl)}</td><td>${n(x.fl)}</td><td>${sit}</td></tr>`; }).join("");
+    const tab = r.dias.length ? `<div class="table-wrap" style="margin-top:10px;"><table class="adm-table"><thead><tr><th>Dia em comum</th><th>Linhas na base</th><th>Linhas no arquivo</th><th>O que acontece</th></tr></thead><tbody>${linhas}</tbody></table></div>` : "";
+    const u = r.ultimaCarga;
+    const cargaTxt = r.dias.length && u ? `<div class="small-muted" style="margin-top:6px;">Última carga desta base: <strong>${escapeHtml(u.quando)}</strong> por ${escapeHtml(u.usuario||"—")} (${escapeHtml(u.arquivo||"")}) · ${n(u.novas)} linhas.</div>` : "";
+    const forca = r.temMenor ? `<label class="adm-chk" style="margin-top:10px;display:block;"><input type="checkbox" id="bases-forcar" ${q.forcar?"checked":""}> Carregar mesmo assim: substituir também os dias em que a base tem mais linhas que o arquivo</label>` : "";
     if(!r.pode){
-      return `<div class="warn-box"><strong>A conferência rápida não aprovou este arquivo.</strong>${r.problemas.map(t=>`<div style="margin-top:6px;">• ${escapeHtml(t)}</div>`).join("")}
-        <div style="margin-top:8px;">Nada foi gravado. Se o arquivo estiver certo, use a <strong>Verificação completa</strong>.</div></div>${tab}${avisos}`;
+      return `<div class="warn-box"><strong>Nada novo para gravar.</strong> ${r.problemas.map(t=>escapeHtml(t)).join(" ")||"Os dias do arquivo já estão na base com a mesma quantidade de linhas (ou mais)."}</div>${tab}${cargaTxt}${forca}${avisos}`;
     }
-    const u = r.ultimo, parcial = u.sit==="parcial";
-    const ult = parcial ? `incompleto na base (${n(u.bl)} de ${n(u.fl)} linhas — será completado)` : `completo (${n(u.bl)} linhas, sem duplicidade)`;
-    const grava = r.aGravar
-      ? `Serão gravadas <strong>${n(r.aGravar)}</strong> linha(s)${r.de ? `, de <strong>${F(r.de)}</strong> até <strong>${F(r.ate)}</strong>` : ` (só o que faltava em ${F(r.ultimaBase)})`}.`
-      : `Nada novo para gravar: a base já está atualizada até <strong>${F(r.ultimaBase)}</strong>.`;
-    return `<div class="${r.aGravar?"hint-box":"warn-box"}"><strong>Último mês conferido (${CR.fmtMes(r.mes)}): ${n(r.conferidos)} dia(s) batem com a base.</strong>
-      Último dia da base, <strong>${F(r.ultimaBase)}</strong>: ${ult}. ${grava}</div>${tab}${avisos}`;
+    const partes = [];
+    if(r.novos.n) partes.push(`<strong>${n(r.novos.linhas)}</strong> linha(s) de ${r.novos.n} dia(s) novo(s) (${F(r.novos.de)}${r.novos.n>1?" a "+F(r.novos.ate):""})`);
+    if(r.substituir.length) partes.push(`<strong>${r.substituir.length}</strong> dia(s) refeito(s) (${n(r.removidas)} linha(s) antigas trocadas pelas do arquivo)`);
+    return `<div class="${r.dias.some(x=>x.usa)?"warn-box":"hint-box"}"><strong>Plano de gravação:</strong> ${partes.join(" + ")} — total de <strong>${n(r.aGravar)}</strong> linha(s) gravadas ao fim da base, em blocos únicos.
+      ${r.mantidos ? `<div style="margin-top:4px;">${r.mantidos} dia(s) em comum ficam como estão.</div>` : ""}</div>${tab}${cargaTxt}${forca}${avisos}`;
   },
 
-  // grava só o que a conferência rápida aprovou (do último dia da base em diante)
+  // grava o plano: apaga os dias a refazer e acrescenta as linhas em blocos grandes (uma escrita por bloco)
   async enviarRapido(){
     const st = this.basesState, a = st.arq, q = a && a.rapido, r = q && q.res;
-    if(!a || !r || !r.pode || !r.aGravar || st.enviando) return;
-    if(!confirm(`Gravar ${r.aGravar.toLocaleString("pt-BR")} linha(s) na base ${a.base.base}${r.de?`, de ${ConferenciaRapida.fmtDia(r.de)} até ${ConferenciaRapida.fmtDia(r.ate)}`:""}?`)) return;
+    if(!a || !r || !r.pode || st.enviando) return;
+    const aviso = r.substituir.length ? `\n\nATENÇÃO: ${r.substituir.length} dia(s) já existem na base e serão refeitos com as linhas do arquivo (${r.removidas.toLocaleString("pt-BR")} linha(s) antigas saem).` : "";
+    if(!confirm(`Gravar ${r.aGravar.toLocaleString("pt-BR")} linha(s) na base ${a.base.base}?${aviso}`)) return;
     st.enviando = true;
     this.desenharPreview();
     const prog = document.getElementById("bases-prog");
-    const TAM = 4000, linhas = r.linhasEnviar, partes = Math.max(1, Math.ceil(linhas.length/TAM));
-    const tot = { recebidas:0, novas:0, duplicadas:0 };
+    const TAM = 8000, linhas = r.linhasEnviar, partes = Math.max(1, Math.ceil(linhas.length/TAM));
+    const tot = { gravadas:0, removidas:0 };
+    let esperado = q.linhasTotal;
     try{
       for(let p=1; p<=partes; p++){
-        prog.innerHTML = `<div class="adm-prog"><div style="width:${Math.round((p-1)/partes*100)}%"></div></div><span class="small-muted">Enviando parte ${p} de ${partes}...</span>`;
-        const resp = await Api.call({ acao:"bases_enviar", base:a.base.base, rapido:true, diaCorte:r.ultimaBase, linhasTotal:q.linhasTotal, parte:p, partes, cabecalho:a.cab, linhas:linhas.slice((p-1)*TAM, p*TAM) });
+        prog.innerHTML = `<div class="adm-prog"><div style="width:${Math.round((p-1)/partes*100)}%"></div></div><span class="small-muted">Enviando bloco ${p} de ${partes}...</span>`;
+        const resp = await Api.call({ acao:"bases_aplicar", base:a.base.base, parte:p, partes, linhasTotal:esperado, substituir:p===1?r.substituir:[], cabecalho:a.cab, linhas:linhas.slice((p-1)*TAM, p*TAM) });
         if(!resp || !resp.ok) throw new Error((resp && resp.erro) || "O servidor recusou o envio.");
-        tot.recebidas += resp.recebidas||0; tot.novas += resp.novas||0; tot.duplicadas += resp.duplicadas||0;
+        tot.gravadas += resp.gravadas||0; tot.removidas += resp.removidas||0; esperado = resp.linhasApos;
       }
-      await Api.call({ acao:"bases_concluir", base:a.base.base, arquivo:a.nome+" [conferência rápida]", enviadas:a.linhas.length, novas:tot.novas, duplicadas:Math.max(0, a.linhas.length-tot.novas) });
+      await Api.call({ acao:"bases_concluir", base:a.base.base, arquivo:a.nome+" [por dia]", enviadas:a.linhas.length, novas:tot.gravadas, duplicadas:Math.max(0, a.linhas.length-tot.gravadas) });
       st.enviando = false; st.arq = null; st.lista = null;
-      toast(`Base ${a.base.base}: ${tot.novas.toLocaleString("pt-BR")} linhas gravadas.`, "success");
+      toast(`Base ${a.base.base}: ${tot.gravadas.toLocaleString("pt-BR")} linhas gravadas.`, "success");
       await this.renderBases(true);
       const box = document.getElementById("bases-envio");
-      if(box) box.innerHTML = `<div class="panel"><div class="hint-box">✅ Base <strong>${escapeHtml(a.base.base)}</strong> atualizada: ${this.fmtNum(tot.novas)} gravadas${tot.duplicadas?`, ${this.fmtNum(tot.duplicadas)} já existiam`:""}.
+      if(box) box.innerHTML = `<div class="panel"><div class="hint-box">✅ Base <strong>${escapeHtml(a.base.base)}</strong> atualizada: ${this.fmtNum(tot.gravadas)} gravadas${tot.removidas?`, ${this.fmtNum(tot.removidas)} antigas do mesmo dia trocadas`:""}.
         <button class="btn btn-primary btn-sm" id="bases-reload" style="margin-left:10px;">Atualizar o painel agora</button></div></div>`;
       const rb = document.getElementById("bases-reload");
       if(rb) rb.addEventListener("click", ()=> UI.carregarOnline());
@@ -399,7 +384,7 @@ const AdminUI = {
       this.desenharPreview();
       const pr = document.getElementById("bases-prog");
       toast("Não foi possível concluir o envio", "error", { sub:String(e.message||e).slice(0,140) });
-      if(pr) pr.innerHTML = `<div class="error-box" style="margin-top:12px;">${escapeHtml(e.message||String(e))}<br>Se parte do arquivo já foi gravada, refaça a conferência antes de reenviar.</div>`;
+      if(pr) pr.innerHTML = `<div class="error-box" style="margin-top:12px;">${escapeHtml(e.message||String(e))}<br>Se parte do arquivo já foi gravada, refaça a conferência por dia antes de reenviar: ela mostra o que falta.</div>`;
     }
   },
 
@@ -421,7 +406,7 @@ const AdminUI = {
     st.enviando = true;
     this.desenharPreview();
     const prog = document.getElementById("bases-prog");
-    const TAM = 4000, partes = Math.max(1, Math.ceil(a.linhas.length/TAM));
+    const TAM = 15000, partes = Math.max(1, Math.ceil(a.linhas.length/TAM));   // blocos grandes: cada bloco relê a base para conferir duplicidade
     const tot = { recebidas:0, novas:0, duplicadas:0, substituira:0 };
     try{
       for(let p=1; p<=partes; p++){
