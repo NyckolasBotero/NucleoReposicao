@@ -138,7 +138,7 @@ const AdminUI = {
   /* ================================================================== */
   /* BASES                                                               */
   /* ================================================================== */
-  basesState: { lista:null, erro:null, carregando:false, arq:null, enviando:false },
+  basesState: { lista:null, erro:null, carregando:false, arq:null, enviando:false, planilha:null, fila:[], rodando:false, seq:0 },
 
   async renderBases(force){
     const pane = document.getElementById("pane-bases");
@@ -150,7 +150,7 @@ const AdminUI = {
       pane.innerHTML = `<div class="panel"><h2 class="adm-h">Bases</h2><p class="small-muted">Carregando situação das bases...</p></div>`;
       try{
         const r = await Api.call({ acao:"bases_status" });
-        if(r && r.ok) st.lista = r.bases; else st.erro = (r && r.erro) || "Falha ao consultar as bases.";
+        if(r && r.ok){ st.lista = r.bases; st.planilha = r.planilha || null; } else st.erro = (r && r.erro) || "Falha ao consultar as bases.";
       }catch(e){ st.erro = e.message; }
       st.carregando = false;
     }
@@ -186,22 +186,26 @@ const AdminUI = {
         </div>
         <p class="small-muted">Carregue aqui os arquivos exportados (8460, 8022, 1707 GERAL etc.). Antes de gravar, o sistema confere o que já existe na base para não duplicar.
           <strong>Acumula sem duplicar</strong>: entram só as linhas que ainda não existem. <strong>Substitui tudo</strong>: o arquivo novo troca o conteúdo da base (foto do momento).</p>
+        ${this.htmlPlanilha()}
         <div class="table-wrap"><table class="adm-table">
-          <thead><tr><th>Base</th><th>Como grava</th><th>Linhas na base</th><th>Data mais recente nos dados</th><th>Último carregamento</th><th></th></tr></thead>
+          <thead><tr><th>Base</th><th>Como grava</th><th>Linhas na base</th><th>Linhas disponíveis</th><th>Data mais recente nos dados</th><th>Último carregamento</th><th></th></tr></thead>
           <tbody>${lista.map((b,i)=>{
             const u = b.ultimaCarga, dr = this.dataMaisRecente(b.base);
             return `<tr>
               <td><strong>${escapeHtml(b.base)}</strong><div class="small-muted">${escapeHtml(b.desc||"")}</div></td>
               <td>${modoTxt(b.modo)}</td>
               <td>${b.existe ? this.fmtNum(b.linhasAtuais) : `<span class="small-muted">aba não criada</span>`}</td>
+              <td>${this.htmlDisp(b)}</td>
               <td>${dr ? fmtDateBR(dr) : "—"}</td>
               <td>${u ? `<strong>${escapeHtml(u.quando)}</strong><div class="small-muted">${escapeHtml(u.usuario||"")} · ${escapeHtml(u.arquivo||"")}<br>${this.fmtNum(u.novas)} novas${b.modo==="acumular"?` · ${this.fmtNum(u.duplicadas)} já existiam`:""}</div>` : `<span class="small-muted">nenhum registro</span>`}</td>
               <td><button class="btn btn-primary btn-sm" data-base="${i}">Carregar</button></td>
             </tr>`; }).join("")}</tbody>
         </table></div>
       </div>
+      <div id="bases-fila"></div>
       <input type="file" id="bases-file" accept=".xlsx,.xls,.csv" style="display:none">
       <div id="bases-envio"></div>`;
+    this.desenharFila();
     document.getElementById("bases-refresh").addEventListener("click", ()=> this.renderBases(true));
     const input = document.getElementById("bases-file");
     pane.querySelectorAll("[data-base]").forEach(b=> b.addEventListener("click", ()=>{
@@ -210,6 +214,89 @@ const AdminUI = {
     }));
     input.addEventListener("change", ()=>{ if(input.files[0]) this.lerArquivo(input.files[0]); });
     if(st.arq) this.desenharPreview();
+  },
+
+  // ---- capacidade: o Google Sheets limita a planilha inteira a 10 milhões de células ----
+  htmlDisp(b){
+    if(!b.existe || b.linhasDisponiveis==null) return `<span class="small-muted">—</span>`;
+    const d = b.linhasDisponiveis, cor = d < 50000 ? "var(--danger,#c0392b)" : d < 200000 ? "var(--warn,#b9770e)" : "inherit";
+    return `<strong style="color:${cor}">${this.fmtNum(d)}</strong><div class="small-muted">${b.colunas} colunas</div>`;
+  },
+  htmlPlanilha(){
+    const p = this.basesState.planilha;
+    if(!p) return "";
+    const cor = p.pct >= 90 ? "var(--danger,#c0392b)" : p.pct >= 75 ? "var(--warn,#b9770e)" : "var(--primary,#2563eb)";
+    return `<div class="hint-box" style="margin:10px 0;"><strong>Espaço da planilha:</strong> ${this.fmtNum(p.usadas)} de ${this.fmtNum(p.limite)} células usadas (${String(p.pct).replace(".",",")}%) · ${this.fmtNum(p.livres)} livres.
+      <div class="adm-prog" style="margin-top:6px;"><div style="width:${Math.min(100,p.pct)}%;background:${cor}"></div></div>
+      <div class="small-muted" style="margin-top:4px;">O limite vale para a planilha toda. “Linhas disponíveis” mostra quantas linhas ainda cabem em cada aba, de acordo com o número de colunas dela.</div></div>`;
+  },
+  // confere se as linhas a gravar cabem; devolve texto de erro ou ""
+  conferirEspaco(base, aGravar, removidas){
+    const b = (this.basesState.lista||[]).find(x=>x.base===base);
+    if(!b || b.linhasDisponiveis==null) return "";
+    const falta = aGravar - (removidas||0) - b.linhasDisponiveis;
+    return falta > 0 ? `A base ${base} não tem espaço: faltam ${this.fmtNum(falta)} linha(s) (disponíveis: ${this.fmtNum(b.linhasDisponiveis)}). Apague abas que não usa ou reduza o histórico.` : "";
+  },
+
+  // ---- fila de carregamentos: um de cada vez (o servidor grava uma coisa por vez), enquanto você prepara o próximo arquivo ----
+  enfileirar(job){
+    const st = this.basesState;
+    job.id = ++st.seq; job.status = "espera"; job.msg = ""; job.pct = 0; job.stale = false;
+    st.fila.push(job);
+    st.arq = null;
+    this.desenharBases();
+    toast(`Na fila: ${job.base} (${st.fila.filter(j=>j.status==="espera"||j.status==="rodando").length} pendente(s))`, "success");
+    this.rodarFila();
+  },
+  desenharFila(){
+    const box = document.getElementById("bases-fila"), st = this.basesState;
+    if(!box) return;
+    if(!st.fila.length){ box.innerHTML = ""; return; }
+    const rot = { espera:"Aguardando", rodando:"Gravando", ok:"Concluído", erro:"Erro" };
+    const temFim = st.fila.some(j=>j.status==="ok"||j.status==="erro");
+    box.innerHTML = `<div class="panel">
+      <div class="adm-head"><h2 class="adm-h">Fila de carregamentos</h2>${temFim?`<button class="btn btn-outline btn-sm" id="fila-limpar">Limpar concluídos</button>`:""}</div>
+      <p class="small-muted">Os arquivos são gravados um por vez, na ordem. Pode escolher e conferir outro arquivo enquanto a fila roda; não feche nem recarregue a página até terminar.</p>
+      <div class="table-wrap"><table class="adm-table"><thead><tr><th>#</th><th>Base</th><th>Arquivo</th><th>Situação</th><th></th></tr></thead><tbody>${st.fila.map(j=>`
+        <tr><td>${j.id}</td><td><strong>${escapeHtml(j.base)}</strong></td><td>${escapeHtml(j.nome)}<div class="small-muted">${this.fmtNum(j.total)} linha(s) a gravar</div></td>
+        <td><strong>${rot[j.status]}</strong>${j.status==="rodando"?`<div class="adm-prog"><div style="width:${j.pct}%"></div></div>`:""}${j.msg?`<div class="small-muted">${escapeHtml(j.msg)}</div>`:""}</td>
+        <td>${j.status==="espera"?`<button class="btn btn-outline btn-sm" data-fila-rm="${j.id}">Tirar da fila</button>`:""}</td></tr>`).join("")}</tbody></table></div></div>`;
+    box.querySelectorAll("[data-fila-rm]").forEach(b=> b.addEventListener("click", ()=>{
+      st.fila = st.fila.filter(j=> !(j.id===Number(b.dataset.filaRm) && j.status==="espera"));
+      this.desenharFila();
+    }));
+    const l = document.getElementById("fila-limpar");
+    if(l) l.addEventListener("click", ()=>{ st.fila = st.fila.filter(j=>j.status==="espera"||j.status==="rodando"); this.desenharFila(); });
+  },
+  async rodarFila(){
+    const st = this.basesState;
+    if(st.rodando) return;
+    st.rodando = true;
+    let feito = false;
+    try{
+      let j;
+      while((j = st.fila.find(x=>x.status==="espera"))){
+        j.status = "rodando"; j.msg = ""; j.pct = 0; this.desenharFila();
+        try{
+          if(j.tipo==="rapido") await this.executarRapido(j); else await this.executarCompleto(j);
+          j.status = "ok"; j.pct = 100; feito = true;
+        }catch(e){
+          j.status = "erro"; j.msg = String(e.message||e).slice(0,300) + " Se parte já foi gravada, refaça a conferência antes de reenviar.";
+          toast(`Falha ao gravar ${j.base}`, "error", { sub:String(e.message||e).slice(0,140) });
+        }
+        st.fila.forEach(x=>{ if(x.status==="espera" && x.base===j.base) x.stale = true; });
+        this.desenharFila();
+      }
+    } finally { st.rodando = false; }
+    if(feito){
+      st.lista = null;
+      await this.renderBases(true);
+      const box = document.getElementById("bases-envio");
+      if(box && !st.arq) box.innerHTML = `<div class="panel"><div class="hint-box">✅ Fila concluída.
+        <button class="btn btn-primary btn-sm" id="bases-reload" style="margin-left:10px;">Atualizar o painel agora</button></div></div>`;
+      const rb = document.getElementById("bases-reload");
+      if(rb) rb.addEventListener("click", ()=> UI.carregarOnline());
+    }
   },
 
   // ---- lê o arquivo escolhido e mostra o resumo antes de enviar ----
@@ -351,41 +438,39 @@ const AdminUI = {
       ${r.mantidos ? `<div style="margin-top:4px;">${r.mantidos} dia(s) em comum ficam como estão.</div>` : ""}</div>${tab}${cargaTxt}${forca}${avisos}`;
   },
 
-  // grava o plano: apaga os dias a refazer e acrescenta as linhas em blocos grandes (uma escrita por bloco)
-  async enviarRapido(){
+  // confirma e põe o plano na fila de gravação
+  enviarRapido(){
     const st = this.basesState, a = st.arq, q = a && a.rapido, r = q && q.res;
     if(!a || !r || !r.pode || st.enviando) return;
+    const erroEsp = this.conferirEspaco(a.base.base, r.aGravar, r.removidas);
+    if(erroEsp){ toast("Sem espaço na base", "error", { sub:erroEsp }); return; }
     const aviso = r.substituir.length ? `\n\nATENÇÃO: ${r.substituir.length} dia(s) já existem na base e serão refeitos com as linhas do arquivo (${r.removidas.toLocaleString("pt-BR")} linha(s) antigas saem).` : "";
-    if(!confirm(`Gravar ${r.aGravar.toLocaleString("pt-BR")} linha(s) na base ${a.base.base}?${aviso}`)) return;
-    st.enviando = true;
-    this.desenharPreview();
-    const prog = document.getElementById("bases-prog");
+    if(!confirm(`Colocar na fila: gravar ${r.aGravar.toLocaleString("pt-BR")} linha(s) na base ${a.base.base}?${aviso}`)) return;
+    this.enfileirar({ tipo:"rapido", base:a.base.base, nome:a.nome, total:r.aGravar, a, q });
+  },
+
+  // grava o plano: apaga os dias a refazer e acrescenta as linhas em blocos grandes (uma escrita por bloco)
+  async executarRapido(job){
+    const a = job.a, q = job.q;
+    let r = q.res, esperado = q.linhasTotal;
+    if(job.stale){   // outra carga da mesma base terminou antes: confere de novo o que falta
+      job.msg = "Reconferindo a base...";  this.desenharFila();
+      const novo = await Api.call({ acao:"bases_dias", base:a.base.base, de:a.contagem.minDia });
+      if(!novo || !novo.ok) throw new Error((novo && novo.erro) || "O servidor não devolveu o resumo da base.");
+      r = ConferenciaRapida.planejar(a.contagem, novo, !!q.forcar); esperado = novo.linhasTotal;
+      if(!r.pode){ job.msg = "Nada novo a gravar (a base já tem esses dados)."; job.total = 0; return; }
+      job.total = r.aGravar;
+    }
     const TAM = 8000, linhas = r.linhasEnviar, partes = Math.max(1, Math.ceil(linhas.length/TAM));
     const tot = { gravadas:0, removidas:0 };
-    let esperado = q.linhasTotal;
-    try{
-      for(let p=1; p<=partes; p++){
-        prog.innerHTML = `<div class="adm-prog"><div style="width:${Math.round((p-1)/partes*100)}%"></div></div><span class="small-muted">Enviando bloco ${p} de ${partes}...</span>`;
-        const resp = await Api.call({ acao:"bases_aplicar", base:a.base.base, parte:p, partes, linhasTotal:esperado, substituir:p===1?r.substituir:[], cabecalho:a.cab, linhas:linhas.slice((p-1)*TAM, p*TAM) });
-        if(!resp || !resp.ok) throw new Error((resp && resp.erro) || "O servidor recusou o envio.");
-        tot.gravadas += resp.gravadas||0; tot.removidas += resp.removidas||0; esperado = resp.linhasApos;
-      }
-      await Api.call({ acao:"bases_concluir", base:a.base.base, arquivo:a.nome+" [por dia]", enviadas:a.linhas.length, novas:tot.gravadas, duplicadas:Math.max(0, a.linhas.length-tot.gravadas) });
-      st.enviando = false; st.arq = null; st.lista = null;
-      toast(`Base ${a.base.base}: ${tot.gravadas.toLocaleString("pt-BR")} linhas gravadas.`, "success");
-      await this.renderBases(true);
-      const box = document.getElementById("bases-envio");
-      if(box) box.innerHTML = `<div class="panel"><div class="hint-box">✅ Base <strong>${escapeHtml(a.base.base)}</strong> atualizada: ${this.fmtNum(tot.gravadas)} gravadas${tot.removidas?`, ${this.fmtNum(tot.removidas)} antigas do mesmo dia trocadas`:""}.
-        <button class="btn btn-primary btn-sm" id="bases-reload" style="margin-left:10px;">Atualizar o painel agora</button></div></div>`;
-      const rb = document.getElementById("bases-reload");
-      if(rb) rb.addEventListener("click", ()=> UI.carregarOnline());
-    }catch(e){
-      st.enviando = false;
-      this.desenharPreview();
-      const pr = document.getElementById("bases-prog");
-      toast("Não foi possível concluir o envio", "error", { sub:String(e.message||e).slice(0,140) });
-      if(pr) pr.innerHTML = `<div class="error-box" style="margin-top:12px;">${escapeHtml(e.message||String(e))}<br>Se parte do arquivo já foi gravada, refaça a conferência por dia antes de reenviar: ela mostra o que falta.</div>`;
+    for(let p=1; p<=partes; p++){
+      job.pct = Math.round((p-1)/partes*100); job.msg = `Enviando bloco ${p} de ${partes}...`; this.desenharFila();
+      const resp = await Api.call({ acao:"bases_aplicar", base:a.base.base, parte:p, partes, linhasTotal:esperado, substituir:p===1?r.substituir:[], cabecalho:a.cab, linhas:linhas.slice((p-1)*TAM, p*TAM) });
+      if(!resp || !resp.ok) throw new Error((resp && resp.erro) || "O servidor recusou o envio.");
+      tot.gravadas += resp.gravadas||0; tot.removidas += resp.removidas||0; esperado = resp.linhasApos;
     }
+    await Api.call({ acao:"bases_concluir", base:a.base.base, arquivo:a.nome+" [por dia]", enviadas:a.linhas.length, novas:tot.gravadas, duplicadas:Math.max(0, a.linhas.length-tot.gravadas) });
+    job.msg = `${this.fmtNum(tot.gravadas)} gravadas${tot.removidas?`, ${this.fmtNum(tot.removidas)} antigas trocadas`:""}.`;
   },
 
   htmlSimulacao(a){
@@ -396,48 +481,56 @@ const AdminUI = {
     return `<div class="${s.novas?"hint-box":"warn-box"}"><strong>${this.fmtNum(s.novas)}</strong> linha(s) nova(s) serão gravadas · <strong>${this.fmtNum(s.duplicadas)}</strong> já existem na base e serão ignoradas.${s.novas?"":" Nada novo para gravar."}</div>`;
   },
 
-  // envia em partes (simulação ou gravação)
+  // simulação (verificação completa) roda direto; gravação vai para a fila
   async enviar(simular){
     const st = this.basesState, a = st.arq;
     if(!a || st.enviando) return;
-    if(!simular && !confirm(a.base.modo==="substituir"
-      ? `Substituir TODO o conteúdo da base ${a.base.base} pelas ${a.linhas.length.toLocaleString("pt-BR")} linhas do arquivo?`
-      : `Gravar as linhas novas na base ${a.base.base}?`)) return;
+    if(!simular){
+      if(!confirm(a.base.modo==="substituir"
+        ? `Colocar na fila: substituir TODO o conteúdo da base ${a.base.base} pelas ${a.linhas.length.toLocaleString("pt-BR")} linhas do arquivo?`
+        : `Colocar na fila: gravar as linhas novas na base ${a.base.base}?`)) return;
+      const erroEsp = this.conferirEspaco(a.base.base, (a.sim && a.sim.novas) || a.linhas.length, a.base.modo==="substituir" ? a.base.linhasAtuais : 0);
+      if(erroEsp){ toast("Sem espaço na base", "error", { sub:erroEsp }); return; }
+      this.enfileirar({ tipo:"completo", base:a.base.base, nome:a.nome, total:(a.sim && a.sim.novas) || a.linhas.length, a });
+      return;
+    }
     st.enviando = true;
     this.desenharPreview();
     const prog = document.getElementById("bases-prog");
-    const TAM = 15000, partes = Math.max(1, Math.ceil(a.linhas.length/TAM));   // blocos grandes: cada bloco relê a base para conferir duplicidade
+    const TAM = 15000, partes = Math.max(1, Math.ceil(a.linhas.length/TAM));
     const tot = { recebidas:0, novas:0, duplicadas:0, substituira:0 };
     try{
       for(let p=1; p<=partes; p++){
-        prog.innerHTML = `<div class="adm-prog"><div style="width:${Math.round((p-1)/partes*100)}%"></div></div><span class="small-muted">${simular?"Verificando":"Enviando"} parte ${p} de ${partes}...</span>`;
-        const r = await Api.call({ acao:"bases_enviar", base:a.base.base, simular, parte:p, partes, cabecalho:a.cab, linhas:a.linhas.slice((p-1)*TAM, p*TAM) });
+        prog.innerHTML = `<div class="adm-prog"><div style="width:${Math.round((p-1)/partes*100)}%"></div></div><span class="small-muted">Verificando parte ${p} de ${partes}...</span>`;
+        const r = await Api.call({ acao:"bases_enviar", base:a.base.base, simular:true, parte:p, partes, cabecalho:a.cab, linhas:a.linhas.slice((p-1)*TAM, p*TAM) });
         if(!r || !r.ok) throw new Error((r && r.erro) || "O servidor recusou o envio.");
         tot.recebidas += r.recebidas||0; tot.novas += r.novas||0; tot.duplicadas += r.duplicadas||0; tot.substituira = r.substituira||tot.substituira;
       }
-      if(simular){
-        a.sim = tot; a.ultimaVerif = "completo";
-        st.enviando = false;
-        this.desenharPreview();
-        toast("Verificação concluída", "success", { sub:`${tot.novas.toLocaleString("pt-BR")} novas · ${tot.duplicadas.toLocaleString("pt-BR")} já existem` });
-        return;
-      }
-      await Api.call({ acao:"bases_concluir", base:a.base.base, arquivo:a.nome, enviadas:tot.recebidas, novas:tot.novas, duplicadas:tot.duplicadas });
-      st.enviando = false; st.arq = null; st.lista = null;
-      toast(`Base ${a.base.base}: ${tot.novas.toLocaleString("pt-BR")} linhas gravadas.`, "success");
-      await this.renderBases(true);
-      const box = document.getElementById("bases-envio");
-      if(box) box.innerHTML = `<div class="panel"><div class="hint-box">✅ Base <strong>${escapeHtml(a.base.base)}</strong> atualizada: ${this.fmtNum(tot.novas)} gravadas${a.base.modo==="acumular"?`, ${this.fmtNum(tot.duplicadas)} já existiam`:""}.
-        <button class="btn btn-primary btn-sm" id="bases-reload" style="margin-left:10px;">Atualizar o painel agora</button></div></div>`;
-      const rb = document.getElementById("bases-reload");
-      if(rb) rb.addEventListener("click", ()=> UI.carregarOnline());
+      a.sim = tot; a.ultimaVerif = "completo";
+      st.enviando = false;
+      this.desenharPreview();
+      toast("Verificação concluída", "success", { sub:`${tot.novas.toLocaleString("pt-BR")} novas · ${tot.duplicadas.toLocaleString("pt-BR")} já existem` });
     }catch(e){
       st.enviando = false;
       this.desenharPreview();
       const pr = document.getElementById("bases-prog");
-      toast("Não foi possível concluir o envio", "error", { sub:String(e.message||e).slice(0,140) });
-      if(pr) pr.innerHTML = `<div class="error-box" style="margin-top:12px;">${escapeHtml(e.message||String(e))}${simular?"":"<br>Se parte do arquivo já foi gravada, faça a verificação de duplicidade de novo antes de reenviar."}</div>`;
+      toast("Não foi possível concluir a verificação", "error", { sub:String(e.message||e).slice(0,140) });
+      if(pr) pr.innerHTML = `<div class="error-box" style="margin-top:12px;">${escapeHtml(e.message||String(e))}</div>`;
     }
+  },
+
+  async executarCompleto(job){
+    const a = job.a, TAM = 15000, partes = Math.max(1, Math.ceil(a.linhas.length/TAM));
+    const tot = { recebidas:0, novas:0, duplicadas:0 };
+    for(let p=1; p<=partes; p++){
+      job.pct = Math.round((p-1)/partes*100); job.msg = `Enviando parte ${p} de ${partes}...`; this.desenharFila();
+      const r = await Api.call({ acao:"bases_enviar", base:a.base.base, simular:false, parte:p, partes, cabecalho:a.cab, linhas:a.linhas.slice((p-1)*TAM, p*TAM) });
+      if(!r || !r.ok) throw new Error((r && r.erro) || "O servidor recusou o envio.");
+      tot.recebidas += r.recebidas||0; tot.novas += r.novas||0; tot.duplicadas += r.duplicadas||0;
+    }
+    await Api.call({ acao:"bases_concluir", base:a.base.base, arquivo:a.nome, enviadas:tot.recebidas, novas:tot.novas, duplicadas:tot.duplicadas });
+    job.total = tot.novas;
+    job.msg = `${this.fmtNum(tot.novas)} gravadas${a.base.modo==="acumular"?`, ${this.fmtNum(tot.duplicadas)} já existiam`:""}.`;
   },
 
   /* ================================================================== */
