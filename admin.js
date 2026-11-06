@@ -38,7 +38,7 @@ const ConferenciaRapida = {
   RE: /^(\d{2})\/(\d{2})\/(\d{4})(?: \d{2}:\d{2}:\d{2})?$/,
   // dd/MM/aaaa[ hh:mm:ss] (texto) ou serial do Excel → aaaa-MM-dd ("" se não for data)
   chaveDia(v){
-    if(typeof v === "string"){ const m = v.trim().match(this.RE); return m ? `${m[3]}-${m[2]}-${m[1]}` : ""; }
+    if(typeof v === "string"){ const m = v.trim().match(this.RE); return m && +m[3] >= 2000 && +m[3] <= 2100 ? `${m[3]}-${m[2]}-${m[1]}` : ""; }
     if(typeof v === "number" && v > 36526 && v < 80000) return new Date(Math.round((v-25569)*86400000)).toISOString().slice(0,10);
     return "";
   },
@@ -78,7 +78,7 @@ const ConferenciaRapida = {
   planejar(arq, base, forcarMenor){
     const F = d=>this.fmtDia(d), bd = base.dias || {};
     const r = { pode:false, problemas:[], avisos:[], dias:[], substituir:[], aGravar:0, removidas:0, novos:{ n:0, linhas:0, de:"", ate:"" },
-                linhasEnviar:[], ultimaBase: base.ultimaData||"", de: arq.minDia||"", ate: arq.maxDia||"", ultimaCarga: base.ultimaCarga||null, temMenor:false, mantidos:0 };
+                novosDias:[], linhasEnviar:[], ultimaBase: base.ultimaData||"", de: arq.minDia||"", ate: arq.maxDia||"", ultimaCarga: base.ultimaCarga||null, temMenor:false, mantidos:0 };
     if(!arq.maxDia){ r.problemas.push("Não encontrei datas válidas no arquivo."); return r; }
     const sel = new Set();
     Object.keys(arq.dias).sort().forEach(d=>{
@@ -92,14 +92,14 @@ const ConferenciaRapida = {
       if(sit==="menor") r.temMenor = true;
       if(usa) sel.add(d);
       if(b){ r.dias.push({ dia:d, bl:b, fl:f, sit, usa }); }
-      if(sit==="novo"){ r.novos.n++; r.novos.linhas += f; if(!r.novos.de) r.novos.de = d; r.novos.ate = d; }
+      if(sit==="novo"){ r.novosDias.push({ dia:d, l:f }); r.novos.n++; r.novos.linhas += f; if(!r.novos.de) r.novos.de = d; r.novos.ate = d; }
       if(usa && b){ r.substituir.push(d); r.removidas += b; }
       if(!usa && b) r.mantidos++;
       if(usa) r.aGravar += f;
     });
     r.linhasEnviar = arq.unicas.filter(x=>sel.has(x.dia)).sort((x,y)=> x.dia<y.dia?-1:x.dia>y.dia?1:0).map(x=>x.linha);
     if(base.ultimaData && arq.maxDia < base.ultimaData) r.avisos.push(`O arquivo termina em ${F(arq.maxDia)}, antes da última data da base (${F(base.ultimaData)}). Se for um arquivo antigo, confira antes de gravar.`);
-    if(arq.semData) r.avisos.push(`${arq.semData.toLocaleString("pt-BR")} linha(s) do arquivo estão sem data válida e não serão gravadas.`);
+    if(arq.semData) r.avisos.push(`${arq.semData.toLocaleString("pt-BR")} linha(s) do arquivo estão sem data válida (vazia, texto ou ano fora de 2000–2100, como linha de total) e não serão gravadas.`);
     if(arq.repetidas) r.avisos.push(`${arq.repetidas.toLocaleString("pt-BR")} linha(s) idênticas dentro do arquivo serão ignoradas.`);
     r.pode = r.aGravar > 0;
     return r;
@@ -425,6 +425,7 @@ const AdminUI = {
       const sit = x.sit==="menor" && x.usa ? "⚠ será substituído mesmo assim" : (x.sit==="menor" ? "⚠ a base tem mais linhas — será mantida" : rot[x.sit]);
       return `<tr><td>${F(x.dia)}</td><td>${n(x.bl)}</td><td>${n(x.fl)}</td><td>${sit}</td></tr>`; }).join("");
     const tab = r.dias.length ? `<div class="table-wrap" style="margin-top:10px;"><table class="adm-table"><thead><tr><th>Dia em comum</th><th>Linhas na base</th><th>Linhas no arquivo</th><th>O que acontece</th></tr></thead><tbody>${linhas}</tbody></table></div>` : "";
+    const novosTab = r.novosDias.length ? `<div class="table-wrap" style="margin-top:10px;"><table class="adm-table"><thead><tr><th>Dia novo (entra na base)</th><th>Linhas no arquivo</th></tr></thead><tbody>${r.novosDias.map(x=>`<tr><td>${F(x.dia)}</td><td>${n(x.l)}</td></tr>`).join("")}</tbody></table></div>` : "";
     const u = r.ultimaCarga;
     const cargaTxt = r.dias.length && u ? `<div class="small-muted" style="margin-top:6px;">Última carga desta base: <strong>${escapeHtml(u.quando)}</strong> por ${escapeHtml(u.usuario||"—")} (${escapeHtml(u.arquivo||"")}) · ${n(u.novas)} linhas.</div>` : "";
     const forca = r.temMenor ? `<label class="adm-chk" style="margin-top:10px;display:block;"><input type="checkbox" id="bases-forcar" ${q.forcar?"checked":""}> Carregar mesmo assim: substituir também os dias em que a base tem mais linhas que o arquivo</label>` : "";
@@ -435,7 +436,7 @@ const AdminUI = {
     if(r.novos.n) partes.push(`<strong>${n(r.novos.linhas)}</strong> linha(s) de ${r.novos.n} dia(s) novo(s) (${F(r.novos.de)}${r.novos.n>1?" a "+F(r.novos.ate):""})`);
     if(r.substituir.length) partes.push(`<strong>${r.substituir.length}</strong> dia(s) refeito(s) (${n(r.removidas)} linha(s) antigas trocadas pelas do arquivo)`);
     return `<div class="${r.dias.some(x=>x.usa)?"warn-box":"hint-box"}"><strong>Plano de gravação:</strong> ${partes.join(" + ")} — total de <strong>${n(r.aGravar)}</strong> linha(s) gravadas ao fim da base, em blocos únicos.
-      ${r.mantidos ? `<div style="margin-top:4px;">${r.mantidos} dia(s) em comum ficam como estão.</div>` : ""}</div>${tab}${cargaTxt}${forca}${avisos}`;
+      ${r.mantidos ? `<div style="margin-top:4px;">${r.mantidos} dia(s) em comum ficam como estão.</div>` : ""}</div>${novosTab}${tab}${cargaTxt}${forca}${avisos}`;
   },
 
   // confirma e põe o plano na fila de gravação
