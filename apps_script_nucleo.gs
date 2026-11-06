@@ -382,13 +382,23 @@ function dadosSS() { return SpreadsheetApp.openById(DADOS_SHEET_ID); }
 
 function basesStatus() {
   const ss = dadosSS(), ultimas = ultimasCargas(ss);
+  const LIMITE = 10000000; // limite do Google Sheets: células alocadas (linhas x colunas de todas as abas)
+  let usadas = 0;
+  ss.getSheets().forEach(function (s) { usadas += s.getMaxRows() * s.getMaxColumns(); });
+  const livres = Math.max(0, LIMITE - usadas);
   const bases = Object.keys(BASES).map(function (nome) {
     const cfg = BASES[nome], sh = ss.getSheetByName(nome);
     const lin = sh ? Math.max(0, sh.getLastRow() - (cfg.semCabecalho ? 0 : 1)) : 0;
+    let colunas = null, disp = null;
+    if (sh) {
+      colunas = Math.max(1, sh.getMaxColumns());
+      // linhas vazias que a aba já tem + linhas que ainda cabem na planilha
+      disp = Math.max(0, sh.getMaxRows() - sh.getLastRow()) + Math.floor(livres / colunas);
+    }
     return { base: nome, modo: cfg.modo, desc: cfg.desc, semCabecalho: !!cfg.semCabecalho, existe: !!sh, linhasAtuais: lin, ultimaCarga: ultimas[nome] || null,
-             colData: cfg.data || null, colOS: cfg.os || null };
+             colData: cfg.data || null, colOS: cfg.os || null, colunas: colunas, linhasDisponiveis: disp };
   });
-  return { ok: true, bases: bases };
+  return { ok: true, bases: bases, planilha: { limite: LIMITE, usadas: usadas, livres: livres, pct: Math.round(usadas / LIMITE * 1000) / 10 } };
 }
 
 function ultimasCargas(ss) {
