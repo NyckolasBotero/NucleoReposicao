@@ -951,7 +951,7 @@ const LancUI = {
         const quem = inf ? `${this.h(inf.nomeFunc || "")} <span class="small-muted">${this.h(inf.func||"")}</span>` : "—";
         return `<tr class="av-lin" data-av-ex="${this.h(x.num)}" style="cursor:pointer"><td style="width:26px;color:#7a8798">${inf ? (aberto ? "▾" : "▸") : ""}</td><td><strong>${this.h(x.num)}</strong></td><td>${this.h(x.tipo||"—")}</td><td>${this.h(x.lancadoEm||"—")}</td><td>${dt}</td><td>${quem}</td>
         <td>${na ? '<span class="adm-tag acc">✔</span>' : (x.na9712===false ? '<span class="adm-tag rep">⚠</span>' : "—")}</td>
-        <td style="text-align:right;white-space:nowrap"><button type="button" class="btn btn-outline btn-sm" data-av-ed="${this.h(x.num)}">✏️ Editar</button></td></tr>`
+        <td style="text-align:right;white-space:nowrap"><button type="button" class="btn btn-outline btn-sm" data-av-ed="${this.h(x.num)}">✏️ Editar</button> <button type="button" class="btn btn-outline btn-sm btn-danger" data-av-del="${this.h(x.num)}">🗑 Excluir</button></td></tr>`
         + (aberto && inf ? `<tr><td></td><td colspan="7" style="background:#f7f9fc">${this.resumoInfo(inf)}${this.tabelaItens(inf.rows)}</td></tr>` : "");
       };
       let corpo = pend.map(linhaPend).join("") + srv.slice(0, av.limite).map(linha).join("");
@@ -962,9 +962,25 @@ const LancUI = {
         ${srv.length > av.limite ? `<div style="margin-top:8px"><button type="button" class="btn btn-outline btn-sm" id="av-mais">Mostrar mais (${srv.length - av.limite})</button></div>` : ""}`;
       box.querySelectorAll("[data-av-ex]").forEach(tr=> tr.addEventListener("click", (e)=>{ if(e.target.closest("button")) return; const n = tr.dataset.avEx; if(!this.info9712(n)) return toast("Este número não está na 9712 carregada — sem itens para mostrar.", "error"); av.abertos.has(n) ? av.abertos.delete(n) : av.abertos.add(n); lista(); }));
       box.querySelectorAll("[data-av-ed]").forEach(b=> b.addEventListener("click", ()=> editar(b.dataset.avEd)));
+      box.querySelectorAll("[data-av-del]").forEach(b=> b.addEventListener("click", ()=> excluir(b.dataset.avDel)));
       box.querySelectorAll("[data-av-rm]").forEach(b=> b.addEventListener("click", ()=>{ av.fila = av.fila.filter(x=>String(x.id) !== b.dataset.avRm); lista(); }));
       const mais = vivo("av-mais"); if(mais) mais.addEventListener("click", ()=>{ av.limite += 200; lista(); });
       const dv = vivo("av-div"); if(dv) dv.addEventListener("click", ()=> corrigirTipos());
+    };
+    /** exclui um lançamento da REP.AVARIA (pede confirmação) */
+    const excluir = (num)=>{
+      const x = (av.itens||[]).find(i=>i.num === num); if(!x) return;
+      UI.openModal(`<h3 style="margin-top:0">Excluir lançamento ${this.h(num)}?</h3>
+        <p style="margin-top:0">A linha será <strong>removida</strong> da planilha REP.AVARIA (tipo <strong>${this.h(x.tipo||"—")}</strong>, lançado em ${this.h(x.lancadoEm||"—")}). A ação fica registrada no log.</p>
+        <div id="avx-msg"></div>
+        <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-danger" id="avx-ok">Excluir</button></div>`);
+      document.getElementById("avx-ok").addEventListener("click", async ()=>{
+        const r = await this.enviar(document.getElementById("avx-ok"), { acao:"lanc_avaria_excluir", num });
+        if(!r || !r.ok) return this.aviso("avx-msg", "erro", this.h((r && r.erro) || "Não foi possível excluir."));
+        av.itens = (av.itens||[]).filter(i=>i.num !== num); av.abertos.delete(num); av.srv.delete(num);
+        if(this.nums9712().set) { /* o número volta a poder ser lançado */ }
+        UI.closeModal(); toast("Lançamento " + num + " excluído."); lista(); indicador();
+      });
     };
     /** lançamentos "Recuperado Repositor" sem motivo 1886 → Relação Repositor, e "Relação Repositor" com motivo 1886 → Recuperado Repositor */
     const divergentes = ()=>{

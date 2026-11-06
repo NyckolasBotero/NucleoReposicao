@@ -86,7 +86,10 @@ function doPost(e) {
     if (d.acao === 'sessao') return resposta(s);
     if (d.acao === 'uso') return resposta(usoRegistrar(d, s));
 
-    const lk = LockService.getScriptLock(); lk.waitLock(30000);
+    // Só quem GRAVA espera na fila (trava global). Consultas não travam ninguém — era isso que gerava
+    // "Tempo limite do bloqueio" quando uma carga grande estava em andamento.
+    const lk = LEITURAS_SEM_TRAVA[d.acao] ? null : LockService.getScriptLock();
+    if (lk) lk.waitLock(90000);
     try {
       if (d.acao === 'admin_listar') { exigir(s, PERM_ACESSOS); return resposta(adminListar()); }
       if (d.acao === 'admin_historico') { exigir(s, PERM_ACESSOS); return resposta(historicoAcessos(d)); }
@@ -94,14 +97,25 @@ function doPost(e) {
       if (d.acao === 'bases_status') { exigir(s, PERM_BASES); return resposta(basesStatus()); }
       if (d.acao === 'bases_resumo') { exigir(s, PERM_BASES); return resposta(basesResumo(d)); }
       if (d.acao === 'bases_enviar') { exigir(s, PERM_BASES); return resposta(basesEnviar(d)); }
+      if (d.acao === 'bases_dias') { exigir(s, PERM_BASES); return resposta(basesDias(d)); }
+      if (d.acao === 'bases_aplicar') { exigir(s, PERM_BASES); return resposta(basesAplicar(d)); }
       if (d.acao === 'bases_concluir') { exigir(s, PERM_BASES); return resposta(basesConcluir(d, s)); }
       if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
-    } finally { lk.releaseLock(); }
+    } finally { if (lk) lk.releaseLock(); }
     return resposta({ ok: false, erro: 'Ação desconhecida.' });
   } catch (err) {
-    return resposta({ ok: false, erro: String(err && err.message ? err.message : err) });
+    let msg = String(err && err.message ? err.message : err);
+    if (/bloqueio|lock/i.test(msg)) msg = 'O servidor está ocupado com outra gravação. Aguarde alguns segundos e tente de novo.';
+    return resposta({ ok: false, erro: msg });
   }
 }
+
+/** Ações que só leem: rodam sem a trava global (várias pessoas podem consultar enquanto alguém grava). */
+const LEITURAS_SEM_TRAVA = {
+  admin_listar: 1, admin_historico: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
+  lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
+  lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1
+};
 
 function resposta(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
@@ -599,6 +613,86 @@ function basesEnviar(d) {
   return { ok: true, simulacao: simular, modo: cfg.modo, recebidas: entrada.length, novas: novas.length, duplicadas: dup };
 }
 
+/**
+ * Contagem de linhas POR DIA na base, a partir de `de` (aaaa-MM-dd; vazio = tudo). Lê só a coluna de data.
+ * O site usa isso para comparar, dia a dia, só os dias que o arquivo novo e a base têm em comum.
+ */
+function basesDias(d) {
+  const nome = String(d.base || ''), cfg = BASES[nome];
+  if (!cfg) throw new Error('Base desconhecida: ' + nome);
+  if (cfg.modo !== 'acumular' || !cfg.data) throw new Error('A base "' + nome + '" não tem coluna de data para comparar por dia.');
+  const ss = dadosSS(), sh = ss.getSheetByName(nome), ultima = ultimasCargas(ss)[nome] || null;
+  if (!sh || sh.getLastRow() < 2) return { ok: true, vazia: true, linhasTotal: sh ? sh.getLastRow() : 0, dias: {}, ultimaData: '', ultimaCarga: ultima };
+  const iD = colunaPorTitulo(sh, cfg.data);
+  if (iD < 0) throw new Error('A coluna "' + cfg.data + '" não existe na base "' + nome + '".');
+  const de = String(d.de || ''), n = sh.getLastRow() - 1, tz = tzPadrao(), datas = sh.getRange(2, iD + 1, n, 1).getValues();
+  const dias = {}; let max = '', semData = 0;
+  for (let i = 0; i < n; i++) {
+    const k = diaChave(datas[i][0], tz);
+    if (!k) { semData++; continue; }
+    if (k > max) max = k;
+    if (!de || k >= de) dias[k] = (dias[k] || 0) + 1;
+  }
+  return { ok: true, linhasTotal: sh.getLastRow(), ultimaData: max, dias: dias, semData: semData, ultimaCarga: ultima };
+}
+
+/**
+ * Grava o plano aprovado pelo site, em blocos grandes (uma escrita por bloco):
+ *  - parte 1: apaga da base os dias a SUBSTITUIR (d.substituir = ['aaaa-MM-dd', ...]) e acrescenta o 1º bloco ao fim;
+ *  - demais partes: só acrescentam ao fim.
+ * d.linhasTotal = nº de linhas que a base deve ter ANTES desta parte (garante que nada mudou no meio do caminho
+ * e impede gravar o mesmo arquivo duas vezes). Devolve linhasApos, para a próxima parte.
+ */
+function basesAplicar(d) {
+  const nome = String(d.base || ''), cfg = BASES[nome];
+  if (!cfg) throw new Error('Base desconhecida: ' + nome);
+  if (cfg.modo !== 'acumular' || !cfg.data) throw new Error('A base "' + nome + '" não aceita gravação por dia.');
+  const parte = Number(d.parte) || 1, tz = tzPadrao(), ss = dadosSS();
+  const cab = (Array.isArray(d.cabecalho) ? d.cabecalho : []).map(function (x) { return String(x == null ? '' : x).trim(); });
+  const entrada = (Array.isArray(d.linhas) ? d.linhas : []).map(function (l) { return l.map(converter); });
+  let sh = ss.getSheetByName(nome);
+  if (!sh || sh.getLastRow() === 0) {
+    if (!cab.filter(String).length) throw new Error('O arquivo não tem linha de títulos.');
+    if (!sh) sh = ss.insertSheet(nome);
+    garantirTamanho(sh, 1, cab.length);
+    sh.getRange(1, 1, 1, cab.length).setValues([cab]);
+  }
+  if (Number(d.linhasTotal) !== sh.getLastRow())
+    throw new Error('A base mudou desde a conferência (outra carga foi gravada ou este arquivo já foi enviado). Confira o arquivo de novo.');
+
+  const shCab = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(function (x) { return String(x).trim(); });
+  while (shCab.length && !shCab[shCab.length - 1]) shCab.pop();
+  const novasCols = cab.filter(function (c) { return c && shCab.indexOf(c) < 0; });
+  if (novasCols.length) throw new Error('O arquivo tem colunas que não existem na base "' + nome + '": ' + novasCols.join(', ') + '. Confira se é o arquivo certo.');
+  const mapa = shCab.map(function (c) { return cab.indexOf(c); });
+  if (mapa.every(function (i) { return i < 0; })) throw new Error('Nenhuma coluna do arquivo confere com a base "' + nome + '".');
+
+  let removidas = 0;
+  const sub = {}; (Array.isArray(d.substituir) ? d.substituir : []).forEach(function (k) { sub[String(k)] = 1; });
+  if (parte === 1 && Object.keys(sub).length && sh.getLastRow() > 1) {
+    const iD = shCab.map(normalizar).indexOf(normalizar(cfg.data));
+    const datas = sh.getRange(2, iD + 1, sh.getLastRow() - 1, 1).getValues(), runs = [];
+    let ini = -1;
+    for (let i = 0; i <= datas.length; i++) {
+      const alvo = i < datas.length && sub[diaChave(datas[i][0], tz)] === 1;
+      if (alvo && ini < 0) ini = i;
+      if (!alvo && ini >= 0) { runs.push([ini, i - ini]); ini = -1; }
+    }
+    for (let r = runs.length - 1; r >= 0; r--) { sh.deleteRows(2 + runs[r][0], runs[r][1]); removidas += runs[r][1]; }
+  }
+  const novas = [];
+  entrada.forEach(function (l) {
+    const linha = mapa.map(function (i) { return i < 0 ? '' : (l[i] === undefined ? '' : l[i]); });
+    if (!linha.every(function (v) { return v === '' || v === null; })) novas.push(linha);
+  });
+  if (novas.length) {
+    const ini = Math.max(sh.getLastRow(), 1) + 1;
+    garantirTamanho(sh, ini + novas.length - 1, shCab.length);
+    sh.getRange(ini, 1, novas.length, shCab.length).setValues(novas);
+  }
+  return { ok: true, gravadas: novas.length, removidas: removidas, linhasApos: sh.getLastRow() };
+}
+
 /** Registra a carga (data/hora, quem, arquivo e totais) em Bases_Log. */
 function basesConcluir(d, sessao) {
   const nome = String(d.base || '');
@@ -649,7 +743,7 @@ const SUB_DA_ACAO = {
   lanc_advertencia_listar: 'Lançar Advertência', lanc_advertencia_editar: 'Lançar Advertência',
   lanc_coletor_listar: 'Controle de Coletores', lanc_coletor_salvar: 'Controle de Coletores', lanc_coletor_termo: 'Controle de Coletores',
   lanc_suspensao_salvar: 'Lançar Suspensão', lanc_suspensao_listar: 'Lançar Suspensão', lanc_suspensao_editar: 'Lançar Suspensão',
-  lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712', lanc_avaria_listar: 'Lançar Avaria 9712', lanc_avaria_editar: 'Lançar Avaria 9712', lanc_avaria_corrigir: 'Lançar Avaria 9712', lanc_base_atualizada: 'Devolução de Mercadorias',
+  lanc_avaria_verificar: 'Lançar Avaria 9712', lanc_avaria_salvar: 'Lançar Avaria 9712', lanc_avaria_listar: 'Lançar Avaria 9712', lanc_avaria_editar: 'Lançar Avaria 9712', lanc_avaria_corrigir: 'Lançar Avaria 9712', lanc_avaria_excluir: 'Lançar Avaria 9712', lanc_base_atualizada: 'Devolução de Mercadorias',
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
   lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
@@ -689,6 +783,7 @@ function lancamento(d, s) {
     case 'lanc_avaria_listar': return avariaListar(d);
     case 'lanc_avaria_editar': return avariaEditar(d, s);
     case 'lanc_avaria_corrigir': return avariaCorrigir(d, s);
+    case 'lanc_avaria_excluir': return avariaExcluir(d, s);
     case 'lanc_base_atualizada': return baseAtualizada(d);
     case 'lanc_chamada_dia': return chamadaDia(d);
     case 'lanc_chamada_salvar': return chamadaSalvar(d, s);
@@ -1504,6 +1599,17 @@ function avariaCorrigir(d, s) {
   });
   if (feitos) registrarLog(s, 'REP.AVARIA (correção de tipos)', feitos + ' lançamento(s) · ' + log.slice(0, 8).join(' | '));
   return { ok: true, corrigidos: feitos };
+}
+
+/** Exclui um lançamento da REP.AVARIA pelo Num.Lançamento (a linha some da planilha; fica registrado no log). */
+function avariaExcluir(d, s) {
+  const num = soDigitos(d.num);
+  if (!num) throw new Error('Informe o número do lançamento.');
+  const sh = abaDados('REP.AVARIA'), ac = avariaCols(infoAba('REP.AVARIA')), x = avariaLer(sh, ac).filter(function (i) { return i.num === num; });
+  if (!x.length) throw new Error('O lançamento ' + num + ' não existe mais na planilha.');
+  x.map(function (i) { return i.linha; }).sort(function (a, b) { return b - a; }).forEach(function (l) { sh.deleteRow(l); });
+  registrarLog(s, 'REP.AVARIA (exclusão)', 'Lançamento ' + num + ' (' + x[0].tipo + ') excluído');
+  return { ok: true, excluidas: x.length };
 }
 
 /** Última carga de uma base (ex.: 8022) feita pelo site em Administração > Bases — usada para saber se os endereços podem estar velhos. */
