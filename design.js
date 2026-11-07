@@ -53,6 +53,16 @@ const Icons = {
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.500-3.500"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.400 15a1.700 1.700 0 0 0 .3 1.800l.1.1a2 2 0 1 1-2.800 2.800l-.1-.1a1.700 1.700 0 0 0-1.800-.3 1.700 1.700 0 0 0-1 1.500V21a2 2 0 1 1-4 0v-.1a1.700 1.700 0 0 0-1-1.500 1.700 1.700 0 0 0-1.800.3l-.1.1a2 2 0 1 1-2.800-2.800l.1-.1a1.700 1.700 0 0 0 .3-1.800 1.700 1.700 0 0 0-1.500-1H3a2 2 0 1 1 0-4h.1a1.700 1.700 0 0 0 1.500-1 1.700 1.700 0 0 0-.3-1.800l-.1-.1a2 2 0 1 1 2.800-2.800l.1.1a1.700 1.700 0 0 0 1.800.3h0a1.700 1.700 0 0 0 1-1.500V3a2 2 0 1 1 4 0v.1a1.700 1.700 0 0 0 1 1.500h0a1.700 1.700 0 0 0 1.800-.3l.1-.1a2 2 0 1 1 2.800 2.800l-.1.100a1.700 1.700 0 0 0-.3 1.800v0a1.700 1.700 0 0 0 1.500 1H21a2 2 0 1 1 0 4h-.1a1.700 1.700 0 0 0-1.500 1z"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    ban: '<circle cx="12" cy="12" r="9"/><path d="m5.600 5.600 12.800 12.800"/>',
+    handheld: '<rect x="2.500" y="5" width="8.500" height="15" rx="1.800"/><path d="M4.500 8.500h4.500v4H4.500z"/><path d="M5.500 16h2.500"/><circle cx="17" cy="8" r="2.800"/><path d="M12.500 20a4.500 4.500 0 0 1 9 0"/>',
+    boxreturn: '<path d="M3 11h13v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M2.500 7.500h14V11h-14z"/><path d="M7 14.500h5"/><path d="M21 12V8a3 3 0 0 0-3-3h-4"/><path d="m16 2.500-2.500 2.500L16 7.500"/>',
+    msgplus: '<path d="M21 12a8 8 0 0 1-11.700 7L4 20l1.200-4.400A8 8 0 1 1 21 12z"/><path d="M12 8.500v5M9.500 11h5"/>',
+    cubex: '<path d="m12 3 8.500 4.800v8.400L12 21l-8.500-4.800V7.800z"/><path d="m9.500 10 5 5M14.500 10l-5 5"/>',
+    listcheck: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.500 6 1 1 2-2M3.500 12l1 1 2-2M3.500 18l1 1 2-2"/>',
+    table: '<rect x="3.500" y="4" width="17" height="16" rx="2"/><path d="M3.500 10h17M10 10v10"/>',
+    battery: '<rect x="2.500" y="8" width="17" height="8" rx="2"/><path d="M22 11v2"/><path d="M6 11v2M9.500 11v2"/>',
+    plane: '<path d="M17.800 19.200 16 11l3.500-3.500C21 6 21.500 4 21 3c-1-.5-3 0-4.500 1.500L13 8 4.800 6.200c-.5-.1-.9.100-1.100.5l-.3.500c-.2.500-.1 1 .3 1.300L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.500 5.300c.3.400.8.500 1.300.3l.5-.2c.4-.3.600-.7.500-1.200z"/>',
+    truck: '<path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     dot: '<circle cx="12" cy="12" r="2.500"/>'
   },
@@ -64,12 +74,12 @@ const Icons = {
   /** ícone de cada categoria / sub aba do menu */
   nav: {
     indicadores:"chart", gestao:"compass", lancamentos:"pen", admin:"sliders",
-    producao:"factory", projecao:"trend", individual:"user", avaria:"alert", operadores:"users", relacoes:"file",
+    producao:"factory", projecao:"trend", individual:"user", avaria:"alert", operadores:"truck", relacoes:"file",
     capacidade:"gauge", abastecimento:"layers", cd3d:"cube",
     feedbacks:"message", quadro:"users", chamada:"clipboard", auditoria:"shield", comissao:"coins", cronograma:"calendar",
     turnover:"repeat", ferias:"sun", organograma:"network",
-    lfeedback:"message", ladvertencia:"alertc", lavaria:"alert", lchamada:"clipboard", lquadro:"users", lmissoes:"target",
-    lcapacidade:"gauge", lferias:"sun",
+    lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",
+    lcapacidade:"battery", lferias:"plane",
     bases:"database", acessos:"key", links:"link"
   },
   forNav(id, tam){ return this.svg(this.nav[id] || "dot", tam); },

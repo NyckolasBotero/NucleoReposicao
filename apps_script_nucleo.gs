@@ -47,23 +47,24 @@ const PASTA_FEEDBACK = 'Núcleo Reposição - Feedbacks';
  *                       Sem "data", a base só tem a verificação completa (linha a linha, mais lenta).
  *   os                → título da coluna do número da O.S. (opcional): a conferência rápida também compara O.S. distintas por dia.
  */
+/* Bases com oculta:true não aparecem em Administração > Bases (são gravadas pelas telas de Lançamentos ou por link externo). */
 const BASES = {
   '8460':               { modo: 'acumular',   desc: 'Produção por O.S. (separação / reposição)', data: 'DTFIMSEPARACAO', os: 'NUMOS' },
   '8271':               { modo: 'acumular',   desc: 'O.S. por rua', data: 'DATA', os: 'NUMOS' },
   '8457':               { modo: 'acumular',   desc: 'Produção de operadores (endereços)', data: 'DATA' },
   '9712':               { modo: 'acumular',   desc: 'Lançamentos de avaria / baixas', data: 'Data' },
-  'REP.AVARIA':         { modo: 'acumular',   desc: 'Avarias de reposição' },
-  'QUADRO REP':         { modo: 'acumular',   desc: 'Quadro diário de repositores', data: 'DATA' },
-  'FEEDBACK REP':       { modo: 'acumular',   desc: 'Feedbacks dos repositores', data: 'Data' },
-  'AUDITORIA REP':      { modo: 'acumular',   desc: 'Auditoria por rua e dia', data: 'DATA' },
-  'MISSÕES':            { modo: 'acumular',   desc: 'Missões', data: 'DATA' },
-  'TURNOVER':           { modo: 'substituir', desc: 'Turnover' },
+  'REP.AVARIA':         { oculta: true, modo: 'acumular',   desc: 'Avarias de reposição' },
+  'QUADRO REP':         { oculta: true, modo: 'acumular',   desc: 'Quadro diário de repositores', data: 'DATA' },
+  'FEEDBACK REP':       { oculta: true, modo: 'acumular',   desc: 'Feedbacks dos repositores', data: 'Data' },
+  'AUDITORIA REP':      { oculta: true, modo: 'acumular',   desc: 'Auditoria por rua e dia', data: 'DATA' },
+  'MISSÕES':            { oculta: true, modo: 'acumular',   desc: 'Missões', data: 'DATA' },
+  'TURNOVER':           { oculta: true, modo: 'substituir', desc: 'Turnover' },
   'CRONOGRAMA':         { modo: 'substituir', desc: 'Cronograma de atividades' },
   '8022':               { modo: 'substituir', desc: 'Cadastro de produtos / ruas' },
   '8022 Nova':          { modo: 'substituir', desc: 'Cadastro de produtos (nova)' },
   '1707':               { modo: 'substituir', desc: '1707 GERAL – saldo por endereço', semCabecalho: true },
-  'Capacidade Realizada': { modo: 'substituir', desc: 'Capacidade realizada' },
-  'Tipo':               { modo: 'substituir', desc: 'Tipos' }
+  'Capacidade Realizada': { oculta: true, modo: 'substituir', desc: 'Capacidade realizada' },
+  'Tipo':               { oculta: true, modo: 'substituir', desc: 'Tipos' }
 };
 
 /* ===================== Entradas ===================== */
@@ -99,6 +100,8 @@ function doPost(e) {
       if (d.acao === 'bases_enviar') { exigir(s, PERM_BASES); return resposta(basesEnviar(d)); }
       if (d.acao === 'bases_dias') { exigir(s, PERM_BASES); return resposta(basesDias(d)); }
       if (d.acao === 'bases_aplicar') { exigir(s, PERM_BASES); return resposta(basesAplicar(d)); }
+      if (d.acao === 'bases_modo') { exigir(s, PERM_BASES); return resposta(basesModo(d)); }
+      if (d.acao === 'bases_excluir') { exigir(s, PERM_BASES); return resposta(basesExcluir(d, s)); }
       if (d.acao === 'bases_concluir') { exigir(s, PERM_BASES); return resposta(basesConcluir(d, s)); }
       if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
     } finally { if (lk) lk.releaseLock(); }
@@ -386,8 +389,8 @@ function basesStatus() {
   let usadas = 0;
   ss.getSheets().forEach(function (s) { usadas += s.getMaxRows() * s.getMaxColumns(); });
   const livres = Math.max(0, LIMITE - usadas);
-  const bases = Object.keys(BASES).map(function (nome) {
-    const cfg = BASES[nome], sh = ss.getSheetByName(nome);
+  const bases = Object.keys(BASES).filter(function (n) { return !BASES[n].oculta; }).map(function (nome) {
+    const cfg = cfgBase(nome), sh = ss.getSheetByName(nome);
     const lin = sh ? Math.max(0, sh.getLastRow() - (cfg.semCabecalho ? 0 : 1)) : 0;
     let colunas = null, disp = null;
     if (sh) {
@@ -399,6 +402,46 @@ function basesStatus() {
              colData: cfg.data || null, colOS: cfg.os || null, colunas: colunas, linhasDisponiveis: disp };
   });
   return { ok: true, bases: bases, planilha: { limite: LIMITE, usadas: usadas, livres: livres, pct: Math.round(usadas / LIMITE * 1000) / 10 } };
+}
+
+/** Configuração da base com o "modo de gravação" escolhido no site (guardado nas propriedades do script). */
+function cfgBase(nome) {
+  const b = BASES[nome];
+  if (!b) return undefined;
+  const o = PropertiesService.getScriptProperties().getProperty('modo_' + nome);
+  const c = {};
+  Object.keys(b).forEach(function (k) { c[k] = b[k]; });
+  if (o === 'acumular' || o === 'substituir') c.modo = o;
+  return c;
+}
+
+/** Troca o modo de gravação (agregar / substituir) de uma base. */
+function basesModo(d) {
+  const nome = String(d.base || ''), modo = String(d.modo || '');
+  if (!BASES[nome]) throw new Error('Base desconhecida: ' + nome);
+  if (modo !== 'acumular' && modo !== 'substituir') throw new Error('Modo inválido.');
+  PropertiesService.getScriptProperties().setProperty('modo_' + nome, modo);
+  return { ok: true, base: nome, modo: modo };
+}
+
+/** Exclui TODOS os dados da base (mantém só o cabeçalho) e libera o espaço da planilha. */
+function basesExcluir(d, sessao) {
+  const nome = String(d.base || '');
+  const cfg = cfgBase(nome);
+  if (!cfg) throw new Error('Base desconhecida: ' + nome);
+  const ss = dadosSS(), sh = ss.getSheetByName(nome);
+  if (!sh) throw new Error('A aba "' + nome + '" não existe.');
+  const antes = Math.max(0, sh.getLastRow() - (cfg.semCabecalho ? 0 : 1));
+  const manter = cfg.semCabecalho ? 0 : 1;
+  if (cfg.semCabecalho) sh.clearContents(); else if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(1, sh.getLastColumn())).clearContent();
+  if (sh.getMaxRows() > manter + 1) sh.deleteRows(manter + 2, sh.getMaxRows() - manter - 1);
+  // registra no histórico de cargas
+  let lg = ss.getSheetByName(ABA_LOG_BASES);
+  if (lg) {
+    const agora = Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm:ss');
+    lg.getRange(lg.getLastRow() + 1, 1, 1, 9).setNumberFormat('@').setValues([[nome, agora, sessao.nome || sessao.matricula, sessao.matricula, '[BASE EXCLUÍDA]', cfg.modo, 0, 0, 0]]);
+  }
+  return { ok: true, base: nome, removidas: antes };
 }
 
 function ultimasCargas(ss) {
@@ -456,7 +499,7 @@ function colunaPorTitulo(sh, titulo) {
  * Lê só a coluna de data (e a de O.S.), nunca a base inteira. O site compara isso com o arquivo novo.
  */
 function basesResumo(d) {
-  const nome = String(d.base || ''), cfg = BASES[nome];
+  const nome = String(d.base || ''), cfg = cfgBase(nome);
   if (!cfg) throw new Error('Base desconhecida: ' + nome);
   if (cfg.modo !== 'acumular' || !cfg.data) throw new Error('A base "' + nome + '" não tem conferência rápida por data. Use a verificação completa.');
   const sh = dadosSS().getSheetByName(nome);
@@ -555,7 +598,7 @@ function basesEnviarRapido(d, nome, cfg) {
  * acumular:   grava só as linhas cuja linha inteira ainda não existe na aba (e que não repetem no arquivo).
  */
 function basesEnviar(d) {
-  const nome = String(d.base || ''), cfg = BASES[nome];
+  const nome = String(d.base || ''), cfg = cfgBase(nome);
   if (!cfg) throw new Error('Base desconhecida: ' + nome);
   if (d.rapido === true) return basesEnviarRapido(d, nome, cfg);
   const simular = d.simular === true, parte = Number(d.parte) || 1;
@@ -628,7 +671,7 @@ function basesEnviar(d) {
  * O site usa isso para comparar, dia a dia, só os dias que o arquivo novo e a base têm em comum.
  */
 function basesDias(d) {
-  const nome = String(d.base || ''), cfg = BASES[nome];
+  const nome = String(d.base || ''), cfg = cfgBase(nome);
   if (!cfg) throw new Error('Base desconhecida: ' + nome);
   if (cfg.modo !== 'acumular' || !cfg.data) throw new Error('A base "' + nome + '" não tem coluna de data para comparar por dia.');
   const ss = dadosSS(), sh = ss.getSheetByName(nome), ultima = ultimasCargas(ss)[nome] || null;
@@ -654,7 +697,7 @@ function basesDias(d) {
  * e impede gravar o mesmo arquivo duas vezes). Devolve linhasApos, para a próxima parte.
  */
 function basesAplicar(d) {
-  const nome = String(d.base || ''), cfg = BASES[nome];
+  const nome = String(d.base || ''), cfg = cfgBase(nome);
   if (!cfg) throw new Error('Base desconhecida: ' + nome);
   if (cfg.modo !== 'acumular' || !cfg.data) throw new Error('A base "' + nome + '" não aceita gravação por dia.');
   const parte = Number(d.parte) || 1, tz = tzPadrao(), ss = dadosSS();
@@ -716,7 +759,7 @@ function basesConcluir(d, sessao) {
   }
   const agora = Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm:ss');
   const n = sh.getLastRow() + 1;
-  sh.getRange(n, 1, 1, 9).setNumberFormat('@').setValues([[nome, agora, sessao.nome || sessao.matricula, sessao.matricula, String(d.arquivo || ''), BASES[nome].modo,
+  sh.getRange(n, 1, 1, 9).setNumberFormat('@').setValues([[nome, agora, sessao.nome || sessao.matricula, sessao.matricula, String(d.arquivo || ''), cfgBase(nome).modo,
     Number(d.enviadas) || 0, Number(d.novas) || 0, Number(d.duplicadas) || 0]]);
   return { ok: true, quando: agora };
 }
