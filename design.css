@@ -728,3 +728,4 @@ tr.av-erro td{ background:rgba(214,69,69,.08); }
 .col-act .btn{height:32px}
 .col-baixado{opacity:.55}
 #col-modal .adm-form{margin-bottom:10px}
+.adm-select{padding:6px 10px;border:1px solid var(--border,#d0d7e2);border-radius:8px;background:#fff;font-weight:600;font-size:13px}

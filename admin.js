@@ -177,7 +177,7 @@ const AdminUI = {
       return;
     }
     const lista = st.lista || [];
-    const modoTxt = (m)=> m==="acumular" ? `<span class="adm-tag acc">Acumula sem duplicar</span>` : `<span class="adm-tag rep">Substitui tudo</span>`;
+    const modoSel = (m,i)=> `<select class="adm-select" data-modo="${i}" title="Muda como esta base grava os arquivos novos"><option value="acumular" ${m==="acumular"?"selected":""}>AGREGAR</option><option value="substituir" ${m!=="acumular"?"selected":""}>SUBSTITUIR</option></select>`;
     pane.innerHTML = `
       <div class="panel">
         <div class="adm-head">
@@ -185,20 +185,21 @@ const AdminUI = {
           <button class="btn btn-outline btn-sm" id="bases-refresh">Atualizar situação</button>
         </div>
         <p class="small-muted">Carregue aqui os arquivos exportados (8460, 8022, 1707 GERAL etc.). Antes de gravar, o sistema confere o que já existe na base para não duplicar.
-          <strong>Acumula sem duplicar</strong>: entram só as linhas que ainda não existem. <strong>Substitui tudo</strong>: o arquivo novo troca o conteúdo da base (foto do momento).</p>
+          <strong>AGREGAR</strong>: entram só as linhas que ainda não existem (sem duplicar). <strong>SUBSTITUIR</strong>: o arquivo novo troca todo o conteúdo da base (foto do momento). Dá para trocar o modo de cada base na coluna "Modo gravação".</p>
         ${this.htmlPlanilha()}
         <div class="table-wrap"><table class="adm-table">
-          <thead><tr><th>Base</th><th>Como grava</th><th>Linhas na base</th><th>Linhas disponíveis</th><th>Data mais recente nos dados</th><th>Último carregamento</th><th></th></tr></thead>
+          <thead><tr><th>Base</th><th>Modo gravação</th><th>Linhas na base</th><th>Linhas disponíveis</th><th>Data mais recente nos dados</th><th>Último carregamento</th><th></th></tr></thead>
           <tbody>${lista.map((b,i)=>{
             const u = b.ultimaCarga, dr = this.dataMaisRecente(b.base);
             return `<tr>
               <td><strong>${escapeHtml(b.base)}</strong><div class="small-muted">${escapeHtml(b.desc||"")}</div></td>
-              <td>${modoTxt(b.modo)}</td>
+              <td>${modoSel(b.modo,i)}</td>
               <td>${b.existe ? this.fmtNum(b.linhasAtuais) : `<span class="small-muted">aba não criada</span>`}</td>
               <td>${this.htmlDisp(b)}</td>
               <td>${dr ? fmtDateBR(dr) : "—"}</td>
               <td>${u ? `<strong>${escapeHtml(u.quando)}</strong><div class="small-muted">${escapeHtml(u.usuario||"")} · ${escapeHtml(u.arquivo||"")}<br>${this.fmtNum(u.novas)} novas${b.modo==="acumular"?` · ${this.fmtNum(u.duplicadas)} já existiam`:""}</div>` : `<span class="small-muted">nenhum registro</span>`}</td>
-              <td><button class="btn btn-primary btn-sm" data-base="${i}">Carregar</button></td>
+              <td style="white-space:nowrap"><button class="btn btn-primary btn-sm" data-base="${i}">Carregar</button>
+                ${b.existe?`<button class="btn btn-outline btn-sm" data-excluir="${i}" style="color:var(--danger,#c0392b)" title="Apaga todos os dados desta base">Excluir base</button>`:""}</td>
             </tr>`; }).join("")}</tbody>
         </table></div>
       </div>
@@ -212,8 +213,51 @@ const AdminUI = {
       st.baseSel = lista[Number(b.dataset.base)];
       input.value = ""; input.click();
     }));
+    pane.querySelectorAll("[data-modo]").forEach(sel=> sel.addEventListener("change", ()=> this.mudarModo(lista[Number(sel.dataset.modo)], sel.value, sel)));
+    pane.querySelectorAll("[data-excluir]").forEach(b=> b.addEventListener("click", ()=> this.excluirBase(lista[Number(b.dataset.excluir)])));
     input.addEventListener("change", ()=>{ if(input.files[0]) this.lerArquivo(input.files[0]); });
     if(st.arq) this.desenharPreview();
+  },
+
+  temFilaPendente(base){ return this.basesState.fila.some(j=>j.base===base && (j.status==="espera"||j.status==="rodando")); },
+
+  async mudarModo(b, modo, sel){
+    const st = this.basesState, antigo = b.modo;
+    if(modo===antigo) return;
+    if(this.temFilaPendente(b.base)){ sel.value = antigo; toast("Há carregamento desta base na fila", "error", { sub:"Espere a fila terminar para mudar o modo." }); return; }
+    const txt = modo==="acumular" ? "AGREGAR: os próximos arquivos só acrescentam as linhas que ainda não existem (sem duplicar)." : "SUBSTITUIR: os próximos arquivos vão APAGAR tudo o que está na base e colocar o conteúdo do arquivo.";
+    if(!confirm(`Mudar o modo da base ${b.base}?\n\n${txt}`)){ sel.value = antigo; return; }
+    sel.disabled = true;
+    try{
+      const r = await Api.call({ acao:"bases_modo", base:b.base, modo });
+      if(!r || !r.ok) throw new Error((r && r.erro) || "O servidor recusou a mudança.");
+      b.modo = modo;
+      if(st.arq && st.arq.base.base===b.base){ st.arq.base = b; st.arq.sim = null; st.arq.rapido = null; st.arq.ultimaVerif = null; }
+      toast(`Base ${b.base}: modo ${modo==="acumular"?"AGREGAR":"SUBSTITUIR"}`, "success");
+    }catch(e){
+      sel.value = antigo;
+      toast("Não foi possível mudar o modo", "error", { sub:String(e.message||e).slice(0,140) });
+    }
+    sel.disabled = false;
+    this.desenharBases();
+  },
+
+  async excluirBase(b){
+    const st = this.basesState;
+    if(this.temFilaPendente(b.base)){ toast("Há carregamento desta base na fila", "error", { sub:"Espere a fila terminar." }); return; }
+    if(!confirm(`ATENÇÃO: excluir TODOS os dados da base ${b.base}?\n\nSão ${this.fmtNum(b.linhasAtuais)} linha(s). Só o cabeçalho fica. Essa ação não tem volta.`)) return;
+    const dig = prompt(`Para confirmar, digite o nome da base: ${b.base}`);
+    if(dig===null) return;
+    if(String(dig).trim().toUpperCase() !== b.base.toUpperCase()){ toast("Nome diferente — nada foi excluído", "error"); return; }
+    try{
+      const r = await Api.call({ acao:"bases_excluir", base:b.base });
+      if(!r || !r.ok) throw new Error((r && r.erro) || "O servidor recusou a exclusão.");
+      toast(`Base ${b.base}: ${this.fmtNum(r.removidas)} linha(s) excluídas`, "success");
+      if(st.arq && st.arq.base.base===b.base){ st.arq.sim = null; st.arq.rapido = null; st.arq.ultimaVerif = null; }
+      await this.renderBases(true);
+    }catch(e){
+      toast("Não foi possível excluir", "error", { sub:String(e.message||e).slice(0,140) });
+    }
   },
 
   // ---- capacidade: o Google Sheets limita a planilha inteira a 10 milhões de células ----
@@ -381,6 +425,7 @@ const AdminUI = {
           <button class="btn btn-outline" id="bases-cancel" ${st.enviando?"disabled":""}>Cancelar</button>
           ${rapidoOk ? `<button class="btn btn-outline" id="bases-rapido-btn" ${st.enviando?"disabled":""} title="Compara só os dias que o arquivo e a base têm em comum e grava o que falta">Conferir por dia (recomendado)</button>` : ""}
           <button class="btn btn-outline" id="bases-sim-btn" ${st.enviando?"disabled":""} title="${rapidoOk?"Compara linha a linha com a base inteira (demora mais)":""}">${rapidoOk?"Verificação completa (mais lenta)":"Verificar duplicidade"}</button>
+          ${podeGravar?"":`<button class="btn btn-outline" id="bases-go-sem" ${st.enviando?"disabled":""} style="color:var(--danger,#c0392b)" title="Grava sem conferir antes (pede confirmação)">Gravar sem conferir</button>`}
           <button class="btn btn-primary" id="bases-go" ${(!podeGravar||st.enviando)?"disabled":""} title="${podeGravar?"":"Faça a verificação primeiro"}">Gravar na base</button>
         </div>
         <div id="bases-prog"></div>
@@ -391,6 +436,8 @@ const AdminUI = {
     const fc = document.getElementById("bases-forcar");
     if(fc) fc.addEventListener("change", ()=>{ a.rapido.forcar = fc.checked; a.rapido.res = ConferenciaRapida.planejar(a.contagem, a.rapido.base, fc.checked); this.desenharPreview(); });
     document.getElementById("bases-sim-btn").addEventListener("click", ()=> this.enviar(true));
+    const gs = document.getElementById("bases-go-sem");
+    if(gs) gs.addEventListener("click", ()=> this.enviar(false, true));
     document.getElementById("bases-go").addEventListener("click", ()=> a.ultimaVerif==="rapido" ? this.enviarRapido() : this.enviar(false));
   },
 
@@ -483,11 +530,12 @@ const AdminUI = {
   },
 
   // simulação (verificação completa) roda direto; gravação vai para a fila
-  async enviar(simular){
+  async enviar(simular, semConferir){
     const st = this.basesState, a = st.arq;
     if(!a || st.enviando) return;
     if(!simular){
-      if(!confirm(a.base.modo==="substituir"
+      if(semConferir && !confirm(`⚠ GRAVAR SEM CONFERIR\n\nO arquivo ainda não foi verificado. ${a.base.modo==="substituir" ? "No modo SUBSTITUIR a base atual será APAGADA e trocada pelo arquivo." : "No modo AGREGAR o servidor ignora linhas repetidas, mas você não verá o resumo antes."}\n\nContinuar?`)) return;
+      if(!semConferir && !confirm(a.base.modo==="substituir"
         ? `Colocar na fila: substituir TODO o conteúdo da base ${a.base.base} pelas ${a.linhas.length.toLocaleString("pt-BR")} linhas do arquivo?`
         : `Colocar na fila: gravar as linhas novas na base ${a.base.base}?`)) return;
       const erroEsp = this.conferirEspaco(a.base.base, (a.sim && a.sim.novas) || a.linhas.length, a.base.modo==="substituir" ? a.base.linhasAtuais : 0);
