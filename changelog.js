@@ -4,9 +4,12 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.7.0";
+const APP_VERSAO = "2.7.1";
 
 const NOTAS_VERSAO = [
+  { v:"2.7.1", data:"2026-11-07", titulo:"Versão no menu lateral", itens:[
+    "Menu lateral, abaixo das guias: versão instalada, versão mais recente e botão Atualizar agora (o quadro fica laranja quando há versão nova)."
+  ]},
   { v:"2.7.0", data:"2026-11-07", titulo:"Bases mais flexíveis, registro de carga e notas de atualização", itens:[
     "Administração > Bases: coluna Modo gravação com lista AGREGAR / SUBSTITUIR (muda o comportamento da base na hora), botão Excluir base (com dupla confirmação) e Gravar sem conferir (com alerta).",
     "Bases controladas por Lançamentos ou por link externo saíram da tela de carregamento (Turnover, Rep.Avaria, Quadro Rep, Feedback Rep, Auditoria Rep, Missões, Capacidade Realizada e Tipo).",

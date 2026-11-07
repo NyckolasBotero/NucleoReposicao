@@ -619,6 +619,24 @@ const AdminUI = {
     location.reload();
   },
 
+  // quadro de versão no menu lateral, logo abaixo das guias (só para quem vê Administração)
+  iniciarVersaoMenu(){
+    this.desenharVersaoMenu();
+    const st = this.versoesState;
+    if(Auth.can("admin","versoes") && !st.ultima && !st.checando && !st.erro) this.verificarVersao();
+  },
+  desenharVersaoMenu(){
+    const box = document.getElementById("sb-versao"), st = this.versoesState;
+    if(!box) return;
+    if(!Auth.user || !Auth.can("admin","versoes")){ box.innerHTML = ""; return; }
+    const nova = st.ultima && st.novas > 0;
+    box.innerHTML = `<div class="sbv${nova?" nova":""}">
+      <div class="sbv-l"><span>Versão instalada</span><strong>v${escapeHtml(APP_VERSAO)}</strong></div>
+      <div class="sbv-l"><span>Versão mais recente</span><strong>${st.ultima?"v"+escapeHtml(st.ultima):(st.checando?"…":"—")}</strong></div>
+      <button type="button" class="sbv-btn" id="sbv-atualizar" ${nova?"":'title="Recarrega o aplicativo com a versão mais recente"'}>Atualizar agora</button></div>`;
+    document.getElementById("sbv-atualizar").addEventListener("click", ()=> this.atualizarApp());
+  },
+
   renderVersoes(){
     this.desenharVersoes();
     if(!this.versoesState.ultima && !this.versoesState.checando && !this.versoesState.erro) this.verificarVersao();
@@ -649,6 +667,7 @@ const AdminUI = {
       <div class="adm-head"><h3 class="adm-h2" style="margin:0;">v${escapeHtml(n.v)} · ${escapeHtml(n.titulo)} ${i===0?`<span class="adm-tag acc" style="margin-left:6px;">atual</span>`:""}</h3><span class="small-muted">${fmt(n.data)}</span></div>
       <ul style="margin:10px 0 0;padding-left:20px;line-height:1.55;">${n.itens.map(t=>`<li>${escapeHtml(t)}</li>`).join("")}</ul>
     </div>`).join("")}`;
+    this.desenharVersaoMenu();
     const c = document.getElementById("ver-checar"); if(c) c.addEventListener("click", ()=> this.verificarVersao());
     const a = document.getElementById("ver-atualizar"); if(a) a.addEventListener("click", ()=> this.atualizarApp());
   },

@@ -75,7 +75,8 @@ const Nav = {
   views(){ return NAV_VIEWS.filter(v=>this.items(v.id).length); },
   firstView(){ const v = this.views()[0]; return v ? v.id : null; },
 
-  render(){ UI.garantirViewPermitida(); UI.buildSubnav(); this.renderSidebar(); this.renderBottom(); this.renderDrawer(); this.renderUser(); this.renderAtalhosVazio(); this.sync(); },
+  render(){ UI.garantirViewPermitida(); UI.buildSubnav(); this.renderSidebar(); this.renderBottom(); this.renderDrawer(); this.renderUser(); this.renderAtalhosVazio(); this.sync();
+    try{ if(window.AdminUI) AdminUI.iniciarVersaoMenu(); }catch(e){} },
 
   renderSidebar(){
     const box = document.getElementById("sb-groups"); if(!box) return;
