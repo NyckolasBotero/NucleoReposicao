@@ -4,9 +4,15 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.9.0";
+const APP_VERSAO = "2.10.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.10.0", data:"2026-11-07", titulo:"Alertas no celular (push)", itens:[
+    "Notificações push mesmo com o aplicativo fechado: Configurar alertas > Notificações no celular > Ativar neste aparelho (há botão de teste).",
+    "A chamada do dia é enviada na hora ao celular de quem recebe esse alerta, com quem lançou, o horário e quem não está presente.",
+    "No iPhone é preciso adicionar o aplicativo à tela inicial e abrir por lá.",
+    "Envio feito por um servidor gratuito (Cloudflare Worker) — instruções em push/LEIA-ME.md. Atualizar o Apps Script."
+  ]},
   { v:"2.9.0", data:"2026-11-07", titulo:"Novos alertas (etapa 2)", itens:[
     "Produto transferido: resumo dos produtos cujo endereço na 8022 é diferente do da 8022 Nova, com urgência; clique abre Capacidade CD.",
     "Chamada do dia: mostra quem lançou, a que horas e quem não está presente (falta, atestado, suspensão). O painel confere a cada 2 min e abre com aviso quando sai uma chamada nova.",
