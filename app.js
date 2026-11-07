@@ -38,6 +38,7 @@ const Auth = {
   can(view, paneId){
     if(!this.user) return false;
     if(this.user.legacy) return (view!=="admin" && view!=="lancamentos") || paneId==="links"; // sem servidor: tudo, exceto o que grava (Bases/Acessos)
+    if(view==="admin" && paneId==="versoes") return this.can("admin","bases") || this.can("admin","acessos");   // quem administra vê as notas de atualização
     const v = NAV_VIEWS.find(x=>x.id===view);
     const it = ((typeof UI!=="undefined" && UI.subnavConfig[view])||[]).find(i=>i.id===paneId);
     if(!v || !it) return false;
@@ -4047,7 +4048,8 @@ const UI = {
     admin: [
       { id:"bases", label:"Bases" },
       { id:"acessos", label:"Acessos" },
-      { id:"links", label:"Links de acesso" }
+      { id:"links", label:"Links de acesso" },
+      { id:"versoes", label:"Atualizações" }
     ]
   },
 
@@ -4317,7 +4319,7 @@ const UI = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
-      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(),
+      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(),
       lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };

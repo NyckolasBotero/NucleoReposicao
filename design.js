@@ -63,6 +63,7 @@ const Icons = {
     battery: '<rect x="2.500" y="8" width="17" height="8" rx="2"/><path d="M22 11v2"/><path d="M6 11v2M9.500 11v2"/>',
     plane: '<path d="M17.800 19.200 16 11l3.500-3.500C21 6 21.500 4 21 3c-1-.5-3 0-4.500 1.500L13 8 4.800 6.200c-.5-.1-.9.100-1.100.5l-.3.500c-.2.500-.1 1 .3 1.300L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.500 5.300c.3.400.8.500 1.300.3l.5-.2c.4-.3.600-.7.500-1.200z"/>',
     truck: '<path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
+    tag: '<path d="M3 12V4.500A1.500 1.500 0 0 1 4.500 3H12l9 9-9 9z"/><circle cx="8" cy="8" r="1.200"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     dot: '<circle cx="12" cy="12" r="2.500"/>'
   },
@@ -80,7 +81,7 @@ const Icons = {
     turnover:"repeat", ferias:"sun", organograma:"network",
     lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",
     lcapacidade:"battery", lferias:"plane",
-    bases:"database", acessos:"key", links:"link"
+    bases:"database", acessos:"key", links:"link", versoes:"tag"
   },
   forNav(id, tam){ return this.svg(this.nav[id] || "dot", tam); },
   /** troca <span data-ic="nome"> por svg (e mantém o que já foi trocado) */

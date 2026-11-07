@@ -583,6 +583,77 @@ const AdminUI = {
   },
 
   /* ================================================================== */
+  /* ATUALIZAÇÕES (versão e notas)                                       */
+  /* ================================================================== */
+  versoesState: { ultima:null, novas:0, checando:false, erro:null },
+
+  cmpVersao(a, b){
+    const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
+    for(let i=0;i<3;i++){ const d = (x[i]||0) - (y[i]||0); if(d) return d; }
+    return 0;
+  },
+
+  // consulta a versão publicada (changelog.js ao vivo) e compara com a que está rodando
+  async verificarVersao(){
+    const st = this.versoesState;
+    st.checando = true; st.erro = null; this.desenharVersoes();
+    try{
+      const res = await fetch("changelog.js?_=" + Date.now(), { cache:"no-store" });
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      const txt = await res.text();
+      const m = txt.match(/APP_VERSAO\s*=\s*"([\d.]+)"/);
+      if(!m) throw new Error("Não foi possível ler a versão publicada.");
+      st.ultima = m[1];
+      const todas = Array.from(txt.matchAll(/\{\s*v:"([\d.]+)"/g)).map(x=>x[1]);
+      st.novas = todas.filter(v=> this.cmpVersao(v, APP_VERSAO) > 0).length;
+    }catch(e){ st.erro = String(e.message||e); }
+    st.checando = false;
+    this.desenharVersoes();
+  },
+
+  async atualizarApp(){
+    try{
+      if(window.caches){ for(const k of await caches.keys()) await caches.delete(k); }
+      if(navigator.serviceWorker){ for(const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); }
+    }catch(e){}
+    location.reload();
+  },
+
+  renderVersoes(){
+    this.desenharVersoes();
+    if(!this.versoesState.ultima && !this.versoesState.checando && !this.versoesState.erro) this.verificarVersao();
+  },
+
+  desenharVersoes(){
+    const pane = document.getElementById("pane-versoes"), st = this.versoesState;
+    if(!pane) return;
+    const notas = typeof NOTAS_VERSAO !== "undefined" ? NOTAS_VERSAO : [];
+    const fmt = (d)=> String(d).split("-").reverse().join("/");
+    let situ;
+    if(st.checando) situ = `<span class="small-muted">Verificando a versão publicada…</span>`;
+    else if(st.erro) situ = `<span class="small-muted">Não consegui verificar agora (${escapeHtml(st.erro)}).</span>`;
+    else if(st.ultima && st.novas > 0) situ = `<span class="adm-tag rep">Atualização disponível</span> a versão publicada é a <strong>${escapeHtml(st.ultima)}</strong> — você está ${st.novas} versão(ões) atrás. <button class="btn btn-primary btn-sm" id="ver-atualizar" style="margin-left:8px;">Atualizar agora</button>`;
+    else if(st.ultima) situ = `<span class="adm-tag acc">Atualizado</span> você está na última versão publicada.`;
+    else situ = "";
+    pane.innerHTML = `<div class="panel">
+      <div class="adm-head"><h2 class="adm-h">Atualizações</h2><button class="btn btn-outline btn-sm" id="ver-checar" ${st.checando?"disabled":""}>Verificar versão</button></div>
+      <div class="adm-grid">
+        <div><span class="small-muted">Versão instalada</span><br><strong style="font-size:26px;">v${escapeHtml(typeof APP_VERSAO!=="undefined"?APP_VERSAO:"—")}</strong></div>
+        <div><span class="small-muted">Última publicada</span><br><strong style="font-size:26px;">${st.ultima?"v"+escapeHtml(st.ultima):"—"}</strong></div>
+        <div><span class="small-muted">Última atualização</span><br><strong style="font-size:26px;">${notas[0]?fmt(notas[0].data):"—"}</strong></div>
+      </div>
+      <div class="hint-box" style="margin-top:12px;">${situ||"&nbsp;"}</div>
+      <p class="small-muted" style="margin-top:10px;">Versões: funcionalidade nova sobe o 2º número (2.7 → 2.8); correção ou ajuste sobe o 3º (2.7.0 → 2.7.1).</p>
+    </div>
+    ${notas.map((n,i)=>`<div class="panel">
+      <div class="adm-head"><h3 class="adm-h2" style="margin:0;">v${escapeHtml(n.v)} · ${escapeHtml(n.titulo)} ${i===0?`<span class="adm-tag acc" style="margin-left:6px;">atual</span>`:""}</h3><span class="small-muted">${fmt(n.data)}</span></div>
+      <ul style="margin:10px 0 0;padding-left:20px;line-height:1.55;">${n.itens.map(t=>`<li>${escapeHtml(t)}</li>`).join("")}</ul>
+    </div>`).join("")}`;
+    const c = document.getElementById("ver-checar"); if(c) c.addEventListener("click", ()=> this.verificarVersao());
+    const a = document.getElementById("ver-atualizar"); if(a) a.addEventListener("click", ()=> this.atualizarApp());
+  },
+
+  /* ================================================================== */
   /* ACESSOS                                                             */
   /* ================================================================== */
   acState: { lista:null, erro:null, carregando:false, filtro:"" },
