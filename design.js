@@ -234,7 +234,7 @@ const Design = {
     ctx: null, _linhas: [], _t: 0, _timer: 0,
     _el(id, cls, html){ let e = document.getElementById(id); if(!e){ e = document.createElement("div"); e.id = id; if(cls) e.className = cls; document.body.appendChild(e); } if(html != null) e.innerHTML = html; return e; },
     iniciar(ctx, nome){
-      clearTimeout(this._timer); this.ctx = ctx; this._linhas = [];
+      clearTimeout(this._timer); clearTimeout(this._drTimer); this._drTimer = 0; this._fila = []; this.ctx = ctx; this._linhas = [];
       const barra = this._el("load-bar", "", ""); barra.classList.remove("fim"); void barra.offsetWidth; barra.classList.add("on");
       const feed = this._el("load-feed", "", `<div class="lf-h"><span class="lf-spin"></span><span class="lf-t" id="lf-t">Conectando</span><em id="lf-n"></em></div><div class="lf-rows" id="lf-rows"></div>`);
       feed.className = ""; feed.dataset.ctx = ctx; void feed.offsetWidth; feed.classList.add("on");
@@ -247,10 +247,24 @@ const Design = {
     etapa(txt){ const t = document.getElementById("lf-t"); if(t) t.textContent = txt; },
     progresso(f, tot){ const n = document.getElementById("lf-n"); if(n) n.textContent = f + "/" + tot; },
     /** uma linha por aba que terminou de carregar: estado ok | warn */
+    /** entra numa fila que revela uma linha por vez (efeito de ir aparecendo aos poucos) */
     item(nome, estado, detalhe, id){
+      (this._fila = this._fila || []).push([nome, estado, detalhe, id]);
+      if(!this._drTimer) this._drena();
+    },
+    _drena(){
+      const x = (this._fila || []).shift();
+      if(!x){ this._drTimer = 0; return; }
+      this._poe(x[0], x[1], x[2], x[3]);
+      const resta = this._fila.length;
+      this._drTimer = setTimeout(()=>{ this._drTimer = 0; this._drena(); }, resta > 12 ? 45 : resta > 6 ? 80 : 130);
+    },
+    _flush(){ clearTimeout(this._drTimer); this._drTimer = 0; (this._fila || []).splice(0).forEach(x=> this._poe(x[0], x[1], x[2], x[3])); },
+    _poe(nome, estado, detalhe, id){
       const rows = document.getElementById("lf-rows"); if(!rows) return;
       let r = null;
       if(id) r = Array.from(rows.children).find(x=> x.dataset.id === id) || null;   // atualiza a linha que já estava "buscando"
+      if(r && estado === "busca") return;   // já tem resultado: não volta para "buscando"
       const novo = !r;
       if(novo){ r = document.createElement("div"); if(id) r.dataset.id = id; }
       r.className = "lf-r " + (estado || "ok");
@@ -260,6 +274,7 @@ const Design = {
     },
     /** termina a barra (enche e some) e retira o véu */
     fim(){
+      this._flush();
       const b = document.getElementById("load-bar"); if(b){ b.classList.add("fim"); this._timer = setTimeout(()=> b.classList.remove("on"), 420); }
       const v = document.getElementById("load-veil"); if(v){ v.classList.remove("on"); setTimeout(()=> v.remove(), 300); }
       document.body.classList.remove("carregando-dados");
@@ -274,6 +289,7 @@ const Design = {
      * se ninguém clicar. `log` vem de ImportLog.buildLog(raw). Chama `pronto()` ao entrar.
      */
     resumo(arquivo, log, seg, pronto){
+      this._flush();
       const feed = document.getElementById("load-feed");
       if(!feed){ pronto(); return; }
       const achadas = log.filter(s=> s.status !== "nao-encontrada");
