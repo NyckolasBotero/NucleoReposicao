@@ -1,0 +1,78 @@
+/* =========================================================================
+   Núcleo Reposição — versão e notas de atualização
+   A cada publicação: aumentar APP_VERSAO e acrescentar uma entrada NO TOPO de NOTAS_VERSAO.
+   Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
+   mudança grande de estrutura = sobe o 1º número.
+   ========================================================================= */
+const APP_VERSAO = "2.7.0";
+
+const NOTAS_VERSAO = [
+  { v:"2.7.0", data:"2026-11-07", titulo:"Bases mais flexíveis, registro de carga e notas de atualização", itens:[
+    "Administração > Bases: coluna Modo gravação com lista AGREGAR / SUBSTITUIR (muda o comportamento da base na hora), botão Excluir base (com dupla confirmação) e Gravar sem conferir (com alerta).",
+    "Bases controladas por Lançamentos ou por link externo saíram da tela de carregamento (Turnover, Rep.Avaria, Quadro Rep, Feedback Rep, Auditoria Rep, Missões, Capacidade Realizada e Tipo).",
+    "Ícones próprios para Lançar Suspensão, Controle de Coletores e Devolução de Mercadorias; nenhuma guia repete ícone.",
+    "Registro de carga (login e atualização): mostra o que está sendo buscado, um item por vez, com a quantidade de linhas; abas sem data própria e a Auditoria deixaram de gerar alerta falso.",
+    "Controle de Coletores: login e senha separados para o coletor e para o Winthor, formulário reorganizado em seções e exemplos conforme os dados cadastrados.",
+    "Editar feedbacks antigos: a busca na planilha ficou tolerante (resumo, data invertida e registros sem matrícula).",
+    "Nova guia Atualizações (Administração) com versão atual, verificação de versão nova e este histórico."
+  ]},
+  { v:"2.6.0", data:"2026-11-06", titulo:"Carga de bases por dia e fila de carregamentos", itens:[
+    "Carga por dia nas bases que acumulam: compara só os dias em comum, mantém a maior quantidade de linhas, grava em bloco único e agrega os dias novos ao fim do histórico.",
+    "Leituras não esperam mais pela trava de gravação (fim do erro “Tempo limite do bloqueio”).",
+    "Indicador de linhas disponíveis por aba e do espaço total da planilha (limite de 10 milhões de células).",
+    "Fila de carregamentos: coloque vários arquivos na fila (ex.: 8460 e 9712) e eles gravam um por vez enquanto você prepara o próximo.",
+    "Conferência por dia ignora datas inválidas e lista as linhas de cada dia novo.",
+    "Lançar Avaria 9712: opção para excluir lançamentos."
+  ]},
+  { v:"2.5.0", data:"2026-11-05", titulo:"Não conformidades, suspensão, coletores e folhas de feedback", itens:[
+    "Não conformidades por colaborador (1 NC = colaborador + data + rua), ligadas a Auditoria, Feedbacks e alertas; regra de 4 NC = 1 feedback, 3 feedbacks = 1 advertência e 3 advertências = suspensão.",
+    "Lançar Suspensão: alerta de advertências no mesmo motivo, cadeia completa NC → feedback → advertência → suspensão e suspensão pré-marcada na Chamada.",
+    "Controle de Coletores: cadastro, termo de compromisso em PDF, termo assinado, cards de total e gráfico mês a mês por setor.",
+    "Folhas de feedback A4 vertical para assinatura (por não conformidade e de produção/qualidade) com regras, presença, qualidade, avaliações e assinaturas.",
+    "Avaria 9712: quem lançou, data, itens da transação, busca por produto, motivo 1886 (Recuperado Repositor) e correção de tipos.",
+    "Devolução de Mercadorias: rota mais rápida (crescente ou decrescente), endereços da 8022 e etiquetas 50x50."
+  ]},
+  { v:"2.4.0", data:"2026-11-04", titulo:"Comissão completa", itens:[
+    "Equipe de Apoio (auditorias de retorno e itens recuperados) e resumo mensal com teto e qualidade.",
+    "Definição de Parâmetros salva e versionada na planilha, com pontuação mínima, fixas, manuais, faturamento e avaria diluída entre os repositores.",
+    "Projeção completa da comissão (fixa, a pagar, auditor, recuperações), exportação e histórico mensal com linha de teto."
+  ]},
+  { v:"2.3.0", data:"2026-11-03", titulo:"Feedbacks editáveis e regras do Quadro", itens:[
+    "Editar feedback já lançado e escanear o documento depois; scanner mais preciso e nítido.",
+    "Gerar feedback em PDF direto do detalhe do funcionário.",
+    "Alertas ignoram desistentes (falta 7+ dias) e encostados; Lançar Quadro com TIPO, transferência com setor e encostado com data INSS.",
+    "Bases: conferência rápida do último mês (compara por dia e grava só o que falta)."
+  ]},
+  { v:"2.2.0", data:"2026-10-27", titulo:"Mobile, acessos, chamada e auditoria de retornos", itens:[
+    "Datas no padrão brasileiro (corrige 12/08/26 lido como 08/12 e linhas perdidas).",
+    "Carregamento minimalista com barra no topo e resumo; correção do travamento com sessão salva.",
+    "Chamada com % de presença e absenteísmo mês a mês; Férias não marcam vencido quem já tem férias lançadas.",
+    "Mobile: menu em acordeão, conteúdo dentro da largura da tela e rolagem corrigida.",
+    "Administração > Acessos: histórico de logins, falhas, tempo ativo, abas mais usadas e redefinição de senha.",
+    "Qualidade de Retornos por rua e repositor (Auditoria_Retorno, Rotina_Retorno, Quadro_Repositores), com cards e gráfico mensal.",
+    "Lançar Advertência com lista e edição; Comissão abre no mês atual; Acompanhamento Individual usa só o quadro atual."
+  ]},
+  { v:"2.1.0", data:"2026-10-26", titulo:"Lançamentos e novo visual", itens:[
+    "Lançamentos: Feedback (scanner/PDF), Rep.Avaria, Chamada em lote, Quadro/Turnover, Missões e Capacidade.",
+    "Feedbacks e Advertências, alertas e férias agendadas; chamada por botões.",
+    "Revisão de design: tema claro/escuro, ícones de linha, menu recolhível, avisos e animações (com chave para ligar/desligar).",
+    "Exportação em PDF/PNG corrigida."
+  ]},
+  { v:"2.0.0", data:"2026-10-23", titulo:"Painel online no Google Sheets", itens:[
+    "O painel lê as abas direto do Google Sheets, sem upload de Excel.",
+    "Novo aplicativo: menu lateral, barra inferior no celular, login por matrícula, permissões por aba, PWA instalável.",
+    "Administração: Bases, Acessos e Links de acesso, com servidor em Apps Script.",
+    "Auditoria lê da planilha online; novos pesos da qualidade (Avariados×4, Prox.Venc×3, Picking×6, Sem Saldo×2)."
+  ]},
+  { v:"1.1.0", data:"2026-10-17", titulo:"Organograma, abastecimento e 3D", itens:[
+    "Gestão > Organograma.",
+    "Indicadores > Nível Abastecimento (picking) com tabela, gráfico por rua, itens sem AE e saldo baixo; capacidade pelo Cap Pick da 1707.",
+    "NVL 3D: visualização do CD (flowracks, meios empilhados e drive-in).",
+    "Auditoria passa a usar a nova planilha, com uma linha por produto."
+  ]},
+  { v:"1.0.0", data:"2026-08-17", titulo:"Primeira versão (carga por Excel)", itens:[
+    "Dashboard em um único HTML alimentado por arquivo Excel: Produção, Projeção, Acompanhamento Individual, Produção de Operadores e Relações Rep.",
+    "Cronograma, Turnover, Avaria XML, Capacidade CD e Auditoria com critérios ponderados.",
+    "Exportação em PDF/PNG, ordenação de tabelas, paginação e urgência de endereços."
+  ]}
+];
