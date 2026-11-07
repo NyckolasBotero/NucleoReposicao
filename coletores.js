@@ -120,7 +120,7 @@ Object.assign(LancUI, {
           ${sel("col-fi", st.inv, [["","Inventário: todos"],["1","Vencido"]])}
         </div></div>
       <div class="table-wrap"><table class="data-table col-table">
-        <thead><tr><th>ID</th><th>Coletor</th><th>Login</th><th>Winthor</th><th>Atribuído a</th><th>Setor</th><th>Últ. inventário</th><th>Termo</th><th>Observações</th><th></th></tr></thead>
+        <thead><tr><th>ID</th><th>Coletor</th><th>Login coletor</th><th>Login Winthor</th><th>Atribuído a</th><th>Setor</th><th>Últ. inventário</th><th>Termo</th><th>Observações</th><th></th></tr></thead>
         <tbody>${lista.map(c=>this.colLinha(c)).join("") || `<tr><td colspan="10" class="small-muted">Nenhum coletor encontrado.</td></tr>`}</tbody></table></div>`;
     const re = ()=>{ st.q = document.getElementById("col-q").value; this.colDesenharLista(); };
     document.getElementById("col-q").addEventListener("input", re);
@@ -160,14 +160,18 @@ Object.assign(LancUI, {
 
   /* ---------------- cadastro / edição ---------------- */
   colEditar(c){
-    const novo = !c; c = c || { id:"", nome:"", login:"", winthor:"", mat:"", colab:"", setor:"", inv:"", obs:"", status:"Ativo", dtAtrib:"" };
+    const novo = !c; c = c || { id:"", nome:"", login:"", senhaCol:"", winthor:"", senhaWin:"", mat:"", colab:"", setor:"", inv:"", obs:"", status:"Ativo", dtAtrib:"" };
     const setores = Array.from(new Set((this.ctx.listas.SETOR_COLETOR||[]).concat(c.setor ? [c.setor] : [])));
     const ta = `padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:inherit;text-transform:none;letter-spacing:0;font-weight:500;`;
     UI.openModal(`<div id="col-modal"><h3 style="margin-top:0">${novo ? "Novo coletor" : "Editar coletor " + this.h(c.id)}</h3>
       <div class="adm-form">
         <label>ID do coletor<input type="text" id="cx-id" value="${this.h(c.id)}" placeholder="Ex.: COL-014" autocomplete="off"></label>
         <label>Nome do coletor<input type="text" id="cx-nome" value="${this.h(c.nome)}" placeholder="Ex.: Zebra TC21 – 14" autocomplete="off"></label>
-        <label>Login do coletor<input type="text" id="cx-login" value="${this.h(c.login)}" autocomplete="off"></label>
+      </div>
+      <div class="adm-form">
+        <label>Login do coletor<input type="text" id="cx-login" value="${this.h(c.login)}" placeholder="Ex.: Col15" autocomplete="off"></label>
+        <label>Senha do coletor<input type="text" id="cx-senhacol" value="${this.h(c.senhaCol)}" autocomplete="off"></label>
+        <span></span>
       </div>
       <div class="adm-form">
         <label>Setor<select id="cx-setor" data-vazio="Selecione">${this.options(setores, c.setor, "Selecione")}</select></label>
@@ -178,7 +182,11 @@ Object.assign(LancUI, {
       <div class="adm-form">
         <label>Matrícula de quem usa<input type="text" id="cx-mat" inputmode="numeric" list="dl-cx" value="${this.h(c.mat)}" placeholder="vazio = sem usuário" autocomplete="off"></label>
         <label>Nome (automático)<input type="text" id="cx-colab" readonly value="${this.h(c.colab)}" placeholder="—"></label>
-        <label>Winthor do usuário<input type="text" id="cx-winthor" value="${this.h(c.winthor)}" placeholder="login/código no Winthor" autocomplete="off"></label>
+      </div>
+      <div class="adm-form">
+        <label>Login Winthor<input type="text" id="cx-winthor" value="${this.h(c.winthor)}" placeholder="usuário no Winthor" autocomplete="off"></label>
+        <label>Senha Winthor<input type="text" id="cx-senhawin" value="${this.h(c.senhaWin)}" autocomplete="off"></label>
+        <span></span>
       </div>
       ${this.datalistPessoas("dl-cx", false)}
       <div class="adm-form"><label style="grid-column:1/-1">Observações<textarea id="cx-obs" rows="3" style="${ta}">${this.h(c.obs)}</textarea></label></div>
@@ -193,8 +201,8 @@ Object.assign(LancUI, {
       if(!id) return this.aviso("cx-msg", "erro", "Informe o ID do coletor.");
       if(!setor) return this.aviso("cx-msg", "erro", "Escolha o setor.");
       if(mat && !this.nomeDe(mat)) return this.aviso("cx-msg", "erro", "Matrícula não encontrada no quadro.");
-      const r = await this.enviar($$("cx-salvar"), { acao:"lanc_coletor_salvar", linha: novo ? 0 : c.linha, idOriginal:c.id, id, nome:$$("cx-nome").value, login:$$("cx-login").value,
-        winthor:$$("cx-winthor").value, mat, colab:$$("cx-colab").value, setor, status:$$("cx-status").value, inv:$$("cx-inv").value, obs:$$("cx-obs").value, dtAtrib: mat !== c.mat ? this.hojeISO() : c.dtAtrib });
+      const r = await this.enviar($$("cx-salvar"), { acao:"lanc_coletor_salvar", linha: novo ? 0 : c.linha, idOriginal:c.id, id, nome:$$("cx-nome").value, login:$$("cx-login").value, senhaCol:$$("cx-senhacol").value,
+        winthor:$$("cx-winthor").value, senhaWin:$$("cx-senhawin").value, mat, colab:$$("cx-colab").value, setor, status:$$("cx-status").value, inv:$$("cx-inv").value, obs:$$("cx-obs").value, dtAtrib: mat !== c.mat ? this.hojeISO() : c.dtAtrib });
       if(!r || !r.ok) return this.aviso("cx-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
       UI.closeModal(); toast(novo ? "Coletor cadastrado." : "Coletor atualizado."); this.colCarregar(true);
     });
@@ -219,7 +227,7 @@ Object.assign(LancUI, {
     const sec = (t)=>{ pdf.setFont("helvetica", "bold"); pdf.setFontSize(11); pdf.setTextColor(15, 42, 74); pdf.text(t, M, y); y += 7; };
     sec("Colaborador");
     campo("Nome", c.colab, M, larg*0.6); campo("Matrícula", c.mat, M + larg*0.62, larg*0.38); y += 12;
-    campo("Setor", c.setor, M, larg*0.6); campo("Winthor do usuário", c.winthor, M + larg*0.62, larg*0.38); y += 15;
+    campo("Setor", c.setor, M, larg*0.6); campo("Login Winthor", c.winthor, M + larg*0.62, larg*0.38); y += 15;
     sec("Equipamento");
     campo("ID do coletor", c.id, M, larg*0.3); campo("Nome do coletor", c.nome, M + larg*0.32, larg*0.38); campo("Login do coletor", c.login, M + larg*0.72, larg*0.28); y += 15;
     pdf.setFont("helvetica", "normal"); pdf.setFontSize(10.5); pdf.setTextColor(30, 30, 30);

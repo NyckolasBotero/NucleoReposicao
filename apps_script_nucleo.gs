@@ -1433,7 +1433,7 @@ function suspensaoEditar(d, s) {
 /* ---------- Controle de coletores (abas COLETORES e COLETORES_HIST) ---------- */
 
 const ABA_COLETORES = 'COLETORES', ABA_COLETORES_HIST = 'COLETORES_HIST';
-const CAB_COLETOR = ['ID Coletor', 'Nome Coletor', 'Login Coletor', 'Winthor Usuario', 'Matricula', 'Colaborador', 'Setor', 'Ultimo Inventario', 'Observacoes', 'Termo', 'Data Termo', 'Status', 'Data Atribuicao'];
+const CAB_COLETOR = ['ID Coletor', 'Nome Coletor', 'Login Coletor', 'Winthor Usuario', 'Matricula', 'Colaborador', 'Setor', 'Ultimo Inventario', 'Observacoes', 'Termo', 'Data Termo', 'Status', 'Data Atribuicao', 'Senha Coletor', 'Senha Winthor'];
 function colunasColetor() {
   abaComCabecalho(ABA_COLETORES, CAB_COLETOR);
   const info = infoAba(ABA_COLETORES);
@@ -1441,15 +1441,29 @@ function colunasColetor() {
     id: garantirCol(info, ['ID COLETOR', 'ID'], 'ID Coletor'), nome: garantirCol(info, ['NOME COLETOR'], 'Nome Coletor'), login: garantirCol(info, ['LOGIN COLETOR'], 'Login Coletor'),
     winthor: garantirCol(info, ['WINTHOR USUARIO', 'WINTHOR'], 'Winthor Usuario'), mat: garantirCol(info, ['MATRICULA'], 'Matricula'), colab: garantirCol(info, ['COLABORADOR'], 'Colaborador'),
     setor: garantirCol(info, ['SETOR'], 'Setor'), inv: garantirCol(info, ['ULTIMO INVENTARIO'], 'Ultimo Inventario'), obs: garantirCol(info, ['OBSERVACOES'], 'Observacoes'),
-    termo: garantirCol(info, ['TERMO'], 'Termo'), dtTermo: garantirCol(info, ['DATA TERMO'], 'Data Termo'), status: garantirCol(info, ['STATUS'], 'Status'), dtAtrib: garantirCol(info, ['DATA ATRIBUICAO'], 'Data Atribuicao') } };
+    termo: garantirCol(info, ['TERMO'], 'Termo'), dtTermo: garantirCol(info, ['DATA TERMO'], 'Data Termo'), status: garantirCol(info, ['STATUS'], 'Status'), dtAtrib: garantirCol(info, ['DATA ATRIBUICAO'], 'Data Atribuicao'),
+    senhaCol: garantirCol(info, ['SENHA COLETOR'], 'Senha Coletor'), senhaWin: garantirCol(info, ['SENHA WINTHOR'], 'Senha Winthor') } };
 }
 function coletorListar() {
   const X = colunasColetor(), info = X.info, c = X.c, ult = info.sh.getLastRow(), itens = [];
-  if (ult >= 2) info.sh.getRange(2, 1, ult - 1, info.ult).getValues().forEach(function (l, i) {
+  if (ult >= 2) {
+    const vals = info.sh.getRange(2, 1, ult - 1, info.ult).getValues();
+    // migração única: "login | senha" na mesma célula passa para duas colunas
+    const parte = function (v) { const t = texto(v), k = t.indexOf('|'); return k < 0 ? null : [t.slice(0, k).trim(), t.slice(k + 1).trim()]; };
+    let mudou = false;
+    vals.forEach(function (l) {
+      const a = parte(l[c.login]); if (a && !texto(l[c.senhaCol])) { l[c.login] = a[0]; l[c.senhaCol] = a[1]; mudou = true; }
+      const b = parte(l[c.winthor]); if (b && !texto(l[c.senhaWin])) { l[c.winthor] = b[0]; l[c.senhaWin] = b[1]; mudou = true; }
+    });
+    if (mudou) [c.login, c.winthor, c.senhaCol, c.senhaWin].forEach(function (col) {
+      info.sh.getRange(2, col + 1, vals.length, 1).setNumberFormat('@').setValues(vals.map(function (l) { return [l[col]]; }));
+    });
+    vals.forEach(function (l, i) {
     const id = texto(l[c.id]); if (!id) return;
-    itens.push({ linha: i + 2, id: id, nome: texto(l[c.nome]), login: texto(l[c.login]), winthor: texto(l[c.winthor]), mat: soDigitos(l[c.mat]), colab: texto(l[c.colab]),
+    itens.push({ linha: i + 2, id: id, nome: texto(l[c.nome]), login: texto(l[c.login]), senhaCol: texto(l[c.senhaCol]), winthor: texto(l[c.winthor]), senhaWin: texto(l[c.senhaWin]), mat: soDigitos(l[c.mat]), colab: texto(l[c.colab]),
       setor: texto(l[c.setor]), inv: chaveData(l[c.inv]), obs: texto(l[c.obs]), termo: texto(l[c.termo]), dtTermo: chaveData(l[c.dtTermo]), status: texto(l[c.status]) || 'Ativo', dtAtrib: chaveData(l[c.dtAtrib]) });
-  });
+    });
+  }
   abaComCabecalho(ABA_COLETORES_HIST, ['Data', 'ID Coletor', 'Setor', 'Matricula', 'Status', 'Usuario']);
   const hs = dadosSS().getSheetByName(ABA_COLETORES_HIST), hist = [];
   if (hs.getLastRow() >= 2) hs.getRange(2, 1, hs.getLastRow() - 1, 6).getValues().forEach(function (l) {
@@ -1481,7 +1495,7 @@ function coletorSalvar(d, s) {
     if (normalizar(texto(l[c.id])) !== normalizar(texto(d.idOriginal))) throw new Error('A planilha mudou desde que a lista foi carregada. Recarregue e tente de novo.');
     antes = { setor: texto(l[c.setor]), mat: soDigitos(l[c.mat]), status: texto(l[c.status]) || 'Ativo' };
   } else l = new Array(info.ult).fill('');
-  l[c.id] = id; l[c.nome] = texto(d.nome); l[c.login] = texto(d.login); l[c.winthor] = texto(d.winthor); l[c.mat] = mat; l[c.colab] = colab;
+  l[c.id] = id; l[c.nome] = texto(d.nome); l[c.login] = texto(d.login); l[c.senhaCol] = texto(d.senhaCol); l[c.winthor] = texto(d.winthor); l[c.senhaWin] = texto(d.senhaWin); l[c.mat] = mat; l[c.colab] = colab;
   l[c.setor] = setor; l[c.inv] = d.inv ? isoParaData(d.inv) : ''; l[c.obs] = texto(d.obs); l[c.status] = status;
   if (!antes || antes.mat !== mat) l[c.dtAtrib] = mat ? isoParaData(d.dtAtrib || hoje()) : '';
   let n = linha;
