@@ -4,9 +4,12 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.10.1";
+const APP_VERSAO = "2.10.2";
 
 const NOTAS_VERSAO = [
+  { v:"2.10.2", data:"2026-11-07", titulo:"Atualização sempre completa no celular", itens:[
+    "O aplicativo agora confere cada arquivo com o servidor a cada abertura, ignorando o cache do navegador. Evita misturar arquivos novos com antigos (ex.: botão do menu à esquerda com o menu ainda abrindo à direita)."
+  ]},
   { v:"2.10.1", data:"2026-11-07", titulo:"Ajustes dos alertas e do menu no celular", itens:[
     "Menu lateral do celular agora abre pela esquerda (botão no início do cabeçalho; deslizar para a esquerda fecha) e mostra a versão instalada, as notas de atualização e o botão Atualizar agora.",
     "Sino abre na hora: usa os dados já carregados e confere o servidor em segundo plano (antes esperava ~5 s e um segundo toque fechava o painel).",

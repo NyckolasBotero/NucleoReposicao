@@ -1,5 +1,5 @@
 /* Núcleo Reposição – funcionamento como aplicativo (PWA) */
-const VERSION = 'nucleo-v2';
+const VERSION = 'nucleo-v3';
 const CORE = ['./', './index.html', './app.js', './changelog.js', './comissao.js', './admin.js', './alertas.js', './design.js', './design.css', './feedbacks.js', './nc.js', './fbdocs.js', './retornos.js', './lancamentos.js', './coletores.js', './devolucao.js', './scanner.js', './manifest.json', './icon-192.png', './icon-512.png', './logo.png', './logo-branco.png'];
 
 self.addEventListener('install', e => {
@@ -30,7 +30,7 @@ self.addEventListener('fetch', e => {
 // Site: tenta a versão nova (até 4 s); sem internet ou rede lenta, usa a cópia salva.
 async function networkFirst(req) {
   const c = await caches.open(VERSION);
-  const net = fetch(req).then(r => { if (r && r.ok) c.put(req, r.clone()); return r; });
+  const net = fetch(req, { cache: 'no-cache' }).then(r => { if (r && r.ok) c.put(req, r.clone()); return r; });
   net.catch(() => {});
   const cached = (await c.match(req, { ignoreSearch: true })) || (req.mode === 'navigate' ? await c.match('./index.html') : undefined);
   if (!cached) return net;
