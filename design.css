@@ -730,4 +730,16 @@ tr.av-erro td{ background:rgba(214,69,69,.08); }
 .col-act .btn{height:32px}
 .col-baixado{opacity:.55}
 #col-modal .adm-form{margin-bottom:10px}
+#col-modal{ min-width:min(560px,86vw); }
+.cx-sec{ margin:16px 0 8px; padding-bottom:5px; border-bottom:1px solid var(--gray-200,#e3e8f0); font-size:12px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--blue-med,#2f6fce); }
+.cx-sec:first-of-type{ margin-top:6px; }
+.cx-g{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.cx-g label{ display:flex; flex-direction:column; gap:4px; min-width:0; font-size:11.5px; font-weight:700; color:var(--gray-500); text-transform:uppercase; letter-spacing:.3px; }
+.cx-g input, .cx-g select, .cx-g textarea{ width:100%; box-sizing:border-box; height:40px; padding:9px 10px; border:1.5px solid var(--gray-200); border-radius:8px; font-size:14px; font-weight:500; text-transform:none; letter-spacing:0; }
+.cx-g textarea{ height:auto; resize:vertical; }
+.cx-g input[readonly]{ background:var(--gray-50,#f4f6fa); }
+.cx-full{ grid-column:1 / -1; }
+.cx-data{ display:flex; gap:8px; } .cx-data input{ flex:1; } .cx-data .btn{ height:40px; padding:0 18px; }
+.cx-g .lanc-novo{ margin:-4px 0 0; }
+@media (max-width:520px){ .cx-g{ grid-template-columns:1fr; } }
 .adm-select{padding:6px 10px;border:1px solid var(--border,#d0d7e2);border-radius:8px;background:#fff;font-weight:600;font-size:13px}

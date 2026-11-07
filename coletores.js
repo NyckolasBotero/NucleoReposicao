@@ -164,32 +164,32 @@ Object.assign(LancUI, {
     const setores = Array.from(new Set((this.ctx.listas.SETOR_COLETOR||[]).concat(c.setor ? [c.setor] : [])));
     const ta = `padding:9px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:inherit;text-transform:none;letter-spacing:0;font-weight:500;`;
     UI.openModal(`<div id="col-modal"><h3 style="margin-top:0">${novo ? "Novo coletor" : "Editar coletor " + this.h(c.id)}</h3>
-      <div class="adm-form">
+      <div class="cx-sec">Equipamento</div>
+      <div class="cx-g">
         <label>ID do coletor<input type="text" id="cx-id" value="${this.h(c.id)}" placeholder="Ex.: COL-014" autocomplete="off"></label>
         <label>Nome do coletor<input type="text" id="cx-nome" value="${this.h(c.nome)}" placeholder="Ex.: Zebra TC21 – 14" autocomplete="off"></label>
-      </div>
-      <div class="adm-form">
-        <label>Login do coletor<input type="text" id="cx-login" value="${this.h(c.login)}" placeholder="Ex.: Col15" autocomplete="off"></label>
-        <label>Senha do coletor<input type="text" id="cx-senhacol" value="${this.h(c.senhaCol)}" autocomplete="off"></label>
-        <span></span>
-      </div>
-      <div class="adm-form">
         <label>Setor<select id="cx-setor" data-vazio="Selecione">${this.options(setores, c.setor, "Selecione")}</select></label>
         <label>Status<select id="cx-status">${COLETOR_STATUS.map(s=>`<option ${s===c.status?"selected":""}>${s}</option>`).join("")}</select></label>
-        <label>Último inventário<span style="display:flex;gap:6px"><input type="date" id="cx-inv" value="${this.h(c.inv)}" style="flex:1"><button type="button" class="btn btn-outline btn-sm" id="cx-inv-hoje">Hoje</button></span></label>
+        <div class="cx-full">${this.novoItem("SETOR_COLETOR", "cx-setor", "novo setor")}</div>
       </div>
-      ${this.novoItem("SETOR_COLETOR", "cx-setor", "novo setor")}
-      <div class="adm-form">
+      <div class="cx-sec">Acesso ao coletor</div>
+      <div class="cx-g">
+        <label>Login do coletor<input type="text" id="cx-login" value="${this.h(c.login)}" placeholder="Ex.: Col15" autocomplete="off"></label>
+        <label>Senha do coletor<input type="text" id="cx-senhacol" value="${this.h(c.senhaCol)}" autocomplete="off"></label>
+      </div>
+      <div class="cx-sec">Quem usa</div>
+      <div class="cx-g">
         <label>Matrícula de quem usa<input type="text" id="cx-mat" inputmode="numeric" list="dl-cx" value="${this.h(c.mat)}" placeholder="vazio = sem usuário" autocomplete="off"></label>
         <label>Nome (automático)<input type="text" id="cx-colab" readonly value="${this.h(c.colab)}" placeholder="—"></label>
-      </div>
-      <div class="adm-form">
         <label>Login Winthor<input type="text" id="cx-winthor" value="${this.h(c.winthor)}" placeholder="usuário no Winthor" autocomplete="off"></label>
         <label>Senha Winthor<input type="text" id="cx-senhawin" value="${this.h(c.senhaWin)}" autocomplete="off"></label>
-        <span></span>
       </div>
       ${this.datalistPessoas("dl-cx", false)}
-      <div class="adm-form"><label style="grid-column:1/-1">Observações<textarea id="cx-obs" rows="3" style="${ta}">${this.h(c.obs)}</textarea></label></div>
+      <div class="cx-sec">Inventário e observações</div>
+      <div class="cx-g">
+        <label class="cx-full">Último inventário<span class="cx-data"><input type="date" id="cx-inv" value="${this.h(c.inv)}"><button type="button" class="btn btn-outline" id="cx-inv-hoje">Hoje</button></span></label>
+        <label class="cx-full">Observações<textarea id="cx-obs" rows="3" style="${ta}">${this.h(c.obs)}</textarea></label>
+      </div>
       <div id="cx-msg"></div>
       <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="cx-salvar">${novo ? "Cadastrar" : "Salvar alterações"}</button></div></div>`);
     const $$ = (id)=> document.getElementById(id);
