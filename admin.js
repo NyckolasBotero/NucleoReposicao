@@ -630,11 +630,9 @@ const AdminUI = {
     if(!box) return;
     if(!Auth.user || !Auth.can("admin","versoes")){ box.innerHTML = ""; return; }
     const nova = st.ultima && st.novas > 0;
-    box.innerHTML = `<div class="sbv${nova?" nova":""}">
-      <div class="sbv-l"><span>Versão instalada</span><strong>v${escapeHtml(APP_VERSAO)}</strong></div>
-      <div class="sbv-l"><span>Versão mais recente</span><strong>${st.ultima?"v"+escapeHtml(st.ultima):(st.checando?"…":"—")}</strong></div>
-      <button type="button" class="sbv-btn" id="sbv-atualizar" ${nova?"":'title="Recarrega o aplicativo com a versão mais recente"'}>Atualizar agora</button></div>`;
-    document.getElementById("sbv-atualizar").addEventListener("click", ()=> this.atualizarApp());
+    box.innerHTML = `<div class="sbv"><div class="sbv-v">Versão ${escapeHtml(APP_VERSAO)}</div>
+      ${nova ? `<button type="button" class="sbv-up" id="sbv-atualizar" title="Clique para atualizar agora">Versão ${escapeHtml(st.ultima)} disponível ↻</button>` : ""}</div>`;
+    const bt = document.getElementById("sbv-atualizar"); if(bt) bt.addEventListener("click", ()=> this.atualizarApp());
   },
 
   renderVersoes(){

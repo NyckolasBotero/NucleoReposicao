@@ -4,9 +4,12 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.7.1";
+const APP_VERSAO = "2.7.2";
 
 const NOTAS_VERSAO = [
+  { v:"2.7.2", data:"2026-11-07", titulo:"Versão discreta no menu", itens:[
+    "Menu lateral: a versão aparece em texto simples abaixo de Administração e, quando há versão nova, o aviso “disponível ↻” atualiza com um clique."
+  ]},
   { v:"2.7.1", data:"2026-11-07", titulo:"Versão no menu lateral", itens:[
     "Menu lateral, abaixo das guias: versão instalada, versão mais recente e botão Atualizar agora (o quadro fica laranja quando há versão nova)."
   ]},

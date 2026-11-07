@@ -744,11 +744,10 @@ tr.av-erro td{ background:rgba(214,69,69,.08); }
 @media (max-width:520px){ .cx-g{ grid-template-columns:1fr; } }
 .adm-select{padding:6px 10px;border:1px solid var(--border,#d0d7e2);border-radius:8px;background:#fff;font-weight:600;font-size:13px}
 
-/* quadro de versão no menu lateral */
-#sb-versao{ padding:0 12px 10px; }
-.sbv{ border:1px solid rgba(255,255,255,.14); border-radius:12px; padding:10px 12px; background:rgba(255,255,255,.06); font-size:12px; color:rgba(255,255,255,.75); display:flex; flex-direction:column; gap:5px; }
-.sbv-l{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; } .sbv-l strong{ color:#fff; font-size:13px; }
-.sbv.nova{ border-color:rgba(240,161,58,.7); background:rgba(240,161,58,.12); } .sbv.nova .sbv-l:nth-child(2) strong{ color:#ffc46b; }
-.sbv-btn{ margin-top:4px; padding:7px 10px; border-radius:8px; border:none; background:#e28a1f; color:#fff; font-weight:700; font-size:12.5px; cursor:pointer; }
-.sbv-btn:hover{ filter:brightness(1.08); }
+/* versão no menu lateral (discreta, abaixo das guias) */
+#sb-versao{ padding:0 22px 10px; }
+.sbv{ display:flex; flex-direction:column; align-items:flex-start; gap:2px; font-size:12px; }
+.sbv-v{ font-weight:700; color:rgba(255,255,255,.85); }
+.sbv-up{ background:none; border:none; padding:0; font:inherit; font-weight:700; color:#ffc46b; cursor:pointer; }
+.sbv-up:hover{ text-decoration:underline; }
 body.sb-collapsed #sb-versao{ display:none; }
