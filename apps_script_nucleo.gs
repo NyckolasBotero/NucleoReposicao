@@ -100,6 +100,10 @@ function doPost(e) {
       if (d.acao === 'bases_enviar') { exigir(s, PERM_BASES); return resposta(basesEnviar(d)); }
       if (d.acao === 'bases_dias') { exigir(s, PERM_BASES); return resposta(basesDias(d)); }
       if (d.acao === 'bases_aplicar') { exigir(s, PERM_BASES); return resposta(basesAplicar(d)); }
+      if (d.acao === 'alertas_ler') return resposta(alertasLer(s));
+      if (d.acao === 'alertas_cfg_salvar') return resposta(alertasSalvarCfg(d, s));
+      if (d.acao === 'alertas_prefs_salvar') return resposta(alertasSalvarPrefs(d, s));
+      if (d.acao === 'alertas_concluir') return resposta(alertasConcluir(d, s));
       if (d.acao === 'bases_modo') { exigir(s, PERM_BASES); return resposta(basesModo(d)); }
       if (d.acao === 'bases_excluir') { exigir(s, PERM_BASES); return resposta(basesExcluir(d, s)); }
       if (d.acao === 'bases_concluir') { exigir(s, PERM_BASES); return resposta(basesConcluir(d, s)); }
@@ -115,7 +119,7 @@ function doPost(e) {
 
 /** Ações que só leem: rodam sem a trava global (várias pessoas podem consultar enquanto alguém grava). */
 const LEITURAS_SEM_TRAVA = {
-  admin_listar: 1, admin_historico: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
+  admin_listar: 1, admin_historico: 1, alertas_ler: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1
 };
@@ -778,6 +782,66 @@ function basesConcluir(d, sessao) {
   sh.getRange(n, 1, 1, 9).setNumberFormat('@').setValues([[nome, agora, sessao.nome || sessao.matricula, sessao.matricula, String(d.arquivo || ''), cfgBase(nome).modo,
     Number(d.enviadas) || 0, Number(d.novas) || 0, Number(d.duplicadas) || 0]]);
   return { ok: true, quando: agora };
+}
+
+
+/* ===================== Central de Alertas (configuração e preferências) ===================== */
+
+const ABA_ALERTAS = 'ALERTAS_CONFIG';
+/** Só o Fabio Nyckolas define quais alertas existem e quem recebe cada um. */
+function ehAdminAlertas(s) { return normalizar(s.nome || '').indexOf('FABIONYCKOLAS') === 0; }
+
+function alertasSheet() { return abaComCabecalho(ABA_ALERTAS, ['Chave', 'Json', 'Atualizado']); }
+function alertasLerChave(chave) {
+  const sh = alertasSheet(), ult = sh.getLastRow();
+  if (ult < 2) return null;
+  const v = sh.getRange(2, 1, ult - 1, 2).getValues();
+  for (let i = 0; i < v.length; i++) if (String(v[i][0]) === chave) { try { return JSON.parse(String(v[i][1] || 'null')); } catch (e) { return null; } }
+  return null;
+}
+function alertasGravarChave(chave, obj) {
+  const sh = alertasSheet(), ult = sh.getLastRow(), json = JSON.stringify(obj);
+  if (json.length > 45000) throw new Error('Configuração grande demais. Remova alertas ou vetos antigos.');
+  const agora = Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm:ss');
+  if (ult >= 2) {
+    const v = sh.getRange(2, 1, ult - 1, 1).getValues();
+    for (let i = 0; i < v.length; i++) if (String(v[i][0]) === chave) { sh.getRange(i + 2, 1, 1, 3).setNumberFormat('@').setValues([[chave, json, agora]]); return; }
+  }
+  sh.getRange(ult + 1, 1, 1, 3).setNumberFormat('@').setValues([[chave, json, agora]]);
+}
+
+/** Configuração geral + preferências de quem está logado (+ lista de usuários para o administrador). */
+function alertasLer(s) {
+  const admin = ehAdminAlertas(s);
+  const out = { ok: true, admin: admin, matricula: s.matricula, config: alertasLerChave('config') || {}, prefs: alertasLerChave('prefs_' + s.matricula) || {} };
+  if (admin) {
+    const r = lerUsuarios();
+    out.usuarios = Object.keys(r.usuarios).filter(function (m) { return !r.usuarios[m].bloqueado; }).map(function (m) { return { matricula: m, nome: r.usuarios[m].nome || nomeDaMatricula(m) }; })
+      .sort(function (a, b) { return String(a.nome).localeCompare(String(b.nome)); });
+  }
+  return out;
+}
+function alertasSalvarCfg(d, s) {
+  if (!ehAdminAlertas(s)) throw new Error('Só o administrador dos alertas pode alterar esta configuração.');
+  const c = d.config || {};
+  alertasGravarChave('config', { tipos: c.tipos || {}, custom: Array.isArray(c.custom) ? c.custom : [], feitos: c.feitos || {}, abrirAoEntrar: c.abrirAoEntrar !== false });
+  registrarLog(s, 'Alertas (configuração)', 'atualizada');
+  return { ok: true };
+}
+function alertasSalvarPrefs(d, s) {
+  const p = d.prefs || {};
+  alertasGravarChave('prefs_' + s.matricula, { descartados: p.descartados || {}, vetos: Array.isArray(p.vetos) ? p.vetos : [] });
+  return { ok: true };
+}
+/** Marca um alerta recorrente como concluído no ciclo atual (qualquer pessoa que o receba pode marcar). */
+function alertasConcluir(d, s) {
+  const id = String(d.id || ''), ciclo = String(d.ciclo || '');
+  if (!id) throw new Error('Alerta inválido.');
+  const c = alertasLerChave('config') || {};
+  c.feitos = c.feitos || {};
+  if (d.desfazer) delete c.feitos[id]; else c.feitos[id] = { ciclo: ciclo, quando: Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm'), quem: s.nome || s.matricula };
+  alertasGravarChave('config', c);
+  return { ok: true, feitos: c.feitos };
 }
 
 /* ===================== Testes pelo editor ===================== */

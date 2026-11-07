@@ -38,6 +38,7 @@ const Auth = {
   can(view, paneId){
     if(!this.user) return false;
     if(this.user.legacy) return (view!=="admin" && view!=="lancamentos") || paneId==="links"; // sem servidor: tudo, exceto o que grava (Bases/Acessos)
+    if(view==="admin" && paneId==="alertas") return !!this.user && normStr(this.user.nome||"").replace(/\s/g,"").startsWith("FABIONYCKOLAS");   // só o administrador dos alertas
     if(view==="admin" && paneId==="versoes") return this.can("admin","bases") || this.can("admin","acessos");   // quem administra vê as notas de atualização
     const v = NAV_VIEWS.find(x=>x.id===view);
     const it = ((typeof UI!=="undefined" && UI.subnavConfig[view])||[]).find(i=>i.id===paneId);
@@ -4050,7 +4051,8 @@ const UI = {
       { id:"bases", label:"Bases" },
       { id:"acessos", label:"Acessos" },
       { id:"links", label:"Links de acesso" },
-      { id:"versoes", label:"Atualizações" }
+      { id:"versoes", label:"Atualizações" },
+      { id:"alertas", label:"Alertas" }
     ]
   },
 
@@ -4166,6 +4168,7 @@ const UI = {
       window.APP_STATE.ready = true;
       try{ if(window.ComissaoParams) ComissaoParams.carregarRemoto(); }catch(e){}
       if(window.FeedbackAdv) FeedbackAdv.atualizarAlertas();
+      try{ if(window.Alertas) Alertas.aoEntrar(); }catch(e){}
       setTimeout(()=>{ try{ if(window.LancUI && Auth.can("gestao","feedbacks")) LancUI.garantirCtx().catch(()=>{}); }catch(e){} }, 2500);   // deixa a lista de pessoas/motivos pronta: editar feedback abre na hora
       if(window.NC){ NC.garantir(); let n=0; const t=setInterval(()=>{ if(NC.carregado() || ++n>40){ clearInterval(t); try{ FeedbackAdv.atualizarAlertas(); }catch(e){} } }, 1500); }
 
@@ -4321,7 +4324,7 @@ const UI = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
-      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(),
+      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(), alertas: ()=>window.Alertas && Alertas.renderPane(),
       lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };

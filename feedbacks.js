@@ -171,6 +171,7 @@ const FeedbackAdv = {
   },
 
   atualizarAlertas(){
+    if(window.Alertas){ Alertas.atualizarBadge(); return; }
     let n = 0;
     try{ n = this.alertas().total; }catch(e){ n = 0; }
     ["hdr-alertas-n","sb-alertas-n","dr-alertas-n"].forEach(id=>{
@@ -180,6 +181,7 @@ const FeedbackAdv = {
   },
 
   abrirAlertas(){
+    if(window.Alertas){ Alertas.abrir(); return; }
     if(!window.APP_STATE || !window.APP_STATE.ready){ toast("Carregue os dados primeiro (Atualizar dados) para ver os alertas.", "error"); return; }
     const a = this.alertas();
     const sec = (titulo, cor, linhas, vazio)=> `<div style="margin:14px 0 6px;font-weight:800;color:${cor}">${titulo} <span class="small-muted">(${linhas.length})</span></div>` +
