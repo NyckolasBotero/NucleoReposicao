@@ -757,7 +757,7 @@ const ImportLog = {
   // bases de auditoria lidas direto do Google Sheets de auditoria (fora do Excel/planilha principal)
   logAuditoria(){
     const mk = (nome, rows, erro, carregou)=>{
-      const name = this.rotulo(nome)+" (Google Sheets)";
+      const name = this.rotulo(nome)+" (link externo)";
       if(erro) return { name, status:"alerta", statusLabel:"⚠️ Falha ao ler (online)", date:null, msg:`Aba ${nome}: ${erro}`, rowCount:0 };
       if(!carregou) return { name, status:"alerta", statusLabel:"⚠️ Não carregada", date:null, msg:`Aba ${nome} não foi lida nesta carga.`, rowCount:0 };
       if(!rows.length) return { name, status:"vazia", statusLabel:"Sem dados", date:null, msg:"A aba foi encontrada, mas não contém nenhuma linha de dados.", rowCount:0 };
@@ -2623,8 +2623,13 @@ const AuditOnline = {
   },
 
   async load(force){
-    if(this.loading) return;
+    // se já há uma leitura em andamento, espera por ela (antes saía na hora e o log marcava "não carregada")
+    if(this.loading && this._p) return this._p;
     if(this.rows && !force) return;
+    this._p = this._ler();
+    return this._p;
+  },
+  async _ler(){
     this.loading = true; this.error = null;
     try{
       const res = await fetch(this.csvUrl(), { cache:"no-store" });
