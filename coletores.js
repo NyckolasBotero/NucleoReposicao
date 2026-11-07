@@ -166,8 +166,8 @@ Object.assign(LancUI, {
     UI.openModal(`<div id="col-modal"><h3 style="margin-top:0">${novo ? "Novo coletor" : "Editar coletor " + this.h(c.id)}</h3>
       <div class="cx-sec">Equipamento</div>
       <div class="cx-g">
-        <label>ID do coletor<input type="text" id="cx-id" value="${this.h(c.id)}" placeholder="Ex.: COL-014" autocomplete="off"></label>
-        <label>Nome do coletor<input type="text" id="cx-nome" value="${this.h(c.nome)}" placeholder="Ex.: Zebra TC21 – 14" autocomplete="off"></label>
+        <label>ID do coletor<input type="text" id="cx-id" value="${this.h(c.id)}" placeholder="Ex.: 7Q6220300198" autocomplete="off"></label>
+        <label>Nome do coletor<input type="text" id="cx-nome" value="${this.h(c.nome)}" placeholder="Ex.: STA-Col15" autocomplete="off"></label>
         <label>Setor<select id="cx-setor" data-vazio="Selecione">${this.options(setores, c.setor, "Selecione")}</select></label>
         <label>Status<select id="cx-status">${COLETOR_STATUS.map(s=>`<option ${s===c.status?"selected":""}>${s}</option>`).join("")}</select></label>
         <div class="cx-full">${this.novoItem("SETOR_COLETOR", "cx-setor", "novo setor")}</div>
@@ -175,14 +175,14 @@ Object.assign(LancUI, {
       <div class="cx-sec">Acesso ao coletor</div>
       <div class="cx-g">
         <label>Login do coletor<input type="text" id="cx-login" value="${this.h(c.login)}" placeholder="Ex.: Col15" autocomplete="off"></label>
-        <label>Senha do coletor<input type="text" id="cx-senhacol" value="${this.h(c.senhaCol)}" autocomplete="off"></label>
+        <label>Senha do coletor<input type="text" id="cx-senhacol" value="${this.h(c.senhaCol)}" placeholder="Ex.: User@15" autocomplete="off"></label>
       </div>
       <div class="cx-sec">Quem usa</div>
       <div class="cx-g">
-        <label>Matrícula de quem usa<input type="text" id="cx-mat" inputmode="numeric" list="dl-cx" value="${this.h(c.mat)}" placeholder="vazio = sem usuário" autocomplete="off"></label>
+        <label>Matrícula de quem usa<input type="text" id="cx-mat" inputmode="numeric" list="dl-cx" value="${this.h(c.mat)}" placeholder="Ex.: 10003928 (vazio = sem usuário)" autocomplete="off"></label>
         <label>Nome (automático)<input type="text" id="cx-colab" readonly value="${this.h(c.colab)}" placeholder="—"></label>
-        <label>Login Winthor<input type="text" id="cx-winthor" value="${this.h(c.winthor)}" placeholder="usuário no Winthor" autocomplete="off"></label>
-        <label>Senha Winthor<input type="text" id="cx-senhawin" value="${this.h(c.senhaWin)}" autocomplete="off"></label>
+        <label>Login Winthor<input type="text" id="cx-winthor" value="${this.h(c.winthor)}" placeholder="Ex.: 10003928" autocomplete="off"></label>
+        <label>Senha Winthor<input type="text" id="cx-senhawin" value="${this.h(c.senhaWin)}" placeholder="Ex.: 1" autocomplete="off"></label>
       </div>
       ${this.datalistPessoas("dl-cx", false)}
       <div class="cx-sec">Inventário e observações</div>
