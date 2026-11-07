@@ -737,6 +737,8 @@ const ImportLog = {
       }
       const maxDate = this.detectMaxDate(rows);
       if(!maxDate){
+        // abas de cadastro/saldo/cronograma não têm data própria: carregadas normalmente, sem alerta
+        if(this.SEM_DATA.includes(name0)) return { name, status:"ok", statusLabel:"✓ Carregada", date:null, msg:null, rowCount:rows.length };
         return { name, status:"alerta", statusLabel:"⚠️ Carregada com alerta", date:null,
           msg:`Sheet ${name} carregada, porém nenhuma coluna de data válida foi identificada.`, rowCount:rows.length };
       }
@@ -744,6 +746,7 @@ const ImportLog = {
     }).concat(this.logAuditoria());
   },
 
+  SEM_DATA: ["CRONOGRAMA","1707","8022","8022 Nova","REP.AVARIA"],
   // nome exibido no log: só a primeira letra de cada palavra maiúscula
   ROTULOS: { "FEEDBACK REP":"Feedbacks", "QUADRO REP":"Quadro Reposição", "REP.AVARIA":"Relações Ava. Repositores", "Capacidade Realizada":"Validação Capacidade" },
   rotulo(n){
@@ -809,7 +812,7 @@ const ImportLog = {
                   <td><strong>${escapeHtml(s.name)}</strong></td>
                   <td><span class="flow-sheet-status ${statusCls(s.status)}">${s.statusLabel}</span></td>
                   <td>${s.status==="nao-encontrada"?"—":fmtNum(s.rowCount)}</td>
-                  <td>${s.date?fmtDateBR(s.date):(s.status==="nao-encontrada"?"—":"Sem data identificada")}</td>
+                  <td>${s.date?fmtDateBR(s.date):((s.status==="nao-encontrada"||s.status==="ok")?"—":"Sem data identificada")}</td>
                 </tr>`).join("")}
             </tbody>
           </table>
