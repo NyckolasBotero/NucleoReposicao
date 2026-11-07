@@ -257,7 +257,7 @@ const Design = {
       if(!x){ this._drTimer = 0; return; }
       this._poe(x[0], x[1], x[2], x[3]);
       const resta = this._fila.length;
-      this._drTimer = setTimeout(()=>{ this._drTimer = 0; this._drena(); }, resta > 12 ? 45 : resta > 6 ? 80 : 130);
+      this._drTimer = setTimeout(()=>{ this._drTimer = 0; this._drena(); }, resta > 12 ? 70 : resta > 6 ? 100 : 140);
     },
     _flush(){ clearTimeout(this._drTimer); this._drTimer = 0; (this._fila || []).splice(0).forEach(x=> this._poe(x[0], x[1], x[2], x[3])); },
     _poe(nome, estado, detalhe, id){
@@ -270,7 +270,7 @@ const Design = {
       r.className = "lf-r " + (estado || "ok");
       r.innerHTML = `<i></i><span>${escapeHtml(String(nome))}</span><em>${detalhe == null ? "" : escapeHtml(String(detalhe))}</em>`;
       if(novo) rows.appendChild(r);
-      rows.scrollTop = rows.scrollHeight;
+      while(rows.children.length > 5){ rows.removeChild(rows.firstChild); }   // só as últimas: sem barra de rolagem
     },
     /** termina a barra (enche e some) e retira o véu */
     fim(){
