@@ -616,7 +616,8 @@ const FeedbackAdv = {
   _refFeedback(e, i){
     const r = e.feedbacks[i], iso = LancUI.isoDe(r.data), chave = normStr(r.resumo||"");
     const iguais = this.feedbacks().filter(x=> x.codKey===r.codKey && x.data && LancUI.isoDe(x.data)===iso && normStr(x.resumo||"")===chave).sort((a,b)=>a._row-b._row);
-    return { mat:LancUI.soDigitos(r.cod), nome:e.nome||r.nome||"", data:iso, resumo:r.resumo||"", ordem:Math.max(0, iguais.indexOf(r)) };
+    const local = { data:iso, mat:LancUI.soDigitos(r.cod), nome:r.nome||e.nome||"", motivo:r.motivo||"", resumo:r.resumo||"", avPessoal:Number.isFinite(r.avPessoal)?r.avPessoal:null, avGestor:Number.isFinite(r.avGestor)?r.avGestor:null, matApl:"", nomeApl:r.aplicador||"", anexo:r.anexo||"" };
+    return { local, mat:LancUI.soDigitos(r.cod), nome:e.nome||r.nome||"", data:iso, resumo:r.resumo||"", ordem:Math.max(0, iguais.indexOf(r)) };
   },
   /** Reflete a mudança na tela na hora (os indicadores completos se atualizam com "Atualizar dados"). */
   _aplicarNoFeedback(r, patch){ Object.assign(r, patch); if(this.sel) this.renderDetalhe(this.sel); },

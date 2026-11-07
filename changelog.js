@@ -4,9 +4,14 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.7.2";
+const APP_VERSAO = "2.7.3";
 
 const NOTAS_VERSAO = [
+  { v:"2.7.3", data:"2026-11-07", titulo:"Mais velocidade ao editar feedback", itens:[
+    "Editar feedback abre na hora: o formulário usa os dados que o painel já tem e a busca da linha na planilha roda em paralelo, só sendo exigida ao salvar.",
+    "Pessoas e motivos são preparados em segundo plano depois da carga; a lista de feedbacks da pessoa fica 90 s em memória (a 2ª edição é imediata).",
+    "Servidor: as permissões do usuário ficam 60 s em cache, sem reabrir a planilha de permissões em toda chamada (mudanças em Acessos valem na hora)."
+  ]},
   { v:"2.7.2", data:"2026-11-07", titulo:"Versão discreta no menu", itens:[
     "Menu lateral: a versão aparece em texto simples abaixo de Administração e, quando há versão nova, o aviso “disponível ↻” atualiza com um clique."
   ]},

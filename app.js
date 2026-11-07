@@ -4166,6 +4166,7 @@ const UI = {
       window.APP_STATE.ready = true;
       try{ if(window.ComissaoParams) ComissaoParams.carregarRemoto(); }catch(e){}
       if(window.FeedbackAdv) FeedbackAdv.atualizarAlertas();
+      setTimeout(()=>{ try{ if(window.LancUI && Auth.can("gestao","feedbacks")) LancUI.garantirCtx().catch(()=>{}); }catch(e){} }, 2500);   // deixa a lista de pessoas/motivos pronta: editar feedback abre na hora
       if(window.NC){ NC.garantir(); let n=0; const t=setInterval(()=>{ if(NC.carregado() || ++n>40){ clearInterval(t); try{ FeedbackAdv.atualizarAlertas(); }catch(e){} } }, 1500); }
 
       // inicializa o Cronograma a partir da sheet CRONOGRAMA (se existir) — continua 100% editável na tela depois
