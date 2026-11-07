@@ -301,13 +301,21 @@ const LancUI = {
   /** Acha na planilha a linha do feedback. ref: { item } | { linha, mat, data } | { mat, data(iso), resumo, ordem }. */
   async fbLocalizar(ref){
     if(ref.item) return ref.item;
-    const r = await Api.call({ acao:"lanc_feedback_listar", mat:ref.mat });
+    const r = await Api.call({ acao:"lanc_feedback_listar", mat:ref.mat, nome:ref.nome||"" });
     if(!r || !r.ok) throw new Error((r && r.erro) || "Não foi possível consultar a planilha.");
-    let c = (r.itens||[]).filter(i=> i.data === ref.data);
-    const igual = c.filter(i=> this._norm(i.resumo) === this._norm(ref.resumo));
-    if(igual.length) c = igual;
-    if(!c.length) throw new Error("Não achei este feedback na planilha. Use Atualizar dados e tente de novo.");
-    if(c.length > 1 && !igual.length) throw new Error("Há mais de um feedback desta pessoa nesta data. Edite pela tela Lançar Feedback (lista de feedbacks).");
+    const itens = r.itens||[], res = this._norm(ref.resumo);
+    const trocada = (iso)=>{ const m = String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m && +m[3] <= 12 ? `${m[1]}-${m[3]}-${m[2]}` : ""; };   // dia e mês invertidos (datas antigas)
+    // do critério mais exato ao mais tolerante: data+resumo, data, resumo, data invertida
+    const passos = [
+      i=> i.data === ref.data && this._norm(i.resumo) === res,
+      i=> i.data === ref.data,
+      i=> res && this._norm(i.resumo) === res,
+      i=> trocada(ref.data) && i.data === trocada(ref.data)
+    ];
+    let c = [];
+    for(const p of passos){ c = itens.filter(p); if(c.length) break; }
+    if(!c.length) throw new Error("Não achei este feedback na planilha desta pessoa (matrícula " + ref.mat + "). Use Atualizar dados e tente de novo.");
+    if(c.length > 1 && !res) throw new Error("Há mais de um feedback desta pessoa nesta data. Edite pela tela Lançar Feedback (lista de feedbacks).");
     return c[Math.min(ref.ordem || 0, c.length-1)];
   },
 
