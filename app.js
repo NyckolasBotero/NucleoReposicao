@@ -676,7 +676,7 @@ const LoadingScreen = {
     "FÉRIAS AGENDADAS":"Férias agendadas", "__audruas":"Auditoria de ruas (aplicativo STA)", "__audret":"Auditoria de retorno e rotinas"
   },
   desc(nome){ return this.descricoes[nome] || nome; },
-  buscando(nome){ Design.carga.item(this.desc(nome), "busca", "buscando…", nome); },
+  buscando(nome){ /* a lista só mostra o item quando ele termina, um por vez */ },
   progresso(feitas, total, nome, info){
     Design.carga.progresso(feitas, total);
     if(nome) Design.carga.item(this.desc(nome), info && info.status === "ok" ? "ok" : "warn", info && info.status === "ok" ? (info.linhas||0).toLocaleString("pt-BR") + " linhas" : "sem dados", nome);
