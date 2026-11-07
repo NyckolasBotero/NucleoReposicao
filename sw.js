@@ -47,3 +47,20 @@ async function cacheFirst(req) {
   if (r && (r.ok || r.type === 'opaque')) c.put(req, r.clone());
   return r;
 }
+
+/* Notificações push (celular e computador), mesmo com o aplicativo fechado */
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { corpo: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.titulo || 'Núcleo Reposição', {
+    body: d.corpo || '', tag: d.tag || 'nucleo', renotify: true, icon: './icon-192.png', badge: './icon-192.png', data: { url: d.url || './' }
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const lista = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of lista) { if ('focus' in c) { await c.focus(); c.postMessage({ tipo: 'abrir-alertas' }); return; } }
+    await self.clients.openWindow((e.notification.data && e.notification.data.url) || './');
+  })());
+});

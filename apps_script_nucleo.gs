@@ -104,6 +104,10 @@ function doPost(e) {
       if (d.acao === 'alertas_cfg_salvar') return resposta(alertasSalvarCfg(d, s));
       if (d.acao === 'alertas_prefs_salvar') return resposta(alertasSalvarPrefs(d, s));
       if (d.acao === 'alertas_concluir') return resposta(alertasConcluir(d, s));
+      if (d.acao === 'push_chave') return resposta(pushChave(s));
+      if (d.acao === 'push_inscrever') return resposta(pushInscrever(d, s));
+      if (d.acao === 'push_remover') return resposta(pushRemover(d, s));
+      if (d.acao === 'push_teste') return resposta(pushTeste(s));
       if (d.acao === 'bases_modo') { exigir(s, PERM_BASES); return resposta(basesModo(d)); }
       if (d.acao === 'bases_excluir') { exigir(s, PERM_BASES); return resposta(basesExcluir(d, s)); }
       if (d.acao === 'bases_concluir') { exigir(s, PERM_BASES); return resposta(basesConcluir(d, s)); }
@@ -119,7 +123,7 @@ function doPost(e) {
 
 /** Ações que só leem: rodam sem a trava global (várias pessoas podem consultar enquanto alguém grava). */
 const LEITURAS_SEM_TRAVA = {
-  admin_listar: 1, admin_historico: 1, alertas_ler: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
+  admin_listar: 1, admin_historico: 1, alertas_ler: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1
 };
@@ -827,6 +831,10 @@ function alertasRegistrarChamada(iso, itens, s) {
     const resto = lista.filter(function (e) { return !(e.data === iso && e.mat === s.matricula); });
     resto.unshift(novo);
     alertasGravarChave('evt_chamada', resto.slice(0, 15));
+    const hora = novo.quando.slice(11, 16), dd = iso.split('-').reverse().join('/');
+    const corpo = aus.length ? aus.length + ' sem presença: ' + aus.slice(0, 5).map(function (x) { return x.nome + ' (' + String(x.status).toLowerCase() + ')'; }).join(', ') + (aus.length > 5 ? ' e mais ' + (aus.length - 5) : '')
+      : 'Todos presentes (' + presentes + ').';
+    pushEnviar(alertasDestinatarios('chamada', 'admin'), 'Chamada de ' + dd + ' feita por ' + novo.quem + ' às ' + hora, corpo, 'chamada');
   } catch (e) { /* o alerta nunca pode impedir a chamada */ }
 }
 
@@ -862,6 +870,77 @@ function alertasConcluir(d, s) {
   if (d.desfazer) delete c.feitos[id]; else c.feitos[id] = { ciclo: ciclo, quando: Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm'), quem: s.nome || s.matricula };
   alertasGravarChave('config', c);
   return { ok: true, feitos: c.feitos };
+}
+
+/* ===================== Notificações push (celular) =====================
+   O envio é feito por um pequeno servidor gratuito (Cloudflare Worker, arquivo push/worker_push.js).
+   Propriedades do script (Configurações do projeto > Propriedades do script): PUSH_URL, PUSH_SEGREDO, VAPID_PUBLICA. */
+
+function pushProps() {
+  const p = PropertiesService.getScriptProperties();
+  return { url: String(p.getProperty('PUSH_URL') || '').trim(), segredo: String(p.getProperty('PUSH_SEGREDO') || '').trim(), publica: String(p.getProperty('VAPID_PUBLICA') || '').trim() };
+}
+function pushChave(s) {
+  const c = pushProps(), subs = alertasLerChave('push_' + s.matricula) || [];
+  return { ok: true, ativo: !!(c.url && c.segredo && c.publica), publica: c.publica, aparelhos: subs.length };
+}
+function pushInscrever(d, s) {
+  const sub = d.sub || {};
+  if (!sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) throw new Error('Inscrição inválida.');
+  if (String(sub.endpoint).indexOf('https://') !== 0) throw new Error('Endereço de push inválido.');
+  const lista = (alertasLerChave('push_' + s.matricula) || []).filter(function (x) { return x.endpoint !== sub.endpoint; });
+  lista.unshift({ endpoint: sub.endpoint, keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) }, quando: Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm') });
+  alertasGravarChave('push_' + s.matricula, lista.slice(0, 5));
+  return { ok: true, aparelhos: Math.min(lista.length, 5) };
+}
+function pushRemover(d, s) {
+  const lista = (alertasLerChave('push_' + s.matricula) || []).filter(function (x) { return x.endpoint !== d.endpoint; });
+  alertasGravarChave('push_' + s.matricula, lista);
+  return { ok: true, aparelhos: lista.length };
+}
+function pushTeste(s) {
+  const r = pushEnviar([String(s.matricula)], 'Teste de notificação', 'Se você viu esta mensagem, o celular está recebendo os alertas do Núcleo Reposição.', 'teste');
+  if (!r.config) throw new Error('O envio de notificações ainda não foi configurado no servidor (PUSH_URL, PUSH_SEGREDO e VAPID_PUBLICA).');
+  if (!r.aparelhos) throw new Error('Nenhum aparelho ativado para esta pessoa. Ative as notificações neste aparelho primeiro.');
+  if (!r.enviados) throw new Error('O serviço de notificações recusou o envio (' + (r.motivo || 'sem detalhe') + ').');
+  return { ok: true, enviados: r.enviados };
+}
+
+/** Matrículas que recebem um tipo de alerta, conforme a configuração (padrão do tipo se o administrador nunca mudou). */
+function alertasDestinatarios(tipo, padrao) {
+  const cfg = alertasLerChave('config') || {}, t = (cfg.tipos || {})[tipo] || {};
+  if (t.ativo === false) return [];
+  const dest = t.dest !== undefined ? t.dest : padrao;
+  if (Array.isArray(dest)) return dest.map(String);
+  const us = lerUsuarios().usuarios, mats = Object.keys(us).filter(function (m) { return !us[m].bloqueado; });
+  if (dest === 'admin') return mats.filter(function (m) { return normalizar(us[m].nome || '').indexOf('FABIONYCKOLAS') === 0; });
+  return mats;
+}
+
+/** Envia a notificação aos aparelhos das matrículas. Nunca lança erro (não pode atrapalhar quem está lançando). */
+function pushEnviar(mats, titulo, corpo, tag) {
+  const r = { config: false, aparelhos: 0, enviados: 0, motivo: '' };
+  try {
+    const c = pushProps();
+    if (!c.url || !c.segredo || !c.publica) return r;
+    r.config = true;
+    const donos = [], subs = [];
+    (mats || []).forEach(function (m) { (alertasLerChave('push_' + m) || []).forEach(function (x) { subs.push(x); donos.push(String(m)); }); });
+    r.aparelhos = subs.length;
+    if (!subs.length) return r;
+    const resp = UrlFetchApp.fetch(c.url, { method: 'post', contentType: 'application/json', headers: { 'X-Segredo': c.segredo }, muteHttpExceptions: true,
+      payload: JSON.stringify({ subs: subs, titulo: titulo, corpo: corpo, tag: tag || 'nucleo', url: './' }) });
+    if (resp.getResponseCode() !== 200) { r.motivo = 'servidor respondeu ' + resp.getResponseCode(); return r; }
+    const res = (JSON.parse(resp.getContentText()).resultados) || [], mortos = {};
+    res.forEach(function (x) {
+      if (x.status >= 200 && x.status < 300) r.enviados++;
+      else { if (x.status === 404 || x.status === 410) mortos[x.endpoint] = true; r.motivo = r.motivo || ('código ' + x.status + (x.erro ? ' ' + x.erro : '')); }
+    });
+    Object.keys(mortos).length && donos.filter(function (m, i) { return donos.indexOf(m) === i; }).forEach(function (m) {
+      alertasGravarChave('push_' + m, (alertasLerChave('push_' + m) || []).filter(function (x) { return !mortos[x.endpoint]; }));
+    });
+  } catch (e) { r.motivo = String(e && e.message || e); }
+  return r;
 }
 
 /* ===================== Testes pelo editor ===================== */

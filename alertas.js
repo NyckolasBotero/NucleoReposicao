@@ -341,13 +341,59 @@ const Alertas = {
 
   /* notificação do navegador (precisa ser permitida pela pessoa em Configurar alertas) */
   pedirNotificacao(){ try{ if(window.Notification && Notification.permission === "default") return Notification.requestPermission(); }catch(e){} },
-  notificar(n, entrada, titulo, corpo){
+  async notificar(n, entrada, titulo, corpo){
     try{
-      if(!window.Notification || Notification.permission !== "granted" || document.hasFocus() && !titulo && !entrada) return;
+      if(!window.Notification || Notification.permission !== "granted" || (document.hasFocus() && !titulo && !entrada)) return;
       if(!titulo && !n) return;
-      const x = new Notification(titulo || "Núcleo Reposição", { body: corpo || `${n} alerta(s) pendente(s)`, tag: titulo ? "nucleo-chamada" : "nucleo-alertas", icon: "icon-192.png" });
-      x.onclick = ()=>{ window.focus(); this.abrir(); x.close(); };
+      const op = { body: corpo || `${n} alerta(s) pendente(s)`, tag: titulo ? "nucleo-chamada" : "nucleo-alertas", icon: "icon-192.png", data:{ url:"./" } };
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      if(reg) await reg.showNotification(titulo || "Núcleo Reposição", op);       // único jeito aceito no Android
+      else new Notification(titulo || "Núcleo Reposição", op);
     }catch(e){}
+  },
+
+  /* push no celular: o aparelho se inscreve e o servidor (Apps Script + Cloudflare Worker) envia mesmo com o app fechado */
+  b64Bytes(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4) s += "="; const b = atob(s), o = new Uint8Array(b.length); for(let i=0;i<b.length;i++) o[i] = b.charCodeAt(i); return o; },
+  pushSuportado(){ return "serviceWorker" in navigator && "PushManager" in window && !!window.Notification; },
+  async pushEstado(){
+    const e = { suportado:this.pushSuportado(), ativoServidor:false, aparelho:false, negado:false, aparelhos:0, ios:/iphone|ipad|ipod/i.test(navigator.userAgent), instalado:(window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true };
+    try{ const r = await Api.call({ acao:"push_chave" }); if(r && r.ok){ e.ativoServidor = !!r.ativo; e.aparelhos = r.aparelhos||0; e.publica = r.publica; } }catch(x){}
+    if(e.suportado){
+      e.negado = Notification.permission === "denied";
+      try{ const reg = await navigator.serviceWorker.getRegistration(); const sub = reg && await reg.pushManager.getSubscription(); e.aparelho = !!sub; }catch(x){}
+    }
+    return e;
+  },
+  async desenharPush(el){
+    if(!el) return;
+    el.innerHTML = `<div class="ac-line"><small>Verificando notificações no celular...</small></div>`;
+    const e = await this.pushEstado(); if(!document.body.contains(el)) return;
+    let msg, acoes = "";
+    if(!e.suportado) msg = e.ios && !e.instalado ? "No iPhone, instale o aplicativo na tela inicial (Compartilhar > Adicionar à Tela de Início) e abra por lá para ativar." : "Este navegador não permite notificações push.";
+    else if(!e.ativoServidor) msg = "O servidor de notificações ainda não foi configurado (veja as instruções de implantação do push).";
+    else if(e.negado) msg = "As notificações estão bloqueadas neste aparelho. Libere nas configurações do navegador/aplicativo.";
+    else if(e.aparelho){ msg = "Este aparelho está recebendo os alertas."; acoes = `<button type="button" class="btn btn-ghost" id="ac-ptest">Enviar teste</button><button type="button" class="btn btn-ghost" id="ac-poff">Desativar</button>`; }
+    else if(e.ios && !e.instalado) msg = "No iPhone, instale o aplicativo na tela inicial e abra por lá para ativar.";
+    else{ msg = "Receba os alertas no celular, mesmo com o aplicativo fechado."; acoes = `<button type="button" class="btn btn-primary" id="ac-pon">Ativar neste aparelho</button>`; }
+    el.innerHTML = `<h4 class="ac-sec">Notificações no celular</h4><div class="ac-line"><span>${this.h(msg)}</span></div>${acoes?`<div class="ac-line">${acoes}</div>`:""}`;
+    const on = el.querySelector("#ac-pon"), off = el.querySelector("#ac-poff"), t = el.querySelector("#ac-ptest");
+    if(on) on.onclick = async ()=>{ on.disabled = true; try{ await this.pushAtivar(e.publica); toast("Notificações ativadas neste aparelho."); }catch(x){ toast(x.message, "error"); } this.desenharPush(el); };
+    if(off) off.onclick = async ()=>{ off.disabled = true; try{ await this.pushDesativar(); toast("Notificações desativadas neste aparelho."); }catch(x){ toast(x.message, "error"); } this.desenharPush(el); };
+    if(t) t.onclick = async ()=>{ t.disabled = true; try{ const r = await Api.call({ acao:"push_teste" }); if(!r || !r.ok) throw new Error((r && r.erro) || "Falhou."); toast("Teste enviado."); }catch(x){ toast(x.message, "error"); } t.disabled = false; };
+  },
+  async pushAtivar(publica){
+    if(!publica) throw new Error("Servidor de notificações não configurado.");
+    const perm = await Notification.requestPermission();
+    if(perm !== "granted") throw new Error("Permissão de notificação não concedida.");
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:this.b64Bytes(publica) });
+    const r = await Api.call({ acao:"push_inscrever", sub: sub.toJSON() });
+    if(!r || !r.ok) throw new Error((r && r.erro) || "Não foi possível registrar o aparelho.");
+  },
+  async pushDesativar(){
+    const reg = await navigator.serviceWorker.getRegistration(), sub = reg && await reg.pushManager.getSubscription();
+    if(sub){ try{ await Api.call({ acao:"push_remover", endpoint: sub.endpoint }); }catch(e){} await sub.unsubscribe(); }
   },
   /** a cada 2 min confere se saiu chamada nova: abre o painel e avisa (pop-up + notificação) */
   iniciarVigia(){
@@ -404,7 +450,7 @@ const Alertas = {
     box.innerHTML = `<div class="ac-hd"><h3>Configurar alertas</h3></div>
       ${adm ? `<p class="small-muted">Só você define quais alertas existem e quem recebe cada um. Alterações são salvas ao clicar em Salvar.</p>
         <label class="ac-line"><input type="checkbox" id="ac-entrar" ${this.cfg.abrirAoEntrar!==false?"checked":""}> Abrir o painel de alertas ao entrar</label>
-        ${window.Notification && Notification.permission !== "granted" && Notification.permission !== "denied" ? `<div class="ac-line"><button type="button" class="btn btn-ghost" id="ac-notif">Ativar notificações neste navegador</button></div>` : ""}
+        <div id="ac-push" class="ac-push"></div>
         <h4 class="ac-sec">Alertas do sistema</h4><div class="ac-list">${this.TIPOS.map(linhaTipo).join("")}</div>
         <div class="ac-sec-r"><h4 class="ac-sec">Alertas criados por você</h4><button type="button" class="btn btn-outline btn-sm" id="ac-novo">${ic("plus")} Novo alerta</button></div>
         <div class="ac-list" id="ac-custom">${(this.cfg.custom||[]).map(linhaCustom).join("") || `<div class="small-muted" style="padding:6px 2px">Nenhum alerta criado ainda.</div>`}</div>
@@ -419,7 +465,7 @@ const Alertas = {
     box.querySelectorAll("[data-limpar]").forEach(b=> b.onclick = ()=>{ this.prefs.descartados = {}; this.salvarPrefs(); this.atualizarBadge(); this.renderConfig(box); });
     if(!adm) return;
     const msg = (t, erro)=>{ const m = box.querySelector("#ac-msg"); if(m){ m.textContent = t; m.style.color = erro ? "#c0392b" : ""; } };
-    const bn = box.querySelector("#ac-notif"); if(bn) bn.onclick = async ()=>{ await this.pedirNotificacao(); bn.remove(); };
+    this.desenharPush(box.querySelector("#ac-push"));
     box.querySelector("#ac-entrar").onchange = (e)=>{ this.cfg.abrirAoEntrar = e.target.checked; };
     box.querySelectorAll(".ac-row").forEach(row=>{
       const tid = row.dataset.t, cid = row.dataset.c;
@@ -499,3 +545,4 @@ const Alertas = {
   }
 };
 window.Alertas = Alertas;
+try{ if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e=>{ if(e.data && e.data.tipo === "abrir-alertas") Alertas.abrir(); }); }catch(e){}
