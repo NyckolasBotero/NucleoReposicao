@@ -38,8 +38,12 @@ const RetornoQ = {
   data(v){ return AuditOnline.parseDateFlexible(v); },
 
   async carregar(force){
-    if(this.carregando) return;
+    if(this.carregando && this._p) return this._p;
     if(this.dados && !force) return;
+    this._p = this._carregar();
+    return this._p;
+  },
+  async _carregar(){
     this.carregando = true; this.erro = null;
     try{
       const [a, r, q] = await Promise.all([ this.buscar(this.abas.aud), this.buscar(this.abas.rot), this.buscar(this.abas.quadro) ]);
