@@ -64,6 +64,9 @@ const Icons = {
     plane: '<path d="M17.800 19.200 16 11l3.500-3.500C21 6 21.500 4 21 3c-1-.5-3 0-4.500 1.500L13 8 4.800 6.200c-.5-.1-.9.100-1.100.5l-.3.500c-.2.500-.1 1 .3 1.300L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.500 5.300c.3.400.8.500 1.300.3l.5-.2c.4-.3.600-.7.500-1.200z"/>',
     truck: '<path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
     tag: '<path d="M3 12V4.500A1.500 1.500 0 0 1 4.500 3H12l9 9-9 9z"/><circle cx="8" cy="8" r="1.200"/>',
+    eyeoff: '<path d="m3 3 18 18"/><path d="M10.600 6.200A9.800 9.800 0 0 1 12 6c6.500 0 10 6 10 6a17 17 0 0 1-3.200 3.900M6.300 7.600A17 17 0 0 0 2 12s3.500 6 10 6a9.700 9.700 0 0 0 4-.9"/><path d="M9.900 9.900a3 3 0 0 0 4.200 4.200"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="m6 7 1 13h10l1-13"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     dot: '<circle cx="12" cy="12" r="2.500"/>'
   },
@@ -81,7 +84,7 @@ const Icons = {
     turnover:"repeat", ferias:"sun", organograma:"network",
     lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",
     lcapacidade:"battery", lferias:"plane",
-    bases:"database", acessos:"key", links:"link", versoes:"tag"
+    bases:"database", acessos:"key", links:"link", versoes:"tag", alertas:"bell"
   },
   forNav(id, tam){ return this.svg(this.nav[id] || "dot", tam); },
   /** troca <span data-ic="nome"> por svg (e mantém o que já foi trocado) */
