@@ -148,7 +148,7 @@ const Nav = {
     // gesto: arrastar para a direita fecha
     let x0=null; const dr=$i("drawer");
     dr.addEventListener("touchstart", e=>{ x0=e.touches[0].clientX; }, {passive:true});
-    dr.addEventListener("touchend", e=>{ if(x0!=null && e.changedTouches[0].clientX-x0>70) this.fecharDrawer(); x0=null; }, {passive:true});
+    dr.addEventListener("touchend", e=>{ if(x0!=null && x0-e.changedTouches[0].clientX>70) this.fecharDrawer(); x0=null; }, {passive:true});
     document.querySelectorAll("#drawer [data-dr]").forEach(b=> b.addEventListener("click", ()=>{
       const a=b.dataset.dr; this.fecharDrawer();
       if(a==="alertas") FeedbackAdv.abrirAlertas();

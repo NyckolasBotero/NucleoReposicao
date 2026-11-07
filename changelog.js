@@ -4,9 +4,16 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.10.0";
+const APP_VERSAO = "2.10.1";
 
 const NOTAS_VERSAO = [
+  { v:"2.10.1", data:"2026-11-07", titulo:"Ajustes dos alertas e do menu no celular", itens:[
+    "Menu lateral do celular agora abre pela esquerda (botão no início do cabeçalho; deslizar para a esquerda fecha) e mostra a versão instalada, as notas de atualização e o botão Atualizar agora.",
+    "Sino abre na hora: usa os dados já carregados e confere o servidor em segundo plano (antes esperava ~5 s e um segundo toque fechava o painel).",
+    "No celular o painel de alertas não fecha sozinho; no computador continua com o timer de 4 s.",
+    "A engrenagem abre as configurações sozinhas (o painel sai da frente) e, ao salvar ou fechar, volta para a tela de alertas.",
+    "Configurações redesenhadas: janela mais larga, cartões com mais espaço, textos sem aperto e controles em linha própria no celular."
+  ]},
   { v:"2.10.0", data:"2026-11-07", titulo:"Alertas no celular (push)", itens:[
     "Notificações push mesmo com o aplicativo fechado: Configurar alertas > Notificações no celular > Ativar neste aparelho (há botão de teste).",
     "A chamada do dia é enviada na hora ao celular de quem recebe esse alerta, com quem lançou, o horário e quem não está presente.",

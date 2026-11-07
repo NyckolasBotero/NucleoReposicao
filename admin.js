@@ -628,11 +628,20 @@ const AdminUI = {
   desenharVersaoMenu(){
     const box = document.getElementById("sb-versao"), st = this.versoesState;
     if(!box) return;
-    if(!Auth.user || !Auth.can("admin","versoes")){ box.innerHTML = ""; return; }
+    if(!Auth.user || !Auth.can("admin","versoes")){ box.innerHTML = ""; const d0 = document.getElementById("dr-versao"); if(d0) d0.innerHTML = ""; return; }
     const nova = st.ultima && st.novas > 0;
     box.innerHTML = `<div class="sbv"><div class="sbv-v">Versão ${escapeHtml(APP_VERSAO)}</div>
       ${nova ? `<button type="button" class="sbv-up" id="sbv-atualizar" title="Clique para atualizar agora">Versão ${escapeHtml(st.ultima)} disponível ↻</button>` : ""}</div>`;
     const bt = document.getElementById("sbv-atualizar"); if(bt) bt.addEventListener("click", ()=> this.atualizarApp());
+    const dr = document.getElementById("dr-versao");
+    if(dr){
+      dr.innerHTML = `<div class="drv"><div class="drv-l"><strong>Versão ${escapeHtml(APP_VERSAO)}</strong>
+        ${nova ? `<span class="drv-new">Nova: ${escapeHtml(st.ultima)}</span>` : `<span class="drv-ok">Atualizado</span>`}</div>
+        <div class="drv-b"><button type="button" class="drv-bt" id="drv-notas">Notas de atualização</button>
+        ${nova ? `<button type="button" class="drv-bt up" id="drv-atualizar">Atualizar agora</button>` : ""}</div></div>`;
+      const n = document.getElementById("drv-notas"); if(n) n.onclick = ()=>{ UI.fecharDrawer && UI.fecharDrawer(); UI.goTo("admin","versoes"); };
+      const a = document.getElementById("drv-atualizar"); if(a) a.onclick = ()=> this.atualizarApp();
+    }
   },
 
   renderVersoes(){

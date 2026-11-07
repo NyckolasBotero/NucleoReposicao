@@ -70,7 +70,7 @@ const Alertas = {
           try{ localStorage.setItem(this.lsKey(), JSON.stringify(this.prefs)); }catch(e){}
         }
       }catch(e){ /* segue com o que tem */ }
-      this.carregado = true;
+      this.carregado = true; this._ult = Date.now();
     })();
     await this._p; this._p = null;
   },
@@ -226,26 +226,33 @@ const Alertas = {
   /* ---------------------------------------------------------------- */
   /* painel                                                            */
   /* ---------------------------------------------------------------- */
-  async abrir(auto){
+  toque(){ try{ return matchMedia("(hover: none), (max-width: 700px)").matches; }catch(e){ return false; } },
+  async abrir(auto, fixo){
     if(!window.APP_STATE || !window.APP_STATE.ready){ toast("Carregue os dados primeiro (Atualizar dados) para ver os alertas.", "error"); return; }
-    if(document.getElementById("alert-panel")){ this.fechar(); return; }
-    await this.carregar();
-    const p = document.createElement("div"); p.id = "alert-panel"; p.setAttribute("role","dialog"); p.setAttribute("aria-label","Alertas");
-    const hd = document.getElementById("app-header"); const top = hd ? Math.round(hd.getBoundingClientRect().bottom) + 8 : 70;
-    p.style.top = top + "px";
-    document.body.appendChild(p);
-    this.desenharPainel();
-    requestAnimationFrame(()=> p.classList.add("on"));
-    this._fora = (e)=>{ if(!p.contains(e.target) && !e.target.closest("#btn-alertas,#sb-alertas,[data-dr=alertas],#modal-overlay,.modal-overlay")) this.fechar(); };
-    this._esc = (e)=>{ if(e.key === "Escape") this.fechar(); };
-    setTimeout(()=> document.addEventListener("mousedown", this._fora), 50);
-    document.addEventListener("keydown", this._esc);
-    this.iniciarTimer(p);
+    if(document.getElementById("alert-panel")){ if(!auto) this.fechar(); return; }
+    if(this._abrindo) return; this._abrindo = true;
+    try{
+      // abre na hora com o que já está na memória; confere o servidor em segundo plano (no máximo a cada 60 s)
+      if(!this.carregado || Date.now() - (this._ult||0) > 60000) this.carregar(true).then(()=> this.atualizarBadge()).catch(()=>{});
+      const p = document.createElement("div"); p.id = "alert-panel"; p.setAttribute("role","dialog"); p.setAttribute("aria-label","Alertas");
+      const hd = document.getElementById("app-header"); const top = hd ? Math.round(hd.getBoundingClientRect().bottom) + 8 : 70;
+      p.style.top = top + "px";
+      document.body.appendChild(p);
+      this.desenharPainel();
+      requestAnimationFrame(()=> p.classList.add("on"));
+      this._fora = (e)=>{ if(!p.contains(e.target) && !e.target.closest("#btn-alertas,#sb-alertas,[data-dr=alertas],#modal-overlay,.modal-overlay")) this.fechar(); };
+      this._esc = (e)=>{ if(e.key === "Escape") this.fechar(); };
+      setTimeout(()=> document.addEventListener("mousedown", this._fora), 50);
+      document.addEventListener("keydown", this._esc);
+      if(fixo || this.toque()) p.classList.add("fixo");          // celular: não fecha sozinho
+      else this.iniciarTimer(p);
+    } finally{ this._abrindo = false; }
   },
-  fechar(){
+  fechar(rapido){
     const p = document.getElementById("alert-panel"); if(!p) return;
     this.pararTimer();
     document.removeEventListener("mousedown", this._fora); document.removeEventListener("keydown", this._esc);
+    if(rapido === true){ p.remove(); return; }
     p.classList.remove("on"); p.classList.add("sai");
     setTimeout(()=> p.remove(), 260);
   },
@@ -422,9 +429,19 @@ const Alertas = {
   /* configuração (modal pelo sino e guia Administração > Alertas)     */
   /* ---------------------------------------------------------------- */
   abrirConfig(){
-    this.pararTimer();
+    this._voltar = !!document.getElementById("alert-panel");
+    if(this._voltar) this.fechar(true);                 // a configuração aparece sozinha, sem o painel por cima
     UI.openModal(`<div id="ac-modal"><div id="ac-box"></div></div>`);
     this.renderConfig(document.getElementById("ac-box"));
+    const ov = document.getElementById("modal-overlay");
+    if(ov){
+      const obs = new MutationObserver(()=>{
+        if(ov.classList.contains("show")) return;
+        obs.disconnect();
+        if(this._voltar){ this._voltar = false; setTimeout(()=> this.abrir(false, true), 120); }   // volta para a tela de alertas
+      });
+      obs.observe(ov, { attributes:true, attributeFilter:["class"] });
+    }
   },
   renderPane(){
     const pane = document.getElementById("pane-alertas"); if(!pane) return;
@@ -438,15 +455,15 @@ const Alertas = {
     const linhaTipo = (t)=>{ const dest = this.destDe(t.id, t.padrao), ativo = this.ativoDe(t.id);
       return `<div class="ac-row" data-t="${t.id}"><span class="ac-ic" style="--c:${t.cor}">${ic(t.icone)}</span>
         <div class="ac-tx"><strong>${this.h(t.nome)}</strong><small>${this.h(t.desc)}</small></div>
-        <button type="button" class="ac-dest" data-a="dest" title="Escolher quem recebe">${this.h(this.destTxt(dest))}</button>
-        <label class="ac-sw"><input type="checkbox" data-a="ativo" ${ativo?"checked":""}><span></span></label></div>`; };
+        <div class="ac-ctl"><button type="button" class="ac-dest" data-a="dest" title="Escolher quem recebe">${this.h(this.destTxt(dest))}</button>
+        <label class="ac-sw"><input type="checkbox" data-a="ativo" ${ativo?"checked":""}><span></span></label></div></div>`; };
     const linhaCustom = (c)=>{ const dest = c.dest === undefined ? "*" : c.dest;
       return `<div class="ac-row" data-c="${this.h(c.id)}"><span class="ac-ic" style="--c:#2f6fce">${ic("clock")}</span>
         <div class="ac-tx"><strong>${this.h(c.nome)}</strong><small>${this.h(this.regraTxt(c.regra))}${c.texto?" · "+this.h(c.texto):""}</small></div>
-        <button type="button" class="ac-dest" data-a="dest" title="Escolher quem recebe">${this.h(this.destTxt(dest))}</button>
+        <div class="ac-ctl"><button type="button" class="ac-dest" data-a="dest" title="Escolher quem recebe">${this.h(this.destTxt(dest))}</button>
         <button type="button" class="ap-ib sm" data-a="edit" title="Editar">${ic("pen")}</button>
         <button type="button" class="ap-ib sm" data-a="del" title="Excluir">${ic("trash")}</button>
-        <label class="ac-sw"><input type="checkbox" data-a="ativo" ${c.ativo!==false?"checked":""}><span></span></label></div>`; };
+        <label class="ac-sw"><input type="checkbox" data-a="ativo" ${c.ativo!==false?"checked":""}><span></span></label></div></div>`; };
     box.innerHTML = `<div class="ac-hd"><h3>Configurar alertas</h3></div>
       ${adm ? `<p class="small-muted">Só você define quais alertas existem e quem recebe cada um. Alterações são salvas ao clicar em Salvar.</p>
         <label class="ac-line"><input type="checkbox" id="ac-entrar" ${this.cfg.abrirAoEntrar!==false?"checked":""}> Abrir o painel de alertas ao entrar</label>
@@ -458,8 +475,8 @@ const Alertas = {
         <div class="ac-foot"><span class="small-muted" id="ac-msg"></span><button type="button" class="btn btn-primary" id="ac-salvar">Salvar</button></div>`
       : `<p class="small-muted">Os alertas que você recebe são definidos pelo administrador. Aqui você gerencia o que escondeu.</p>`}
       <h4 class="ac-sec">Meus vetos e descartes</h4>
-      <div class="ac-list">${vetos.length||desc.length ? vetos.map(v=>`<div class="ac-row"><span class="ac-ic" style="--c:#7a8798">${ic("eyeoff")}</span><div class="ac-tx"><strong>${this.h(this.nomeVeto(v))}</strong><small>Vetado</small></div><button type="button" class="ac-dest" data-v="${this.h(v)}">Restaurar</button></div>`).join("")
-        + (desc.length ? `<div class="ac-row"><span class="ac-ic" style="--c:#7a8798">${ic("x")}</span><div class="ac-tx"><strong>${desc.length} aviso(s) descartado(s)</strong><small>Voltam sozinhos quando a situação muda</small></div><button type="button" class="ac-dest" data-limpar="1">Restaurar todos</button></div>` : "")
+      <div class="ac-list">${vetos.length||desc.length ? vetos.map(v=>`<div class="ac-row"><span class="ac-ic" style="--c:#7a8798">${ic("eyeoff")}</span><div class="ac-tx"><strong>${this.h(this.nomeVeto(v))}</strong><small>Vetado</small></div><div class="ac-ctl"><button type="button" class="ac-dest" data-v="${this.h(v)}">Restaurar</button></div></div>`).join("")
+        + (desc.length ? `<div class="ac-row"><span class="ac-ic" style="--c:#7a8798">${ic("x")}</span><div class="ac-tx"><strong>${desc.length} aviso(s) descartado(s)</strong><small>Voltam sozinhos quando a situação muda</small></div><div class="ac-ctl"><button type="button" class="ac-dest" data-limpar="1">Restaurar todos</button></div></div>` : "")
         : `<div class="small-muted" style="padding:6px 2px">Nada vetado.</div>`}</div>`;
     box.querySelectorAll("[data-v]").forEach(b=> b.onclick = ()=>{ this.prefs.vetos = this.prefs.vetos.filter(x=>x!==b.dataset.v); this.salvarPrefs(); this.atualizarBadge(); this.renderConfig(box); });
     box.querySelectorAll("[data-limpar]").forEach(b=> b.onclick = ()=>{ this.prefs.descartados = {}; this.salvarPrefs(); this.atualizarBadge(); this.renderConfig(box); });
@@ -478,7 +495,7 @@ const Alertas = {
     box.querySelector("#ac-novo").onclick = ()=> this.formCustom(box, null);
     box.querySelector("#ac-salvar").onclick = async (ev)=>{
       ev.target.disabled = true; msg("Salvando…");
-      try{ await this.salvarCfg(); msg("Salvo."); this.atualizarBadge(); }catch(e){ msg(e.message, true); }
+      try{ await this.salvarCfg(); msg("Salvo."); this.atualizarBadge(); if(box.id === "ac-box") setTimeout(()=> UI.closeModal(), 500); }catch(e){ msg(e.message, true); }
       ev.target.disabled = false;
     };
   },
