@@ -1206,13 +1206,15 @@ function colunasFeedback() {
 
 /** Feedbacks lançados, na ordem da planilha (linha crescente). Filtra por matrícula se informada. */
 function feedbackListar(d) {
-  const X = colunasFeedback(), info = X.info, c = X.c, filtro = soDigitos(d.mat);
+  const X = colunasFeedback(), info = X.info, c = X.c, filtro = soDigitos(d.mat), nomeF = normalizar(d.nome || '');
   const ult = info.sh.getLastRow();
   if (ult < 2) return { ok: true, itens: [] };
   const v = info.sh.getRange(2, 1, ult - 1, info.ult).getValues(), itens = [];
   for (let i = 0; i < v.length; i++) {
     const l = v[i], mat = soDigitos(l[c.mat]);
-    if (!mat || (filtro && mat !== filtro)) continue;
+    // feedbacks antigos podem estar sem matrícula: nesse caso acha pelo nome
+    if (!mat) { if (!(nomeF && normalizar(l[c.nome]) === nomeF)) continue; }
+    else if (filtro && mat !== filtro) continue;
     itens.push({ linha: i + 2, data: chaveData(l[c.data]), mat: mat, nome: texto(l[c.nome]), motivo: texto(l[c.motivo]), resumo: texto(l[c.resumo]),
       avPessoal: l[c.avP] === '' ? null : Number(l[c.avP]), avGestor: l[c.avG] === '' ? null : Number(l[c.avG]),
       matApl: soDigitos(l[c.matApl]), nomeApl: texto(l[c.nomeApl]), anexo: texto(l[c.anexo]) });
