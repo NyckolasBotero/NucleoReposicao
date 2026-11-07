@@ -4,9 +4,12 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.10.2";
+const APP_VERSAO = "2.10.3";
 
 const NOTAS_VERSAO = [
+  { v:"2.10.3", data:"2026-11-07", titulo:"Ajuste nos alertas personalizados", itens:[
+    "Configurar alertas: o botão liga/desliga dos alertas criados por você não ultrapassa mais a caixa no celular (o botão de quem recebe encolhe para dar espaço)."
+  ]},
   { v:"2.10.2", data:"2026-11-07", titulo:"Atualização sempre completa no celular", itens:[
     "O aplicativo agora confere cada arquivo com o servidor a cada abertura, ignorando o cache do navegador. Evita misturar arquivos novos com antigos (ex.: botão do menu à esquerda com o menu ainda abrindo à direita)."
   ]},

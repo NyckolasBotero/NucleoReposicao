@@ -806,7 +806,7 @@ body.sb-collapsed #sb-versao{ display:none; }
 .ac-ic{ width:40px; height:40px; border-radius:12px; display:grid; place-items:center; color:var(--c); background:color-mix(in srgb, var(--c) 14%, transparent); }
 .ac-ic svg{ width:20px; height:20px; }
 .ac-tx{ min-width:0; display:flex; flex-direction:column; gap:3px; } .ac-tx strong{ font-size:14.5px; } .ac-tx small{ color:var(--gray-500); font-size:12.5px; line-height:1.4; }
-.ac-ctl{ display:flex; align-items:center; gap:10px; }
+.ac-ctl{ display:flex; align-items:center; gap:10px; min-width:0; max-width:100%; } .ac-ctl > .ap-ib, .ac-ctl > .ac-sw{ flex:none; } .ac-ctl > .ac-dest{ flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; } .ac-ctl > .ac-sw:last-child{ margin-left:auto; }
 .ac-dest{ border:1px solid var(--gray-200); background:transparent; color:var(--ink); border-radius:999px; padding:7px 14px; font-size:12.5px; font-weight:600; cursor:pointer; white-space:nowrap; transition:background .15s; }
 .ac-dest:hover{ background:rgba(47,111,206,.12); }
 .ac-sw{ position:relative; width:44px; height:24px; flex:none; } .ac-sw input{ position:absolute; opacity:0; inset:0; margin:0; cursor:pointer; z-index:1; }
