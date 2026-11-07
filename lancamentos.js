@@ -290,20 +290,32 @@ const LancUI = {
   /* ================================================================== */
   /* FEEDBACK JÁ LANÇADO — editar, e escanear/anexar o documento depois   */
   /* ================================================================== */
-  async garantirCtx(){
-    if(this.ctx) return;
-    const r = await Api.call({ acao:"lanc_init" });
-    if(!r || !r.ok) throw new Error((r && r.erro) || "Falha ao carregar.");
-    this.ctx = r; this.nomes = {};
-    (r.pessoas||[]).forEach(p=>{ if(p.mat) this.nomes[p.mat] = p.nome; });
+  garantirCtx(){
+    if(this.ctx) return Promise.resolve();
+    if(this._ctxP) return this._ctxP;   // uma só chamada ao servidor, mesmo se várias telas pedirem
+    this._ctxP = (async ()=>{
+      try{
+        const r = await Api.call({ acao:"lanc_init" });
+        if(!r || !r.ok) throw new Error((r && r.erro) || "Falha ao carregar.");
+        this.ctx = r; this.nomes = {};
+        (r.pessoas||[]).forEach(p=>{ if(p.mat) this.nomes[p.mat] = p.nome; });
+      } finally { this._ctxP = null; }
+    })();
+    return this._ctxP;
   },
   _norm(t){ return String(t||"").replace(/\s+/g, " ").trim().toLowerCase(); },
   /** Acha na planilha a linha do feedback. ref: { item } | { linha, mat, data } | { mat, data(iso), resumo, ordem }. */
   async fbLocalizar(ref){
     if(ref.item) return ref.item;
-    const r = await Api.call({ acao:"lanc_feedback_listar", mat:ref.mat, nome:ref.nome||"" });
-    if(!r || !r.ok) throw new Error((r && r.erro) || "Não foi possível consultar a planilha.");
-    const itens = r.itens||[], res = this._norm(ref.resumo);
+    // lista da pessoa fica 90 s na memória: a 2ª edição abre na hora
+    const ck = ref.mat + "|" + (ref.nome||""), cache = (this._fbCache = this._fbCache || {});
+    let itens = cache[ck] && Date.now() - cache[ck].t < 90000 ? cache[ck].itens : null;
+    if(!itens){
+      const r = await Api.call({ acao:"lanc_feedback_listar", mat:ref.mat, nome:ref.nome||"" });
+      if(!r || !r.ok) throw new Error((r && r.erro) || "Não foi possível consultar a planilha.");
+      itens = r.itens||[]; cache[ck] = { t:Date.now(), itens };
+    }
+    const res = this._norm(ref.resumo);
     const trocada = (iso)=>{ const m = String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m && +m[3] <= 12 ? `${m[1]}-${m[3]}-${m[2]}` : ""; };   // dia e mês invertidos (datas antigas)
     // do critério mais exato ao mais tolerante: data+resumo, data, resumo, data invertida
     const passos = [
@@ -321,8 +333,12 @@ const LancUI = {
 
   /** Edita um feedback já lançado. aoSalvar(patch, matMudou) recebe o que mudou, no formato da tela de Gestão. */
   async fbEditar(ref, aoSalvar){
-    let it;
-    try{ await this.garantirCtx(); it = await this.fbLocalizar(ref); }catch(e){ toast(e.message, "error"); return; }
+    // abre na hora: a busca da linha na planilha roda em paralelo e só é exigida ao salvar
+    let it, loc = null;
+    try{
+      if(ref.local && this.ctx){ it = ref.local; loc = this.fbLocalizar(ref); loc.catch(()=>{}); }
+      else{ const p = this.fbLocalizar(ref); p.catch(()=>{}); await this.garantirCtx(); it = await p; }
+    }catch(e){ toast(e.message, "error"); return; }
     const notas = Array.from({length:11}, (_, i)=>i);
     const motivos = Array.from(new Set(((this.ctx.listas||{}).MOTIVO_FEEDBACK||[]).concat(it.motivo ? [it.motivo] : [])));
     UI.openModal(`<h3 style="margin-top:0;">Editar feedback</h3>
@@ -367,6 +383,11 @@ const LancUI = {
       if(!$$("fx-resumo").value.trim()) return this.aviso("fx-msg", "erro", "Escreva o resumo do assunto.");
       if($$("fx-ap").value === "" || $$("fx-ag").value === "") return this.aviso("fx-msg", "erro", "Informe as duas avaliações (0 a 10).");
       const a = this.anexos.fx, rm = $$("fx-rm-anexo");
+      if(loc){
+        try{ it = await loc; }catch(e){ return this.aviso("fx-msg", "erro", this.h(e.message)); }
+        loc = null;
+      }
+      this._fbCache = {};   // a lista da pessoa muda ao salvar
       const r = await this.enviar($$("fx-salvar"), { acao:"lanc_feedback_editar", linha:it.linha, matOriginal:it.mat, dataOriginal:it.data, data:$$("fx-data").value, mat,
         motivo:$$("fx-motivo").value, matAplicador:$$("fx-mat-apl").value, nomeAplicador:$$("fx-nome-apl").value, resumo:$$("fx-resumo").value,
         avPessoal:Number($$("fx-ap").value), avGestor:Number($$("fx-ag").value), removerAnexo: !!(rm && rm.checked),

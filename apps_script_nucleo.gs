@@ -284,12 +284,26 @@ function assinar(texto) {
 function gerarToken(mat) { const base = mat + '.' + Date.now(); return base + '.' + assinar(base); }
 
 /** Confere o token e devolve as permissões ATUAIS (tirar a matrícula da planilha = perde o acesso). */
+/** Usuário (permissões, bloqueio) com cache de 60 s: evita reabrir a planilha de permissões em toda chamada. */
+function usuarioRapido(mat) {
+  const cache = CacheService.getScriptCache();
+  let ver = cache.get('usr_v');
+  if (!ver) { ver = String(Date.now()); cache.put('usr_v', ver, 21600); }
+  const chave = 'usr_' + ver + '_' + mat;
+  try { const c = cache.get(chave); if (c) return JSON.parse(c); } catch (e) {}
+  const u = lerUsuarios().usuarios[mat];
+  if (u) { try { cache.put(chave, JSON.stringify({ bloqueado: u.bloqueado, perms: u.perms, nome: u.nome }), 60); } catch (e) {} }
+  return u;
+}
+/** Chame depois de qualquer mudança em permissões/bloqueios para valer na hora. */
+function invalidarUsuarios() { try { CacheService.getScriptCache().put('usr_v', String(Date.now()), 21600); } catch (e) {} }
+
 function validarToken(token) {
   const t = String(token || '').split('.');
   if (t.length !== 3) return { ok: false, erro: 'Faça login.' };
   if (assinar(t[0] + '.' + t[1]) !== t[2]) return { ok: false, erro: 'Login inválido. Entre novamente.' };
   if (Date.now() - Number(t[1]) > VALIDADE_LOGIN_DIAS * 864e5) return { ok: false, erro: 'Login expirado. Entre novamente.' };
-  const u = lerUsuarios().usuarios[t[0]];
+  const u = usuarioRapido(t[0]);
   if (!u || u.bloqueado || !u.perms.length) return { ok: false, erro: 'Acesso removido ou bloqueado.' };
   return { ok: true, matricula: t[0], nome: nomeDaMatricula(t[0]), perms: u.perms };
 }
@@ -335,6 +349,7 @@ function adminListar() {
 
 /** Regrava TODAS as linhas da matrícula. senha vazia = mantém a atual. */
 function adminSalvar(d, sessao) {
+  invalidarUsuarios();
   const orig = String(d.original || '').trim();
   const mat = String(d.matricula || '').replace(/\D/g, '');
   const status = d.status === 'Bloqueado' ? 'Bloqueado' : 'Ativo';
@@ -373,6 +388,7 @@ function adminSalvar(d, sessao) {
   const ini = sh.getLastRow() + 1;
   sh.getRange(ini, 1, linhas.length, T.ultCol).setNumberFormat('@').setValues(linhas);
   CacheService.getScriptCache().remove('nome_' + mat); if (orig) CacheService.getScriptCache().remove('nome_' + orig);
+  invalidarUsuarios();
   return { ok: true };
 }
 
