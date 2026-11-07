@@ -810,10 +810,30 @@ function alertasGravarChave(chave, obj) {
   sh.getRange(ult + 1, 1, 1, 3).setNumberFormat('@').setValues([[chave, json, agora]]);
 }
 
+/** Guarda quem fez a chamada do dia, quando, e quem não está presente (o painel de alertas mostra isso). Mantém os 15 últimos. */
+function alertasRegistrarChamada(iso, itens, s) {
+  try {
+    const aus = [], outros = { FOLGA: 0, FERIAS: 0 }; let presentes = 0;
+    itens.forEach(function (x) {
+      const st = normalizar(texto(x.status));
+      if (!st) return;
+      if (st === 'FALTA' || st === 'ATESTADO' || st === 'SUSPENSAO') aus.push({ nome: texto(x.nome) || nomeDaMatricula(soDigitos(x.mat)), status: texto(x.status) });
+      else if (st === 'FOLGA') outros.FOLGA++;
+      else if (st === 'FERIAS') outros.FERIAS++;
+      else presentes++;
+    });
+    const lista = alertasLerChave('evt_chamada') || [];
+    const novo = { data: iso, quando: Utilities.formatDate(new Date(), tzPadrao(), "yyyy-MM-dd'T'HH:mm:ss"), mat: s.matricula, quem: s.nome || s.matricula, presentes: presentes, folgas: outros.FOLGA, ferias: outros.FERIAS, ausentes: aus };
+    const resto = lista.filter(function (e) { return !(e.data === iso && e.mat === s.matricula); });
+    resto.unshift(novo);
+    alertasGravarChave('evt_chamada', resto.slice(0, 15));
+  } catch (e) { /* o alerta nunca pode impedir a chamada */ }
+}
+
 /** Configuração geral + preferências de quem está logado (+ lista de usuários para o administrador). */
 function alertasLer(s) {
   const admin = ehAdminAlertas(s);
-  const out = { ok: true, admin: admin, matricula: s.matricula, config: alertasLerChave('config') || {}, prefs: alertasLerChave('prefs_' + s.matricula) || {} };
+  const out = { ok: true, admin: admin, matricula: s.matricula, config: alertasLerChave('config') || {}, prefs: alertasLerChave('prefs_' + s.matricula) || {}, eventos: alertasLerChave('evt_chamada') || [] };
   if (admin) {
     const r = lerUsuarios();
     out.usuarios = Object.keys(r.usuarios).filter(function (m) { return !r.usuarios[m].bloqueado; }).map(function (m) { return { matricula: m, nome: r.usuarios[m].nome || nomeDaMatricula(m) }; })
@@ -824,7 +844,7 @@ function alertasLer(s) {
 function alertasSalvarCfg(d, s) {
   if (!ehAdminAlertas(s)) throw new Error('Só o administrador dos alertas pode alterar esta configuração.');
   const c = d.config || {};
-  alertasGravarChave('config', { tipos: c.tipos || {}, custom: Array.isArray(c.custom) ? c.custom : [], feitos: c.feitos || {}, abrirAoEntrar: c.abrirAoEntrar !== false });
+  alertasGravarChave('config', { tipos: c.tipos || {}, custom: Array.isArray(c.custom) ? c.custom : [], feitos: c.feitos || {}, abrirAoEntrar: c.abrirAoEntrar !== false, padroesOk: !!c.padroesOk });
   registrarLog(s, 'Alertas (configuração)', 'atualizada');
   return { ok: true };
 }
@@ -1847,6 +1867,7 @@ function chamadaSalvar(d, s) {
   if (!itens.some(function (x) { return texto(x.status); })) throw new Error('Marque o status de ao menos um colaborador.');
   const r = gravarChamada(itens);
   registrarLog(s, 'Chamada', iso + ' · ' + r.criadas + ' novas, ' + r.atualizadas + ' atualizadas');
+  alertasRegistrarChamada(iso, itens, s);
   return { ok: true, criadas: r.criadas, atualizadas: r.atualizadas };
 }
 
