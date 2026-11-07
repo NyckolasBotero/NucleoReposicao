@@ -8,7 +8,7 @@ const Alertas = {
   /* ---------------------------------------------------------------- */
   /* estado                                                            */
   /* ---------------------------------------------------------------- */
-  cfg: { tipos:{}, custom:[], feitos:{}, abrirAoEntrar:true },
+  cfg: { tipos:{}, custom:[], feitos:{}, abrirAoEntrar:true, padroesOk:false }, eventos:[],
   prefs: { descartados:{}, vetos:[] },
   admin:false, usuarios:[], carregado:false, _p:null, _noEntrar:false,
   TEMPO: 4000,
@@ -38,7 +38,15 @@ const Alertas = {
     { id:"sem_feedback", nome:"Sem feedback há muitos dias", icone:"message", cor:"#2f6fce", desc:"Colaborador há mais de 30 dias sem receber feedback.", padrao:"*",
       gerar(a){ return (a.semFeedback||[]).map(x=>({ key:`sem_feedback|${x.codKey}`, veto:`sem_feedback|${x.codKey}`, titulo:x.nome, texto:x.dias===null ? "Nunca recebeu feedback" : `${x.dias} dias sem feedback`, codKey:x.codKey, sig:x.dias===null?"n":String(Math.floor(x.dias/7)) })); } },
     { id:"ferias_conf", nome:"Férias no mesmo período", icone:"calendar", cor:"#8e5bd0", desc:"Duas pessoas com férias agendadas sobrepostas.", padrao:"*",
-      gerar(a){ return (a.ferias||[]).map(g=>({ key:`ferias_conf|${g.a.codKey}|${g.b.codKey}`, veto:`ferias_conf|${g.a.codKey}|${g.b.codKey}`, titulo:`${g.a.nome} e ${g.b.nome}`, texto:`${fmtDateBR(g.a.ini)} a ${fmtDateBR(g.a.fim)}  /  ${fmtDateBR(g.b.ini)} a ${fmtDateBR(g.b.fim)}`, sig:"1" })); } }
+      gerar(a){ return (a.ferias||[]).map(g=>({ key:`ferias_conf|${g.a.codKey}|${g.b.codKey}`, veto:`ferias_conf|${g.a.codKey}|${g.b.codKey}`, titulo:`${g.a.nome} e ${g.b.nome}`, texto:`${fmtDateBR(g.a.ini)} a ${fmtDateBR(g.a.fim)}  /  ${fmtDateBR(g.b.ini)} a ${fmtDateBR(g.b.fim)}`, sig:"1" })); } },
+    { id:"transferencia", nome:"Produto transferido", icone:"repeat", cor:"#0f8f8f", desc:"Endereço do produto na 8022 diferente do endereço na 8022 Nova.", padrao:"*",
+      gerar(){ return Alertas.itensTransferidos(); } },
+    { id:"chamada", nome:"Chamada do dia", icone:"listcheck", cor:"#1a9c62", desc:"Avisa quando a chamada do dia é lançada, por quem, a que horas e quem não está presente.", padrao:"admin",
+      gerar(){ return Alertas.itensChamada(); } },
+    { id:"ferias_venc", nome:"Férias vencendo", icone:"plane", cor:"#d9822b", desc:"Férias vencidas ou que vencem em até 1 mês e ainda não foram agendadas.", padrao:"*",
+      gerar(){ return Alertas.itensFeriasVenc(); } },
+    { id:"sem_anexo", nome:"Documento sem anexo", icone:"file", cor:"#c0392b", desc:"Advertência ou suspensão lançada, mas sem o documento assinado anexado (NC ainda não aplicada).", padrao:"*",
+      gerar(){ return Alertas.itensSemAnexo(); } }
   ],
   tipo(id){ return this.TIPOS.find(t=>t.id===id); },
 
@@ -54,15 +62,28 @@ const Alertas = {
         const r = await Api.call({ acao:"alertas_ler" });
         if(r && r.ok){
           const c = r.config || {};
-          this.cfg = { tipos:c.tipos||{}, custom:c.custom||[], feitos:c.feitos||{}, abrirAoEntrar:c.abrirAoEntrar!==false };
+          this.cfg = { tipos:c.tipos||{}, custom:c.custom||[], feitos:c.feitos||{}, abrirAoEntrar:c.abrirAoEntrar!==false, padroesOk:!!c.padroesOk };
+          this.eventos = r.eventos || [];
           this.prefs = { descartados:(r.prefs||{}).descartados||{}, vetos:(r.prefs||{}).vetos||[] };
           this.admin = !!r.admin; this.usuarios = r.usuarios||[];
+          this.aplicarPadroes();
           try{ localStorage.setItem(this.lsKey(), JSON.stringify(this.prefs)); }catch(e){}
         }
       }catch(e){ /* segue com o que tem */ }
       this.carregado = true;
     })();
     await this._p; this._p = null;
+  },
+  /** lembretes recorrentes que já vêm prontos (só para o administrador, até ele salvar a configuração) */
+  PADROES: [
+    { id:"sys_comissao", nome:"Enviar a comissão do mês", texto:"Enviar após o último dia do mês", ativo:true, regra:{ tipo:"mensal", inicio:1, limite:5 }, dest:"admin" },
+    { id:"sys_folgas", nome:"Enviar o resumo de folgas", texto:"Resumo de folgas do mês", ativo:true, regra:{ tipo:"mensal", inicio:15, limite:20 }, dest:"admin" }
+  ],
+  aplicarPadroes(){
+    if(!this.admin || this.cfg.padroesOk) return;
+    this.PADROES.forEach(d=>{ if(!this.cfg.custom.some(c=>c.id===d.id)) this.cfg.custom.push(JSON.parse(JSON.stringify(d))); });
+    this.cfg.padroesOk = true;
+    this.salvarCfg().catch(()=>{});
   },
   async salvarPrefs(){
     try{ localStorage.setItem(this.lsKey(), JSON.stringify(this.prefs)); }catch(e){}
@@ -118,6 +139,60 @@ const Alertas = {
       out.push({ key:`custom|${c.id}|${s.ciclo}`, veto:`custom|${c.id}`, titulo:c.nome||"Alerta", texto:[c.texto, prazo].filter(Boolean).join(" — "), sig:s.ciclo, concluir:{ id:c.id, ciclo:s.ciclo }, urgente:s.atrasado });
     });
     return out;
+  },
+
+  /* ---------------------------------------------------------------- */
+  /* alertas novos (etapa 2)                                           */
+  /* ---------------------------------------------------------------- */
+  proc(){ return window.APP_STATE && window.APP_STATE.processed; },
+  itensTransferidos(){
+    const p = this.proc(); if(!p || !p.p8022NovaDispo || typeof capCompute !== "function") return [];
+    if(this._tr && this._tr.p !== p){ this._tr = null; }
+    if(!this._tr){
+      let lista = [];
+      try{ lista = (capCompute(p).itensTransferidos||[]); }catch(e){ lista = []; }
+      this._tr = { p, lista };
+    }
+    const l = this._tr.lista; if(!l.length) return [];
+    const ordem = { "Máxima":0, "Alta":1, "Média":2, "Baixa":3, "Normal":4 };
+    const top = l.slice().sort((a,b)=>(ordem[a.urgencia]??9)-(ordem[b.urgencia]??9)).slice(0,3)
+      .map(r=>`${r.codprod}${r.urgencia && r.urgencia!=="Normal" ? " ("+r.urgencia.toLowerCase()+")" : ""}`).join(", ");
+    const urg = l.filter(r=>r.urgencia && r.urgencia !== "Normal").length;
+    return [{ key:"transf|resumo", veto:"transf|resumo", titulo:`${l.length} produto(s) com endereço diferente`, texto:`8022 × 8022 Nova${urg?` — ${urg} com urgência`:""}. Ex.: ${top}`, sig:`${l.length}|${urg}`, urgente:urg>0, ir:()=>UI.goTo("indicadores","capacidade") }];
+  },
+  itensChamada(){
+    const out = [], hoje = this.iso(this.hoje()), ontem = this.iso(new Date(this.hoje().getTime()-864e5));
+    (this.eventos||[]).filter(e=>e.data===hoje || e.data===ontem).forEach(e=>{
+      const hora = String(e.quando||"").slice(11,16), d = String(e.data||"").split("-").reverse().join("/");
+      const aus = e.ausentes||[];
+      const txt = aus.length ? `${aus.length} sem presença: ${aus.slice(0,6).map(x=>`${x.nome} (${String(x.status).toLowerCase()})`).join(", ")}${aus.length>6?" e mais "+(aus.length-6):""}` : "Todos presentes";
+      out.push({ key:`chamada|${e.data}|${e.mat}`, veto:`chamada|${e.mat}`, titulo:`Chamada de ${d} feita por ${e.quem} às ${hora}`, texto:`${e.presentes||0} presente(s)${e.folgas?`, ${e.folgas} folga(s)`:""}${e.ferias?`, ${e.ferias} em férias`:""}. ${txt}`, sig:String(e.quando), urgente:aus.length>0, ir:()=>UI.goTo("gestao","chamada") });
+    });
+    return out;
+  },
+  itensFeriasVenc(){
+    const p = this.proc(); if(!p || !p.turnoverDispo || typeof computeFerias !== "function") return [];
+    let d; try{ d = computeFerias(); }catch(e){ return []; }
+    const fora = (window.FeedbackAdv && FeedbackAdv.dispensados) ? FeedbackAdv.dispensados() : new Set();
+    return d.linhas.filter(l=>(l.bucket==="vencida" || l.bucket==="prox3") && l.diffDias <= 30 && !fora.has(l.codKey)).map(l=>{
+      const venc = l.diffDias < 0;
+      return { key:`ferias_venc|${l.codKey}`, veto:`ferias_venc|${l.codKey}`, titulo:l.nome, texto: venc ? `Férias vencidas há ${-l.diffDias} dia(s) (previstas para ${fmtDateBR(l.dataFerias)})` : (l.diffDias===0 ? "Férias vencem hoje" : `Férias vencem em ${l.diffDias} dia(s) (${fmtDateBR(l.dataFerias)})`), codKey:l.codKey, sig:venc?"v":String(Math.floor(l.diffDias/7)), urgente:venc, ir:()=>UI.goTo("gestao","ferias") };
+    });
+  },
+  itensSemAnexo(){
+    const p = this.proc(); if(!p || !window.FeedbackAdv) return [];
+    const h = this.hoje(), out = [];
+    const fora = FeedbackAdv.dispensados ? FeedbackAdv.dispensados() : new Set();
+    const ct = window.APP_STATE && window.APP_STATE.currentTeam;
+    const add = (tipo, r)=>{
+      if(!r.data || !r.codKey || r.anexo || fora.has(r.codKey) || (ct && ct.codes && !ct.codes.has(r.codKey))) return;
+      const dias = Math.round((h - new Date(r.data.getFullYear(), r.data.getMonth(), r.data.getDate()))/864e5);
+      if(dias < 0 || dias > 120) return;
+      out.push({ key:`sem_anexo|${tipo}|${r.codKey}|${this.iso(r.data)}`, veto:`sem_anexo|${r.codKey}`, titulo:r.nome, texto:`${tipo} de ${fmtDateBR(r.data)}${r.motivo?" ("+r.motivo+")":""} sem anexo — não aplicada há ${dias} dia(s)`, codKey:r.codKey, sig:"1", urgente:dias>=3 });
+    };
+    FeedbackAdv.advertencias().filter(r=>!r.legado).forEach(r=>add("Advertência", r));
+    (FeedbackAdv.suspensoesDisc ? FeedbackAdv.suspensoesDisc() : []).forEach(r=>add("Suspensão", r));
+    return out.sort((a,b)=>b.texto.localeCompare(a.texto)).slice(0,60);
   },
 
   /* ---------------------------------------------------------------- */
@@ -228,6 +303,7 @@ const Alertas = {
       el.addEventListener("click", (e)=>{
         const b = e.target.closest("[data-a]");
         if(b){ e.stopPropagation(); this.acao(b.dataset.a, i); return; }
+        if(i.ir){ this.fechar(); try{ i.ir(); }catch(err){} return; }
         if(i.codKey && window.FeedbackAdv){ this.fechar(); FeedbackAdv.abrirFuncionario(i.codKey); }
       });
     });
@@ -259,7 +335,42 @@ const Alertas = {
     await new Promise(r=>setTimeout(r,900));
     this.atualizarBadge();
     if(this.cfg.abrirAoEntrar !== false && this.total() > 0 && !document.getElementById("alert-panel")) this.abrir(true);
+    this.notificar(this.total(), true);
+    this.iniciarVigia();
   },
+
+  /* notificação do navegador (precisa ser permitida pela pessoa em Configurar alertas) */
+  pedirNotificacao(){ try{ if(window.Notification && Notification.permission === "default") return Notification.requestPermission(); }catch(e){} },
+  notificar(n, entrada, titulo, corpo){
+    try{
+      if(!window.Notification || Notification.permission !== "granted" || document.hasFocus() && !titulo && !entrada) return;
+      if(!titulo && !n) return;
+      const x = new Notification(titulo || "Núcleo Reposição", { body: corpo || `${n} alerta(s) pendente(s)`, tag: titulo ? "nucleo-chamada" : "nucleo-alertas", icon: "icon-192.png" });
+      x.onclick = ()=>{ window.focus(); this.abrir(); x.close(); };
+    }catch(e){}
+  },
+  /** a cada 2 min confere se saiu chamada nova: abre o painel e avisa (pop-up + notificação) */
+  iniciarVigia(){
+    if(this._vigia) return;
+    const lsk = "nucleo_alertas_chamada_vista_" + this.mat();
+    const vista = ()=>{ try{ return localStorage.getItem(lsk)||""; }catch(e){ return ""; } };
+    const marcar = ()=>{ const u = (this.eventos||[]).map(e=>e.quando).sort().pop(); if(u){ try{ localStorage.setItem(lsk, u); }catch(e){} } };
+    if(!vista()) marcar();
+    this._vigia = setInterval(async ()=>{
+      if(document.body.classList.contains("locked") || !Api.configured()) return;
+      const antes = vista();
+      await this.carregar(true);
+      this.atualizarBadge();
+      const novos = (this.eventos||[]).filter(e=>String(e.quando) > antes);
+      if(!novos.length) return;
+      marcar();
+      if(!this.tiposRecebidos("chamada")) return;
+      const e = novos[0], aus = (e.ausentes||[]).length;
+      this.notificar(0, false, `Chamada feita por ${e.quem}`, aus ? `${aus} sem presença: ${e.ausentes.slice(0,4).map(x=>x.nome).join(", ")}` : "Todos presentes.");
+      if(!document.getElementById("alert-panel")) this.abrir(true);
+    }, 120000);
+  },
+  tiposRecebidos(id){ const t = this.tipo(id); return !!t && this.ativoDe(id) && this.recebe(this.destDe(id, t.padrao)); },
 
   /* ---------------------------------------------------------------- */
   /* configuração (modal pelo sino e guia Administração > Alertas)     */
@@ -293,6 +404,7 @@ const Alertas = {
     box.innerHTML = `<div class="ac-hd"><h3>Configurar alertas</h3></div>
       ${adm ? `<p class="small-muted">Só você define quais alertas existem e quem recebe cada um. Alterações são salvas ao clicar em Salvar.</p>
         <label class="ac-line"><input type="checkbox" id="ac-entrar" ${this.cfg.abrirAoEntrar!==false?"checked":""}> Abrir o painel de alertas ao entrar</label>
+        ${window.Notification && Notification.permission !== "granted" && Notification.permission !== "denied" ? `<div class="ac-line"><button type="button" class="btn btn-ghost" id="ac-notif">Ativar notificações neste navegador</button></div>` : ""}
         <h4 class="ac-sec">Alertas do sistema</h4><div class="ac-list">${this.TIPOS.map(linhaTipo).join("")}</div>
         <div class="ac-sec-r"><h4 class="ac-sec">Alertas criados por você</h4><button type="button" class="btn btn-outline btn-sm" id="ac-novo">${ic("plus")} Novo alerta</button></div>
         <div class="ac-list" id="ac-custom">${(this.cfg.custom||[]).map(linhaCustom).join("") || `<div class="small-muted" style="padding:6px 2px">Nenhum alerta criado ainda.</div>`}</div>
@@ -307,6 +419,7 @@ const Alertas = {
     box.querySelectorAll("[data-limpar]").forEach(b=> b.onclick = ()=>{ this.prefs.descartados = {}; this.salvarPrefs(); this.atualizarBadge(); this.renderConfig(box); });
     if(!adm) return;
     const msg = (t, erro)=>{ const m = box.querySelector("#ac-msg"); if(m){ m.textContent = t; m.style.color = erro ? "#c0392b" : ""; } };
+    const bn = box.querySelector("#ac-notif"); if(bn) bn.onclick = async ()=>{ await this.pedirNotificacao(); bn.remove(); };
     box.querySelector("#ac-entrar").onchange = (e)=>{ this.cfg.abrirAoEntrar = e.target.checked; };
     box.querySelectorAll(".ac-row").forEach(row=>{
       const tid = row.dataset.t, cid = row.dataset.c;

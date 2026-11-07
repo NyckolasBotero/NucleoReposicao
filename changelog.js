@@ -4,9 +4,18 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.8.0";
+const APP_VERSAO = "2.9.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.9.0", data:"2026-11-07", titulo:"Novos alertas (etapa 2)", itens:[
+    "Produto transferido: resumo dos produtos cujo endereço na 8022 é diferente do da 8022 Nova, com urgência; clique abre Capacidade CD.",
+    "Chamada do dia: mostra quem lançou, a que horas e quem não está presente (falta, atestado, suspensão). O painel confere a cada 2 min e abre com aviso quando sai uma chamada nova.",
+    "Férias vencendo: vencidas ou que vencem em até 1 mês e ainda sem agendamento.",
+    "Documento sem anexo: advertência/suspensão lançada sem o anexo continua como 'não aplicada' até o documento ser anexado.",
+    "Lembretes prontos para o administrador: enviar comissão (a partir do dia 1) e resumo de folgas (até o dia 20); dá para editar ou apagar em Configurar alertas.",
+    "Notificação do navegador opcional (botão em Configurar alertas). Os alertas de feedback sem registro e NC recorrente continuam como antes.",
+    "Atualizar o Apps Script (novo código da chamada e dos alertas)."
+  ]},
   { v:"2.8.0", data:"2026-11-07", titulo:"Nova central de alertas", itens:[
     "Alertas abrem à direita, a partir do sino, com visual translúcido e ícones minimalistas (sem emojis).",
     "Barra de contagem regressiva de 4 s: o painel fecha sozinho, pausa com o mouse em cima e fica fixo se você clicar.",
