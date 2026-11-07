@@ -657,7 +657,7 @@ function avg(arr){ return arr.length ? sum(arr)/arr.length : 0; }
 /* MODULE: LoadingScreen (tela de carregamento do arquivo)                 */
 /* ---------------------------------------------------------------------- */
 const LoadingScreen = {
-  rotulos: { recebido:"Conectando", lendo:"Lendo planilhas", validando:"Validando", sheets:"Organizando abas", processando:"Processando", finalizando:"Finalizando" },
+  rotulos: { recebido:"Conectando", lendo:"Buscando os dados", validando:"Validando", sheets:"Organizando abas", processando:"Processando", finalizando:"Finalizando" },
   steps: [ { id:"recebido" }, { id:"lendo" }, { id:"validando" }, { id:"sheets" }, { id:"processando" }, { id:"finalizando" } ],
   /** ctx: "login" (tela de entrada) ou "painel" (atualização com o painel aberto) */
   show(filename, ctx){
@@ -665,9 +665,21 @@ const LoadingScreen = {
     Design.carga.iniciar(this.ctx, filename);
   },
   async step(stepId){ Design.carga.etapa(this.rotulos[stepId] || ""); },
+  // o que cada aba traz (o registro mostra o conteúdo que está sendo buscado, não o nome da aba)
+  descricoes: {
+    "FEEDBACK REP":"Feedbacks dos repositores", "QUADRO REP":"Quadro diário de repositores", "8271":"O.S. por rua",
+    "8460":"Produção por O.S. (separação e reposição)", "AUDITORIA REP":"Auditoria por rua e dia", "MISSÕES":"Missões",
+    "CRONOGRAMA":"Cronograma de atividades", "TURNOVER":"Turnover (entradas e saídas)", "8457":"Produção de operadores",
+    "8022":"Cadastro de produtos e ruas", "9712":"Avarias e baixas lançadas", "REP.AVARIA":"Relações de avaria dos repositores",
+    "8022 Nova":"Cadastro de produtos (versão nova)", "Capacidade Realizada":"Capacidade realizada do CD", "Tipo":"Tipos de endereço",
+    "1707":"Saldo por endereço (1707 geral)", "ADVERTÊNCIAS":"Advertências aplicadas", "SUSPENSÕES":"Suspensões aplicadas",
+    "FÉRIAS AGENDADAS":"Férias agendadas", "__audruas":"Auditoria de ruas (aplicativo STA)", "__audret":"Auditoria de retorno e rotinas"
+  },
+  desc(nome){ return this.descricoes[nome] || nome; },
+  buscando(nome){ Design.carga.item(this.desc(nome), "busca", "buscando…", nome); },
   progresso(feitas, total, nome, info){
     Design.carga.progresso(feitas, total);
-    if(nome) Design.carga.item(nome, info && info.status === "ok" ? "ok" : "warn", info && info.status === "ok" ? (info.linhas||0).toLocaleString("pt-BR") : "sem dados");
+    if(nome) Design.carga.item(this.desc(nome), info && info.status === "ok" ? "ok" : "warn", info && info.status === "ok" ? (info.linhas||0).toLocaleString("pt-BR") + " linhas" : "sem dados", nome);
   },
   hide(){ Design.carga.fim(); Design.carga.saiFeed(500); }
 };
@@ -924,9 +936,10 @@ const OnlineSheets = {
   },
 
   // busca todas as abas conhecidas em paralelo e monta o workbook
-  async fetchWorkbook(onProgress){
+  async fetchWorkbook(onProgress, onStart){
     this._fp = null;
     const nomes = uniq([...REQUIRED_SHEETS, ...OPTIONAL_SHEETS]);
+    if(onStart) nomes.forEach(n=> onStart(n));
     const info = { modo:"online", quando:new Date(), abas:{} };
     const wb = XLSX.utils.book_new();
     let feitas = 0;
@@ -1040,9 +1053,9 @@ const ExcelLoader = {
   },
 
   // Fonte principal: todas as abas vêm da planilha Google Sheets (sem arquivo)
-  async loadOnline(onProgress){
+  async loadOnline(onProgress, onStart){
     this.checkLibraries();
-    const wb = await OnlineSheets.fetchWorkbook(onProgress);
+    const wb = await OnlineSheets.fetchWorkbook(onProgress, onStart);
     return this.fromWorkbook(wb, "online");
   },
 
@@ -4105,7 +4118,7 @@ const UI = {
     this._carregandoOnline = true;
     try{
       await this.importar({ name:"Google Sheets (online)", online:true }, ()=>{
-        return ExcelLoader.loadOnline((feitas,total,nome,info)=> LoadingScreen.progresso(feitas,total,nome,info));
+        return ExcelLoader.loadOnline((feitas,total,nome,info)=> LoadingScreen.progresso(feitas,total,nome,info), nome=> LoadingScreen.buscando(nome));
       });
     } finally { this._carregandoOnline = false; }
   },
@@ -4164,10 +4177,12 @@ const UI = {
       await LoadingScreen.step("finalizando", 100);
       stage = "leitura das bases de auditoria (Auditoria_Ruas / Auditoria_Retorno)";
       // atualiza as bases de auditoria junto com a carga, para aparecerem no log (falha não trava a carga)
+      LoadingScreen.buscando("__audruas"); LoadingScreen.buscando("__audret");
+      const fimAud = (id, p)=> Promise.resolve(p).then(()=>{ Design.carga.item(LoadingScreen.desc(id), "ok", "lido", id); }, ()=>{ Design.carga.item(LoadingScreen.desc(id), "warn", "falhou", id); });
       try{
         await Promise.all([
-          AuditOnline.load(true),
-          (typeof RetornoQ!=="undefined" ? RetornoQ.carregar(true) : null)
+          fimAud("__audruas", AuditOnline.load(true)),
+          fimAud("__audret", typeof RetornoQ!=="undefined" ? RetornoQ.carregar(true) : null)
         ]);
       }catch(_){}
       stage = "montagem do log de importação";

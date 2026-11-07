@@ -247,12 +247,16 @@ const Design = {
     etapa(txt){ const t = document.getElementById("lf-t"); if(t) t.textContent = txt; },
     progresso(f, tot){ const n = document.getElementById("lf-n"); if(n) n.textContent = f + "/" + tot; },
     /** uma linha por aba que terminou de carregar: estado ok | warn */
-    item(nome, estado, detalhe){
+    item(nome, estado, detalhe, id){
       const rows = document.getElementById("lf-rows"); if(!rows) return;
-      const r = document.createElement("div"); r.className = "lf-r " + (estado || "ok");
+      let r = null;
+      if(id) r = Array.from(rows.children).find(x=> x.dataset.id === id) || null;   // atualiza a linha que já estava "buscando"
+      const novo = !r;
+      if(novo){ r = document.createElement("div"); if(id) r.dataset.id = id; }
+      r.className = "lf-r " + (estado || "ok");
       r.innerHTML = `<i></i><span>${escapeHtml(String(nome))}</span><em>${detalhe == null ? "" : escapeHtml(String(detalhe))}</em>`;
-      rows.appendChild(r);
-      while(rows.children.length > 5){ rows.removeChild(rows.firstChild); }
+      if(novo) rows.appendChild(r);
+      rows.scrollTop = rows.scrollHeight;
     },
     /** termina a barra (enche e some) e retira o véu */
     fim(){
