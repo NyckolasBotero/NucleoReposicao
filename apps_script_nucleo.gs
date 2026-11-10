@@ -104,6 +104,9 @@ function doPost(e) {
       if (d.acao === 'alertas_cfg_salvar') return resposta(alertasSalvarCfg(d, s));
       if (d.acao === 'alertas_prefs_salvar') return resposta(alertasSalvarPrefs(d, s));
       if (d.acao === 'alertas_concluir') return resposta(alertasConcluir(d, s));
+      if (d.acao === 'tv_cfg_ler') return resposta({ ok: true, config: alertasLerChave('tv_cfg') || {}, admin: ehAdminAlertas(s) });
+      if (d.acao === 'tv_cfg_salvar') return resposta(tvCfgSalvar(d, s));
+      if (d.acao === 'tv_fotos_ler') return resposta(tvFotosLer());
       if (d.acao === 'push_chave') return resposta(pushChave(s));
       if (d.acao === 'push_inscrever') return resposta(pushInscrever(d, s));
       if (d.acao === 'push_remover') return resposta(pushRemover(d, s));
@@ -123,7 +126,7 @@ function doPost(e) {
 
 /** Ações que só leem: rodam sem a trava global (várias pessoas podem consultar enquanto alguém grava). */
 const LEITURAS_SEM_TRAVA = {
-  admin_listar: 1, admin_historico: 1, alertas_ler: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
+  admin_listar: 1, admin_historico: 1, alertas_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1
 };
@@ -838,6 +841,48 @@ function alertasRegistrarChamada(iso, itens, s) {
   } catch (e) { /* o alerta nunca pode impedir a chamada */ }
 }
 
+/* ===================== Painel TV: parâmetros e fotos ===================== */
+
+const ABA_FOTOS_TV = 'FOTOS_TV';
+function fotosSheet() { return abaComCabecalho(ABA_FOTOS_TV, ['Matrícula', 'Foto', 'Atualizado']); }
+
+/** Só o administrador (Fabio) altera o que o painel mostra. Todos os usuários leem (o painel abre para qualquer um). */
+function tvCfgSalvar(d, s) {
+  if (!ehAdminAlertas(s)) throw new Error('Só o administrador pode alterar os parâmetros do Painel TV.');
+  const c = d.config;
+  if (!c || typeof c !== 'object') throw new Error('Configuração inválida.');
+  alertasGravarChave('tv_cfg', c);
+  registrarLog(s, 'Painel TV (parâmetros)', 'atualizados');
+  return { ok: true };
+}
+
+/** { matricula: 'data:image/jpeg;base64,...' } — fotos já reduzidas pelo navegador (~256 px). */
+function tvFotosLer() {
+  const sh = fotosSheet(), ult = sh.getLastRow(), out = {};
+  if (ult >= 2) sh.getRange(2, 1, ult - 1, 2).getValues().forEach(function (r) {
+    const m = soDigitos(r[0]), f = String(r[1] || '');
+    if (m && f.indexOf('data:image/') === 0) out[m] = f;
+  });
+  return { ok: true, fotos: out };
+}
+
+/** Troca (ou remove, com foto vazia) a foto de um colaborador do quadro. */
+function quadroFoto(d, s) {
+  const mat = soDigitos(d.matric);
+  if (!mat) throw new Error('Informe a matrícula.');
+  const foto = String(d.foto || '');
+  if (foto && !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(foto)) throw new Error('Foto inválida.');
+  if (foto.length > 48000) throw new Error('Foto grande demais. Escolha outra imagem.');
+  const sh = fotosSheet(), ult = sh.getLastRow(), agora = Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm:ss');
+  let linha = 0;
+  if (ult >= 2) { const v = sh.getRange(2, 1, ult - 1, 1).getValues(); for (let i = 0; i < v.length; i++) if (soDigitos(v[i][0]) === mat) { linha = i + 2; break; } }
+  if (!foto) { if (linha) sh.deleteRow(linha); }
+  else if (linha) sh.getRange(linha, 1, 1, 3).setNumberFormat('@').setValues([[mat, foto, agora]]);
+  else sh.getRange(ult + 1, 1, 1, 3).setNumberFormat('@').setValues([[mat, foto, agora]]);
+  registrarLog(s, 'Quadro (foto)', mat + (foto ? ' · foto atualizada' : ' · foto removida'));
+  return { ok: true };
+}
+
 /** Configuração geral + preferências de quem está logado (+ lista de usuários para o administrador). */
 function alertasLer(s) {
   const admin = ehAdminAlertas(s);
@@ -1029,7 +1074,7 @@ const SUB_DA_ACAO = {
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
   lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
-  lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro',
+  lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro', lanc_quadro_foto: 'Lançar Quadro',
   lanc_missao_salvar: 'Lançar Missões', lanc_capacidade_salvar: 'Lançar Capacidade'
 };
 const LISTA_DA_SUB = { SETOR_COLETOR: 'Controle de Coletores', STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar Avaria 9712', MOTIVO_FEEDBACK: 'Lançar Feedback', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
@@ -1072,6 +1117,7 @@ function lancamento(d, s) {
     case 'lanc_chamada_lote': return chamadaLote(d, s);
     case 'lanc_quadro_listar': return quadroListar();
     case 'lanc_quadro_salvar': return quadroSalvar(d, s);
+    case 'lanc_quadro_foto': return quadroFoto(d, s);
     case 'lanc_missao_salvar': return missaoSalvar(d, s);
     case 'lanc_capacidade_salvar': return capacidadeSalvar(d, s);
   }

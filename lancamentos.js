@@ -1318,7 +1318,7 @@ const LancUI = {
   /* ================================================================== */
   renderQuadro(){ this.abrir("lquadro", this._quadro); },
   async _quadro(pane){
-    this.qd = { pessoas:[], editar:null, mostrarInativos:false, busca:"" };
+    this.qd = { pessoas:[], editar:null, mostrarInativos:false, busca:"", fotos:{}, foto:undefined };
     const L = this.ctx.listas;
     pane.innerHTML = `<div class="panel">
       ${this.cabecalho("Lançar Quadro (contratação, desligamento, transferência)", "Grava na aba TURNOVER. O quadro ativo do painel é quem está com ATIVO = Sim. Quem foi desligado ou transferido passa a NÃO ativo e sai dos indicadores.")}
@@ -1343,6 +1343,10 @@ const LancUI = {
         ${this.novoItem("MOTIVO_DESLIGAMENTO", "qd-motivo", "novo motivo")}
       </fieldset>
       <div class="adm-form"><label style="grid-column:1/-1">Outras observações<input type="text" id="qd-obs"></label></div>
+      <div class="qd-foto"><div class="qd-foto-img" id="qd-fimg">Sem foto</div>
+        <div><strong>Foto do colaborador</strong><br><small class="small-muted">Aparece no ranking do Painel TV. A imagem é reduzida automaticamente.</small><br>
+          <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"><label class="btn btn-outline btn-sm" for="qd-ffile" id="qd-fbtn">Escolher foto</label><input type="file" id="qd-ffile" accept="image/*" hidden>
+          <button type="button" class="btn btn-outline btn-sm" id="qd-frem" style="display:none">Remover foto</button></div></div></div>
       <div id="qd-msg"></div>
       <div class="adm-actions">
         <button type="button" class="btn btn-outline" id="qd-novo" style="display:none">Cancelar edição</button>
@@ -1382,8 +1386,34 @@ const LancUI = {
       const n = this.nomeDe($$("qd-mat").value); if(n && !$$("qd-nome").value) $$("qd-nome").value = n;
     });
 
+    const chave = m=> String(m||"").replace(/\D/g,"").replace(/^0+/,"");
+    const mostrarFoto = ()=>{
+      const mat = chave($$("qd-mat").value), f = this.qd.foto !== undefined ? this.qd.foto : (this.qd.fotos[mat] || "");
+      $$("qd-fimg").innerHTML = f ? `<img src="${f}" alt="">` : "Sem foto";
+      $$("qd-frem").style.display = f ? "" : "none"; $$("qd-fbtn").textContent = f ? "Trocar foto" : "Escolher foto";
+    };
+    /** reduz para 256x256 (corte quadrado, favorecendo o rosto no alto) e comprime até caber na célula da planilha */
+    const reduzir = (file)=> new Promise((ok, err)=>{
+      const url = URL.createObjectURL(file), im = new Image();
+      im.onload = ()=>{
+        const lado = Math.min(im.naturalWidth, im.naturalHeight), sx = (im.naturalWidth - lado)/2, sy = (im.naturalHeight - lado) * 0.3;
+        const c = document.createElement("canvas"); c.width = c.height = 256; const g = c.getContext("2d");
+        g.fillStyle = "#fff"; g.fillRect(0,0,256,256); g.drawImage(im, sx, sy, lado, lado, 0, 0, 256, 256); URL.revokeObjectURL(url);
+        let q = 0.85, out = c.toDataURL("image/jpeg", q); while(out.length > 38000 && q > 0.3){ q -= 0.1; out = c.toDataURL("image/jpeg", q); }
+        out.length > 46000 ? err(new Error("Foto grande demais.")) : ok(out);
+      };
+      im.onerror = ()=>{ URL.revokeObjectURL(url); err(new Error("Não foi possível ler essa imagem.")); };
+      im.src = url;
+    });
+    $$("qd-ffile").addEventListener("change", async ()=>{
+      const f = $$("qd-ffile").files[0]; $$("qd-ffile").value = ""; if(!f) return;
+      try{ this.qd.foto = await reduzir(f); mostrarFoto(); this.aviso("qd-msg", "ok", "Foto pronta — ela será gravada quando clicar em Salvar."); }
+      catch(e){ this.aviso("qd-msg", "erro", this.h(e.message)); }
+    });
+    $$("qd-frem").addEventListener("click", ()=>{ this.qd.foto = ""; mostrarFoto(); });
+    $$("qd-mat").addEventListener("input", ()=>{ if(!this.qd.editar && this.qd.foto === undefined) mostrarFoto(); });
     const limpar = ()=>{
-      this.qd.editar = null;
+      this.qd.editar = null; this.qd.foto = undefined; mostrarFoto();
       ["qd-mat","qd-nome","qd-obs","qd-desl","qd-transf","qd-setor","qd-enc"].forEach(id=> $$(id).value = "");
       $$("qd-adm").value = this.hojeISO(); $$("qd-tipo").value = ""; $$("qd-motivo").value = "";
       $$("qd-titulo").textContent = "Nova contratação"; $$("qd-novo").style.display = "none"; $$("qd-mat").readOnly = false; atualizarAtivo();
@@ -1395,7 +1425,7 @@ const LancUI = {
       const rows = this.qd.pessoas.filter(p=> (this.qd.mostrarInativos || p.ativo) && (!q || (p.mat+" "+p.nome).toLowerCase().includes(q)))
         .sort((a,b)=> (b.ativo - a.ativo) || a.nome.localeCompare(b.nome));
       $$("qd-lista").innerHTML = rows.length ? `<table class="adm-table"><thead><tr><th>Matrícula</th><th>Nome</th><th>Ativo</th><th>Tipo / Motivo</th><th>Contratação</th><th>Saída</th><th></th></tr></thead><tbody>
-        ${rows.map(p=>`<tr><td>${this.h(p.mat)}</td><td>${this.h(p.nome)}</td><td><span class="adm-tag ${p.ativo ? "acc" : "off"}">${p.ativo ? "Sim" : "Não"}</span></td>
+        ${rows.map(p=>`<tr><td>${this.h(p.mat)}</td><td>${this.qd.fotos[chave(p.mat)] ? `<img class="qd-th" src="${this.qd.fotos[chave(p.mat)]}" alt="">` : ""}${this.h(p.nome)}</td><td><span class="adm-tag ${p.ativo ? "acc" : "off"}">${p.ativo ? "Sim" : "Não"}</span></td>
           <td>${this.h([p.tipo, p.motivo].filter(Boolean).join(" · "))}</td><td>${this.br(p.adm)}</td><td>${this.br(p.desl || p.transf || p.enc)}${p.setor ? " → " + this.h(p.setor) : ""}</td>
           <td><button type="button" class="btn btn-outline btn-sm" data-ed="${p.linha}">Editar</button></td></tr>`).join("")}</tbody></table>`
         : `<p class="small-muted">Nenhum registro.</p>`;
@@ -1405,6 +1435,7 @@ const LancUI = {
         $$("qd-mat").value = p.mat; $$("qd-nome").value = p.nome; $$("qd-adm").value = p.adm; $$("qd-tipo").value = p.tipo; $$("qd-motivo").value = p.motivo;
         $$("qd-desl").value = p.desl; $$("qd-transf").value = p.transf; $$("qd-setor").value = p.setor||""; $$("qd-enc").value = p.enc||""; $$("qd-obs").value = p.obs;
         $$("qd-titulo").textContent = "Editando " + p.nome; $$("qd-novo").style.display = ""; atualizarAtivo();
+        this.qd.foto = undefined; mostrarFoto();
         window.scrollTo({ top:0, behavior:"smooth" });
       }));
     };
@@ -1412,16 +1443,23 @@ const LancUI = {
       const r = await Api.call({ acao:"lanc_quadro_listar" }).catch(e=>({ ok:false, erro:e.message }));
       if(!r || !r.ok){ $$("qd-lista").innerHTML = `<div class="error-box">${this.h((r && r.erro) || "Falha ao carregar o quadro.")}</div>`; return; }
       this.qd.pessoas = r.pessoas; lista();
+      Api.call({ acao:"tv_fotos_ler" }).then(f=>{ if(f && f.ok){ const m = {}; Object.keys(f.fotos||{}).forEach(k=>{ m[chave(k)] = f.fotos[k]; }); this.qd.fotos = m; lista(); mostrarFoto(); } }).catch(()=>{});
     };
     $$("qd-busca").addEventListener("input", ()=>{ this.qd.busca = $$("qd-busca").value; lista(); });
     $$("qd-inat").addEventListener("change", ()=>{ this.qd.mostrarInativos = $$("qd-inat").checked; lista(); });
     $$("qd-salvar").addEventListener("click", async ()=>{
-      this.aviso("qd-msg", "", "");
+      this.aviso("qd-msg", "", ""); const matSalva = $$("qd-mat").value;
       const r = await this.enviar($$("qd-salvar"), { acao:"lanc_quadro_salvar", linha:this.qd.editar || 0, matric:$$("qd-mat").value, nome:$$("qd-nome").value.trim(),
         tipo:$$("qd-tipo").value, motivo:$$("qd-motivo").disabled ? "" : $$("qd-motivo").value, obs:$$("qd-obs").value,
         dtAdm:$$("qd-adm").value, dtDesl:$$("qd-desl").value, dtTransf:$$("qd-transf").value, setor:$$("qd-setor").value.trim(), dtEnc:$$("qd-enc").value });
       if(!r || !r.ok) return this.aviso("qd-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
-      this.aviso("qd-msg", "ok", `Registro salvo — ${r.ativo ? "colaborador <strong>ATIVO</strong>" : "colaborador <strong>NÃO ativo</strong> (fora dos indicadores)"}.`);
+      let fotoMsg = "";
+      if(this.qd.foto !== undefined){
+        const fr = await Api.call({ acao:"lanc_quadro_foto", matric:matSalva, foto:this.qd.foto }).catch(e=>({ ok:false, erro:e.message }));
+        if(fr && fr.ok){ if(this.qd.foto) this.qd.fotos[chave(matSalva)] = this.qd.foto; else delete this.qd.fotos[chave(matSalva)]; fotoMsg = this.qd.foto ? " Foto gravada." : " Foto removida."; }
+        else fotoMsg = ` <strong>Atenção:</strong> o registro foi salvo, mas a foto não (${this.h((fr && fr.erro) || "erro")}). Edite e tente de novo.`;
+      }
+      this.aviso("qd-msg", "ok", `Registro salvo — ${r.ativo ? "colaborador <strong>ATIVO</strong>" : "colaborador <strong>NÃO ativo</strong> (fora dos indicadores)"}.${fotoMsg}`);
       toast("Quadro atualizado.");
       // atualiza a lista de nomes usada pelos outros formulários
       this.ctx = null; limpar(); carregar();
