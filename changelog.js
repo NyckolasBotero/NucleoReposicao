@@ -7,6 +7,13 @@
 const APP_VERSAO = "2.11.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.11.0", data:"2026-11-10", titulo:"Painel de TV e horários nos alertas", itens:[
+    "Painel de TV (botão Play 'Painel TV', ao lado de Atualizar dados): ranking de repositores em tela cheia, abre na 2ª tela quando houver (senão na tela atual).",
+    "Pódio do mês anterior com medalhas de 1º, 2º e 3º com fita; melhores dos últimos 3 meses; observação de que o ranking considera pontuação e % de qualidade da rua.",
+    "Tabela completa com média de 3 meses, último mês, mês atual até hoje, valor projetado (média por dia útil), ritmo e variação contra o mês anterior, com rolagem automática.",
+    "Alertas: repetição 'Todos os dias' e 'Dias da semana' (segunda a domingo, escolha livre) e horário em todos os alertas (nos do sistema: 'a partir de').",
+    "Lembretes com horário chegam ao celular na hora marcada (rodar ativarAgendador uma vez no Apps Script). Atualizar o Apps Script."
+  ]},
   { v:"2.11.0", data:"2026-11-10", titulo:"Base 8460: só tipo 58 e conferência da última linha", itens:[
     "Ao ler o arquivo da 8460, o sistema avisa se a coluna TIPOOS tem algum tipo diferente de 58 e mostra quantas linhas há de cada tipo.",
     "Havendo outro tipo, a gravação normal fica bloqueada. O novo botão “Gravar só tipo 58” grava apenas as linhas de tipo 58, conferindo por dia com a base e pedindo confirmação.",

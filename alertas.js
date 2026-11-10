@@ -110,22 +110,31 @@ const Alertas = {
   /* ---------------------------------------------------------------- */
   /* alertas recorrentes criados pelo administrador                     */
   /* ---------------------------------------------------------------- */
+  /** "HH:MM" -> minutos do dia (ou null) */
+  minutos(hhmm){ const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm||"")); return m ? Number(m[1])*60 + Number(m[2]) : null; },
+  horaPassou(hhmm){ const m = this.minutos(hhmm); if(m === null) return true; const n = new Date(); return n.getHours()*60 + n.getMinutes() >= m; },
+  DIAS_NOME: ["domingo","segunda","terça","quarta","quinta","sexta","sábado"],
   statusCustom(c){
     const h = this.hoje(), r = c.regra || {};
-    let ciclo = "", ativo = false, venc = null;
-    if(r.tipo === "mensal"){
+    let ciclo = "", ativo = false, venc = null, diaInicio = true;
+    if(r.tipo === "diario"){
+      ativo = true; ciclo = this.iso(h);
+    }else if(r.tipo === "semanal" && Array.isArray(r.dias)){          // vários dias da semana: aparece só nos dias marcados
+      ativo = r.dias.map(Number).includes(h.getDay()); ciclo = this.iso(h);
+    }else if(r.tipo === "mensal"){
       const ini = Number(r.inicio)||1, lim = Number(r.limite)||0;
-      ativo = h.getDate() >= ini; ciclo = `${h.getFullYear()}-${this.pad(h.getMonth()+1)}`;
+      ativo = h.getDate() >= ini; ciclo = `${h.getFullYear()}-${this.pad(h.getMonth()+1)}`; diaInicio = h.getDate() === ini;
       if(lim) venc = new Date(h.getFullYear(), h.getMonth(), lim);
-    }else if(r.tipo === "semanal"){
-      const alvo = Number(r.dia)||1;                              // 0=dom ... 6=sáb
+    }else if(r.tipo === "semanal"){                                    // formato antigo: um dia, fica até ser concluído na semana
+      const alvo = Number(r.dia)||1;                                   // 0=dom ... 6=sáb
       const seg = new Date(h); seg.setDate(h.getDate() - ((h.getDay()+6)%7));
       const d = new Date(seg); d.setDate(seg.getDate() + ((alvo+6)%7));
-      ativo = h >= d; ciclo = this.iso(d); venc = d;
+      ativo = h >= d; ciclo = this.iso(d); venc = d; diaInicio = this.iso(h) === this.iso(d);
     }else{
       const p = String(r.data||"").split("-").map(Number);
-      if(p.length === 3){ const d = new Date(p[0], p[1]-1, p[2]); ativo = h >= d; ciclo = "unica"; venc = d; }
+      if(p.length === 3){ const d = new Date(p[0], p[1]-1, p[2]); ativo = h >= d; ciclo = "unica"; venc = d; diaInicio = this.iso(h) === this.iso(d); }
     }
+    if(ativo && diaInicio && !this.horaPassou(r.hora)) ativo = false;  // horário definido: só aparece a partir dele
     return { ativo, ciclo, venc, atrasado: !!(venc && h > venc) };
   },
   itensCustom(){
@@ -205,6 +214,7 @@ const Alertas = {
     const filtra = (itens)=> incluirOcultos ? itens : itens.filter(i=> !vetos.has(i.veto) && desc[i.key] !== i.sig);
     this.TIPOS.forEach(t=>{
       if(!this.ativoDe(t.id) || !this.recebe(this.destDe(t.id, t.padrao))) return;
+      const ch = this.cfg.tipos[t.id]; if(ch && ch.hora && !this.horaPassou(ch.hora)) return;   // "mostrar a partir de"
       let itens = []; try{ itens = t.gerar(base) || []; }catch(e){ itens = []; }
       itens = filtra(itens); if(itens.length) grupos.push({ id:t.id, nome:t.nome, icone:t.icone, cor:t.cor, itens });
     });
@@ -422,6 +432,17 @@ const Alertas = {
       this.notificar(0, false, `Chamada feita por ${e.quem}`, aus ? `${aus} sem presença: ${e.ausentes.slice(0,4).map(x=>x.nome).join(", ")}` : "Todos presentes.");
       if(!document.getElementById("alert-panel")) this.abrir(true);
     }, 120000);
+    // a cada minuto: alerta com horário que acabou de chegar abre o painel e avisa
+    this._totalAnt = this.total();
+    setInterval(()=>{
+      if(document.body.classList.contains("locked")) return;
+      const n = this.total(); this.atualizarBadge();
+      if(n > this._totalAnt){
+        if(!document.getElementById("alert-panel")) this.abrir(true);
+        this.notificar(n, false, "Novo alerta", `${n} alerta(s) pendente(s)`);
+      }
+      this._totalAnt = n;
+    }, 60000);
   },
   tiposRecebidos(id){ const t = this.tipo(id); return !!t && this.ativoDe(id) && this.recebe(this.destDe(id, t.padrao)); },
 
@@ -456,6 +477,7 @@ const Alertas = {
       return `<div class="ac-row" data-t="${t.id}"><span class="ac-ic" style="--c:${t.cor}">${ic(t.icone)}</span>
         <div class="ac-tx"><strong>${this.h(t.nome)}</strong><small>${this.h(t.desc)}</small></div>
         <div class="ac-ctl"><button type="button" class="ac-dest" data-a="dest" title="Escolher quem recebe">${this.h(this.destTxt(dest))}</button>
+        ${adm ? `<label class="ac-hora" title="Mostrar a partir deste horário (vazio = o dia todo)"><span>a partir de</span><input type="time" data-a="hora" value="${this.h((this.cfg.tipos[t.id]||{}).hora||"")}"></label>` : ""}
         <label class="ac-sw"><input type="checkbox" data-a="ativo" ${ativo?"checked":""}><span></span></label></div></div>`; };
     const linhaCustom = (c)=>{ const dest = c.dest === undefined ? "*" : c.dest;
       return `<div class="ac-row" data-c="${this.h(c.id)}"><span class="ac-ic" style="--c:#2f6fce">${ic("clock")}</span>
@@ -488,6 +510,7 @@ const Alertas = {
       const tid = row.dataset.t, cid = row.dataset.c;
       const alvo = tid ? (this.cfg.tipos[tid] = this.cfg.tipos[tid] || {}) : (this.cfg.custom.find(c=>c.id===cid) || {});
       const sw = row.querySelector('[data-a="ativo"]'); if(sw) sw.onchange = ()=>{ alvo.ativo = sw.checked; };
+      const hr = row.querySelector('[data-a="hora"]'); if(hr) hr.onchange = ()=>{ if(hr.value) alvo.hora = hr.value; else delete alvo.hora; };
       const d = row.querySelector('[data-a="dest"]'); if(d) d.onclick = ()=> this.escolherDest(alvo, tid ? (this.tipo(tid).padrao) : "*", ()=> this.renderConfig(box));
       const e = row.querySelector('[data-a="edit"]'); if(e) e.onclick = ()=> this.formCustom(box, alvo);
       const x = row.querySelector('[data-a="del"]'); if(x) x.onclick = ()=>{ if(confirm(`Excluir o alerta "${alvo.nome}"?`)){ this.cfg.custom = this.cfg.custom.filter(c=>c.id!==cid); this.renderConfig(box); } };
@@ -504,10 +527,17 @@ const Alertas = {
     if(t === "custom"){ const c = (this.cfg.custom||[]).find(x=>x.id===cod); return c ? c.nome : "Alerta"; }
     return (tp ? tp.nome : t) + " — " + nome; },
   regraTxt(r){
-    r = r || {};
-    if(r.tipo === "mensal") return `Todo mês, a partir do dia ${r.inicio||1}${r.limite?`, prazo dia ${r.limite}`:""}`;
-    if(r.tipo === "semanal") return `Toda semana (${["domingo","segunda","terça","quarta","quinta","sexta","sábado"][Number(r.dia)||0]})`;
-    return r.data ? `Em ${fmtDateBR(new Date(...String(r.data).split("-").map((n,i)=> i===1?n-1:+n)))}` : "Data única";
+    r = r || {}; const hr = r.hora ? ` às ${r.hora}` : "";
+    const nm = ["dom","seg","ter","qua","qui","sex","sáb"];
+    if(r.tipo === "diario") return `Todos os dias${hr}`;
+    if(r.tipo === "semanal" && Array.isArray(r.dias)){
+      const d = r.dias.map(Number).sort((a,b)=>a-b), k = d.join(",");
+      const txt = k === "1,2,3,4,5" ? "Segunda a sexta" : k === "0,1,2,3,4,5,6" ? "Todos os dias" : d.map(x=>nm[x]).join(", ");
+      return `${txt}${hr}`;
+    }
+    if(r.tipo === "mensal") return `Todo mês, a partir do dia ${r.inicio||1}${r.limite?`, prazo dia ${r.limite}`:""}${r.hora?` (${r.hora})`:""}`;
+    if(r.tipo === "semanal") return `Toda ${this.DIAS_NOME[Number(r.dia)||0]}${hr}`;
+    return (r.data ? `Em ${fmtDateBR(new Date(...String(r.data).split("-").map((n,i)=> i===1?n-1:+n)))}` : "Data única") + hr;
   },
 
   /* escolha de quem recebe */
@@ -536,25 +566,44 @@ const Alertas = {
   /* criar / editar alerta recorrente */
   formCustom(box, c){
     const f = box.querySelector("#ac-form"), novo = !c;
-    c = c || { id:"c"+Date.now().toString(36), nome:"", texto:"", ativo:true, regra:{ tipo:"mensal", inicio:1, limite:0 }, dest:"admin" };
+    c = c || { id:"c"+Date.now().toString(36), nome:"", texto:"", ativo:true, regra:{ tipo:"diario", hora:"08:00" }, dest:"admin" };
     const r = c.regra || {};
+    const tipoSel = r.tipo === "semanal" ? "dias" : (r.tipo || "diario");
+    const diasSel = new Set((Array.isArray(r.dias) ? r.dias : (r.tipo === "semanal" ? [Number(r.dia)||1] : [1,2,3,4,5])).map(Number));
+    const nomes = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
     f.innerHTML = `<div class="ac-form"><h4>${novo?"Novo alerta":"Editar alerta"}</h4>
-      <label>Nome<input type="text" id="cf-nome" value="${this.h(c.nome)}" placeholder="Ex.: Enviar resumo de folgas"></label>
+      <label>Nome<input type="text" id="cf-nome" value="${this.h(c.nome)}" placeholder="Ex.: Fazer a chamada do dia"></label>
       <label>Mensagem<input type="text" id="cf-texto" value="${this.h(c.texto||"")}" placeholder="Detalhe que aparece no alerta"></label>
-      <label>Repetição<select id="cf-tipo"><option value="mensal" ${r.tipo==="mensal"?"selected":""}>Todo mês</option><option value="semanal" ${r.tipo==="semanal"?"selected":""}>Toda semana</option><option value="unica" ${r.tipo==="unica"?"selected":""}>Data única</option></select></label>
+      <div class="ac-fr">
+        <label>Repetição<select id="cf-tipo">
+          <option value="diario" ${tipoSel==="diario"?"selected":""}>Todos os dias</option>
+          <option value="dias" ${tipoSel==="dias"?"selected":""}>Dias da semana</option>
+          <option value="mensal" ${tipoSel==="mensal"?"selected":""}>Todo mês</option>
+          <option value="unica" ${tipoSel==="unica"?"selected":""}>Data única</option></select></label>
+        <label>Horário<input type="time" id="cf-hora" value="${this.h(r.hora||"")}"></label>
+      </div>
+      <div id="cf-dias"><div class="ac-chips">${nomes.map((n,i)=>`<label class="ac-chip"><input type="checkbox" data-d="${i}" ${diasSel.has(i)?"checked":""}><span>${n}</span></label>`).join("")}</div>
+        <div class="ac-atalhos"><button type="button" class="ac-dest" data-at="util">Segunda a sexta</button><button type="button" class="ac-dest" data-at="todos">Todos</button></div></div>
       <div class="ac-fr" id="cf-mensal"><label>Aparece a partir do dia<input type="number" id="cf-ini" min="1" max="31" value="${r.inicio||1}"></label><label>Prazo (dia do mês)<input type="number" id="cf-lim" min="0" max="31" value="${r.limite||0}" placeholder="0 = sem prazo"></label></div>
-      <div class="ac-fr" id="cf-semanal"><label>Dia da semana<select id="cf-dia">${["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"].map((d,i)=>`<option value="${i}" ${Number(r.dia)===i?"selected":""}>${d}</option>`).join("")}</select></label></div>
       <div class="ac-fr" id="cf-unica"><label>Data<input type="date" id="cf-data" value="${this.h(r.data||"")}"></label></div>
+      <small class="small-muted">Com horário definido, o alerta só aparece a partir dele e (com as notificações ativadas) chega no celular nessa hora.</small>
       <div class="ac-foot"><button type="button" class="btn btn-outline btn-sm" id="cf-x">Cancelar</button><button type="button" class="btn btn-primary btn-sm" id="cf-ok">${novo?"Adicionar":"Aplicar"}</button></div></div>`;
-    const ver = ()=>{ const t = f.querySelector("#cf-tipo").value; ["mensal","semanal","unica"].forEach(k=> f.querySelector("#cf-"+k).style.display = k===t ? "" : "none"); };
+    const ver = ()=>{ const t = f.querySelector("#cf-tipo").value; f.querySelector("#cf-dias").style.display = t==="dias" ? "" : "none"; f.querySelector("#cf-mensal").style.display = t==="mensal" ? "" : "none"; f.querySelector("#cf-unica").style.display = t==="unica" ? "" : "none"; };
     f.querySelector("#cf-tipo").onchange = ver; ver();
+    f.querySelectorAll("[data-at]").forEach(b=> b.onclick = ()=> f.querySelectorAll("[data-d]").forEach(x=>{ const d = Number(x.dataset.d); x.checked = b.dataset.at === "todos" || (d>0 && d<6); }));
     f.querySelector("#cf-x").onclick = ()=>{ f.innerHTML = ""; };
     f.querySelector("#cf-ok").onclick = ()=>{
       const nome = f.querySelector("#cf-nome").value.trim(); if(!nome){ toast("Dê um nome ao alerta.", "error"); return; }
-      const tipo = f.querySelector("#cf-tipo").value;
-      const regra = tipo==="mensal" ? { tipo, inicio:Number(f.querySelector("#cf-ini").value)||1, limite:Number(f.querySelector("#cf-lim").value)||0 }
-        : tipo==="semanal" ? { tipo, dia:Number(f.querySelector("#cf-dia").value)||0 } : { tipo, data:f.querySelector("#cf-data").value };
-      if(tipo==="unica" && !regra.data){ toast("Escolha a data.", "error"); return; }
+      const t = f.querySelector("#cf-tipo").value, hora = f.querySelector("#cf-hora").value || "";
+      let regra;
+      if(t === "diario") regra = { tipo:"diario" };
+      else if(t === "dias"){
+        const dias = Array.from(f.querySelectorAll("[data-d]:checked")).map(x=>Number(x.dataset.d));
+        if(!dias.length){ toast("Marque pelo menos um dia da semana.", "error"); return; }
+        regra = { tipo:"semanal", dias };
+      }else if(t === "mensal") regra = { tipo:"mensal", inicio:Number(f.querySelector("#cf-ini").value)||1, limite:Number(f.querySelector("#cf-lim").value)||0 };
+      else{ regra = { tipo:"unica", data:f.querySelector("#cf-data").value }; if(!regra.data){ toast("Escolha a data.", "error"); return; } }
+      if(hora) regra.hora = hora;
       c.nome = nome; c.texto = f.querySelector("#cf-texto").value.trim(); c.regra = regra;
       if(novo) this.cfg.custom.push(c);
       this.renderConfig(box);

@@ -4095,6 +4095,7 @@ const UI = {
     $("#btn-empty-upload").addEventListener("click", ()=> $("#file-input").click());
     $("#btn-empty-online").addEventListener("click", ()=> this.carregarOnline());
     $("#btn-refresh-online").addEventListener("click", ()=> this.carregarOnline());
+    $("#btn-tv").addEventListener("click", ()=>{ try{ PainelTV.tocar(); }catch(e){ toast("Não foi possível abrir o painel de TV.", "error"); } });
     $("#btn-ir-avaria").addEventListener("click", ()=> abrirAvariaSemArquivo());
     $("#btn-ir-cd3d").addEventListener("click", ()=> abrirCD3DSemArquivo());
     $("#btn-ir-admin").addEventListener("click", ()=> abrirAdminSemDados());
@@ -4169,6 +4170,7 @@ const UI = {
       try{ if(window.ComissaoParams) ComissaoParams.carregarRemoto(); }catch(e){}
       if(window.FeedbackAdv) FeedbackAdv.atualizarAlertas();
       try{ if(window.Alertas) Alertas.aoEntrar(); }catch(e){}
+      try{ if(window.PainelTV) PainelTV.atualizar(); }catch(e){}
       setTimeout(()=>{ try{ if(window.LancUI && Auth.can("gestao","feedbacks")) LancUI.garantirCtx().catch(()=>{}); }catch(e){} }, 2500);   // deixa a lista de pessoas/motivos pronta: editar feedback abre na hora
       if(window.NC){ NC.garantir(); let n=0; const t=setInterval(()=>{ if(NC.carregado() || ++n>40){ clearInterval(t); try{ FeedbackAdv.atualizarAlertas(); }catch(e){} } }, 1500); }
 
