@@ -4,9 +4,17 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.11.0";
+const APP_VERSAO = "2.12.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.12.0", data:"2026-11-10", titulo:"Parâmetros do Painel TV, fotos e sequência", itens:[
+    "Administração > Parâmetros Painel TV (somente administrador): escolhe o que aparece (qualidade, fotos, colunas, observação, melhores de 3 meses), o critério do ranking, o efeito do fundo, as cores, a velocidade da rolagem e a aura de cada posição.",
+    "'Destaques' agora é 'Funcionários do Mês': dá para mostrar o mês passado ('Outubro 2026') ou o mês atual ('Novembro 2026').",
+    "Ritmo mostra se subiu ou caiu em relação à semana anterior (7 dias) e ao mês anterior.",
+    "Lançar Quadro: foto do colaborador (cadastro e troca na edição). A foto aparece no pódio e no quadro do Painel TV, junto com a medalha.",
+    "Sequência: quem fica meses seguidos entre os 3 destaques ganha selo 2x, 3x, 4x..., faixa 'x meses seguidos' e aura de energia na foto (mínimo de meses configurável). 1º lugar pode pulsar devagar.",
+    "Requer atualizar o código do Apps Script (nova versão da implantação)."
+  ] },
   { v:"2.11.0", data:"2026-11-10", titulo:"Painel de TV e horários nos alertas", itens:[
     "Painel de TV (botão Play 'Painel TV', ao lado de Atualizar dados): ranking de repositores em tela cheia, abre na 2ª tela quando houver (senão na tela atual).",
     "Pódio do mês anterior com medalhas de 1º, 2º e 3º com fita; melhores dos últimos 3 meses; observação de que o ranking considera pontuação e % de qualidade da rua.",
