@@ -4,7 +4,7 @@
    Abre na 2ª tela quando existir (Window Management API); senão, na tela atual.
    ========================================================================= */
 const PainelTV = {
-  aberto:false, root:null, _t:[], _dados:null, _id:0, _ver:0, _cacheMes:{}, fotos:{}, cfg:null,
+  aberto:false, previaOn:false, modoJanela:(location.hash === "#painel-tv"), _win:null, root:null, _t:[], _dados:null, _id:0, _ver:0, _cacheMes:{}, fotos:{}, cfg:null,
   /* parâmetros padrão (o administrador muda em Administração > Parâmetros Painel TV) */
   DEF: {
     destaque:"anterior",            // "anterior" = mês passado | "atual" = mês atual
@@ -50,6 +50,39 @@ const PainelTV = {
   pronto(){ return !!(window.APP_STATE && APP_STATE.ready && APP_STATE.processed && Production.maxDataDate()); },
   nomeCurto(n){ const p = String(n||"").trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0,2); return p.map(x=>x.charAt(0).toUpperCase()+x.slice(1)).join(" ") || "—"; },
   idx(p, q){ return this.cfgAtual().criterio === "combinado" ? p * (q === null || q === undefined ? 1 : q/100) : p; },
+  /** pontos (O.S. 58 + missões) e % de qualidade de cada colaborador no período — direto da produção, sem
+      os filtros de tela nem as exclusões da Comissão (a pessoa aparece com o que realmente produziu). */
+  pontos(ini, fim){
+    const mp = new Map(); if(!ini || !fim) return mp;
+    const di = dateOnly(ini), df = dateOnly(fim), reg = APP_STATE.nameRegistry;
+    APP_STATE.processed.p8460.forEach(r=>{
+      if(r.tipoos !== 58 || !r.dtinicio) return;
+      const d = dateOnly(r.dtinicio); if(d < di || d > df) return;
+      let e = mp.get(r.codKey); if(!e){ e = { codKey:r.codKey, nome:(reg && reg.get(r.codKey)) || r.nome, producao:0, missoes:0 }; mp.set(r.codKey, e); }
+      e.producao++;
+    });
+    let usaMissoes = true; try{ usaMissoes = ComissaoParams.paraPeriodo(di, df).considerarMissoes === "SIM"; }catch(e){}
+    if(usaMissoes){
+      try{ Missions.realMissionsOsAll(di, df).forEach((info, cod)=>{
+        let e = mp.get(cod); if(!e){ e = { codKey:cod, nome:(reg && reg.get(cod)) || cod, producao:0, missoes:0 }; mp.set(cod, e); }
+        e.missoes = info.totalOs || 0;
+      }); }catch(e){}
+    }
+    let qMap = new Map(), media = null;
+    try{ qMap = AuditOnline.qualidadePorRepositorNoIntervalo(di, df); media = ComissaoResumo.qualidadeComFallback(di, df).ruas.q; }catch(e){}
+    mp.forEach(e=>{
+      e.pontos = e.producao + e.missoes;
+      const qi = qMap.get(e.codKey); e.qualidade = qi && qi.qualidadeMedia !== null ? qi.qualidadeMedia : null; e.qualidadeEstimada = false;
+      if(e.qualidade === null && media !== null && media !== undefined){ e.qualidade = media; e.qualidadeEstimada = true; }
+    });
+    return mp;
+  },
+  /** quem entra no ranking: o quadro atual (repositores, quando o cargo está disponível) */
+  permitidos(){
+    const team = APP_STATE.currentTeam; if(!team || !team.members) return null;
+    const so = typeof commissionOnlyRepositor === "undefined" ? true : !!commissionOnlyRepositor;
+    return new Set(team.members.filter(m=> !team.cargoDisponivel || !so || m.cargo === "REPOSITOR").map(m=>m.codKey));
+  },
   /** top 3 de um mês fechado (usa o mesmo critério do painel); guardado em cache até a próxima carga de dados */
   topMes(m0){
     const k = this._ver + ":" + m0.getFullYear() + "-" + m0.getMonth();
@@ -57,7 +90,8 @@ const PainelTV = {
     let r = [];
     try{
       const fim = new Date(m0.getFullYear(), m0.getMonth()+1, 0);
-      r = getComissaoTableData(m0, fim).filter(e=>e.pontos > 0)
+      const ok = this.permitidos();
+      r = Array.from(this.pontos(m0, fim).values()).filter(e=>e.pontos > 0 && (!ok || ok.has(e.codKey)))
         .map(e=>({ cod:e.codKey, p:e.pontos, i:this.idx(e.pontos, e.qualidade) })).sort((x,y)=>y.i-x.i || y.p-x.p).slice(0,3).map(x=>x.cod);
     }catch(e){}
     return (this._cacheMes[k] = r);
@@ -67,30 +101,35 @@ const PainelTV = {
     const cfg = this.cfgAtual(), usaAtual = cfg.destaque === "atual";
     const hoje = dateOnly(max), m0 = new Date(hoje.getFullYear(), hoje.getMonth(), 1), fim0 = new Date(hoje.getFullYear(), hoje.getMonth()+1, 0);
     const m1 = addMonths(m0,-1), fim1 = new Date(m1.getFullYear(), m1.getMonth()+1, 0), m3 = addMonths(m0,-3);
-    const mapa = (a,b)=>{ const mp = new Map(); try{ getComissaoTableData(a,b).forEach(e=>mp.set(e.codKey,e)); }catch(e){} return mp; };
+    const mapa = (a,b)=> this.pontos(a,b);
     const ant = mapa(m1, fim1), tri = mapa(m3, fim1), atu = mapa(m0, hoje);
-    // semana: últimos 7 dias contra os 7 dias anteriores (pontos por dia útil)
-    const s0i = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()-6), s1f = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()-7), s1i = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()-13);
+    // ritmo: só compara períodos EQUIVALENTES (mesmos dias da semana / mesmos dias do mês), nunca período parcial × fechado
+    const dow = (hoje.getDay()+6)%7;                                          // 0 = segunda
+    const s0i = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()-dow), s1i = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()-dow-7), s1f = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()-7);
     const sem0 = mapa(s0i, hoje), sem1 = mapa(s1i, s1f), du0 = diasUteisEntre(s0i, hoje) || 0, du1 = diasUteisEntre(s1i, s1f) || 0;
+    const fimMesAntIgual = new Date(m1.getFullYear(), m1.getMonth(), Math.min(hoje.getDate(), fim1.getDate()));
+    const antIgual = mapa(m1, fimMesAntIgual), duAntIgual = diasUteisEntre(m1, fimMesAntIgual) || 0;
+    const DS = ["seg","ter","qua","qui","sex","sáb","dom"];
+    const txtSem = dow === 0 ? "segunda" : `seg a ${DS[dow]}`, txtMes = `dia 1 a ${hoje.getDate()}`;
     // meses (dos 3 anteriores) que realmente têm produção: a média não pode contar mês vazio
     const tem = new Set(); APP_STATE.processed.p8460.forEach(r=>{ if(r.tipoos===58 && r.dtinicio) tem.add(r.dtinicio.getFullYear()*12+r.dtinicio.getMonth()); });
     const n3 = [-3,-2,-1].map(k=>{ const d = addMonths(m0,k); return d.getFullYear()*12+d.getMonth(); }).filter(k=>tem.has(k)).length || 1;
-    const dec = diasUteisEntre(m0, hoje) || 1, totMes = diasUteisEntre(m0, fim0) || dec, totAnt = diasUteisEntre(m1, fim1) || 1;
+    const dec = diasUteisEntre(m0, hoje) || 1, totMes = diasUteisEntre(m0, fim0) || dec;
     // quadro atual (repositores)
     const team = APP_STATE.currentTeam, reg = APP_STATE.nameRegistry;
-    let base = new Set(Array.from(atu.keys()));
-    if(team && team.members){ team.members.forEach(m=>{ if(!team.cargoDisponivel || m.cargo === "REPOSITOR") base.add(m.codKey); }); }
+    const perm = this.permitidos();
+    let base = perm ? new Set(perm) : new Set(Array.from(atu.keys()));
     const var_ = (novo, velho)=> velho > 0 ? (novo/velho - 1)*100 : null;
     const linhas = [];
     base.forEach(cod=>{
       const a = ant.get(cod), t = tri.get(cod), c = atu.get(cod);
       const nome = (reg && reg.get(cod)) || (c && c.nome) || (a && a.nome) || (t && t.nome) || cod;
       const pAnt = a ? a.pontos : 0, p3 = t ? t.pontos / n3 : 0, pAtu = c ? c.pontos : 0;
-      const ritmo = pAtu / dec, ritmoAnt = pAnt / totAnt;
+      const ritmo = pAtu / dec, ritmoAntIgual = duAntIgual ? ((antIgual.get(cod)||{}).pontos||0) / duAntIgual : 0;
       const rs0 = du0 ? ((sem0.get(cod)||{}).pontos||0) / du0 : 0, rs1 = du1 ? ((sem1.get(cod)||{}).pontos||0) / du1 : 0;
       linhas.push({ cod, nome:this.nomeCurto(nome),
         pAnt, qAnt:a ? a.qualidade : null, p3, q3:t ? t.qualidade : null, pAtu, qAtu:c ? c.qualidade : null,
-        proj:Math.round(ritmo * totMes), ritmo, dMes:var_(ritmo, ritmoAnt), dSem:var_(rs0, rs1), estAtu: !!(c && c.qualidadeEstimada) });
+        proj:Math.round(ritmo * totMes), ritmo, dMes:var_(ritmo, ritmoAntIgual), dSem:var_(rs0, rs1), estAtu: !!(c && c.qualidadeEstimada) });
     });
     linhas.forEach(l=>{ l.iAnt = this.idx(l.pAnt, l.qAnt); l.i3 = this.idx(l.p3, l.q3); l.iAtu = this.idx(l.pAtu, l.qAtu); });
     const top = (campo, ind)=> linhas.filter(l=>l[campo] > 0).sort((x,y)=>y[ind]-x[ind] || y[campo]-x[campo]).slice(0,3);
@@ -106,7 +145,7 @@ const PainelTV = {
     }
     const rot3 = [-3,-1].map(k=>{ const d = addMonths(m0,k); return this.MESES[d.getMonth()].slice(0,3); }).join(" a ");
     const mp = usaAtual ? m0 : m1;
-    return { ref:hoje, usaAtual, mesAnt:`${this.MESES[m1.getMonth()]}/${m1.getFullYear()}`, mesAtu:`${this.MESES[m0.getMonth()]}`, rot3, dec, totMes,
+    return { ref:hoje, usaAtual, txtSem, txtMes, mesAnt:`${this.MESES[m1.getMonth()]}/${m1.getFullYear()}`, mesAtu:`${this.MESES[m0.getMonth()]}`, rot3, dec, totMes,
       mesDestaque:`${this.MESES[mp.getMonth()]} ${mp.getFullYear()}`,
       podio:pod, trimestre:top("p3","i3"), tabela, medal, seq };
   },
@@ -200,7 +239,7 @@ const PainelTV = {
     const ordemTxt = cfg.criterio === "combinado" ? "pontos × qualidade" : "pontos";
     return `<div class="tv-wrap${cfg.mostrarTrimestre ? "" : " sem-tri"}${cfg.mostrarObs ? "" : " sem-obs"}">
       <header class="tv-top"><img src="logo-branco.png" alt="" class="tv-logo"><div class="tv-tt"><h1>Ranking de Repositores</h1><p>Dados até ${dd} · ${d.dec} dia(s) útil(eis) no mês</p></div>
-        <div class="tv-clock"><b id="tv-hora"></b><small id="tv-upd"></small></div><button type="button" class="tv-x" id="tv-x" title="Fechar (Esc)">${Icons.svg("x",22)}</button></header>
+        <div class="tv-clock"><b id="tv-hora"></b><small id="tv-upd"></small></div><button type="button" class="tv-x" id="tv-x" title="${this.rotuloSair()}">${Icons.svg("x",18)}<span>${this.rotuloSair()}</span></button></header>
       <section class="tv-hero">
         <div class="tv-box tv-podio"><h2><span>Funcionários do Mês</span><small>${this.h(d.mesDestaque)}</small></h2>
           <div class="tv-pg">${card(ordem[0],2)}${card(ordem[1],1)}${card(ordem[2],3)}</div></div>
@@ -210,7 +249,13 @@ const PainelTV = {
       <section class="tv-box tv-lista"><div class="tv-lh"><img src="logo-branco.png" alt="" class="tv-logo2"><h2>Quadro completo <small>— ordenado pelo mês atual (${ordemTxt})</small></h2></div>
         <div class="tv-th"><table>${cg}<thead>${thead}</thead></table></div>
         <div class="tv-sc" id="tv-sc"><table>${cg}<tbody>${linhas || `<tr><td colspan="${nCols}" class="tv-vazio">Sem dados.</td></tr>`}</tbody></table></div>
-        <div class="tv-rod">${q ? "* qualidade estimada pela média da equipe (sem auditoria no período) · " : ""}Projeção = ritmo por dia útil × dias úteis do mês${cfg.ritmoSemana || cfg.ritmoMes ? " · ▲▼ ritmo comparado com a semana anterior (7 dias) e com o mês anterior" : ""}</div></section></div>`;
+        <div class="tv-rod">${q ? "* qualidade estimada pela média da equipe (sem auditoria no período) · " : ""}Projeção = ritmo por dia útil × dias úteis do mês${cfg.ritmoSemana || cfg.ritmoMes ? ` · ▲▼ ritmo comparado só com o mesmo período: ${cfg.ritmoSemana ? `semana (${d.txtSem}) × semana anterior (${d.txtSem})` : ""}${cfg.ritmoSemana && cfg.ritmoMes ? "; " : ""}${cfg.ritmoMes ? `mês (${d.txtMes}) × ${d.txtMes} do mês anterior` : ""}` : ""}</div></section></div>`;
+  },
+  rotuloSair(){ return this.previaOn ? "Fechar prévia" : "Encerrar painel"; },
+  /** botão "Encerrar painel": na janela própria fecha a janela; na prévia fecha a prévia */
+  sair(){
+    if(this.modoJanela && !this.previaOn){ this.fechar(); try{ window.close(); }catch(e){} return; }
+    this.fechar();
   },
   h(s){ return typeof escapeHtml === "function" ? escapeHtml(String(s)) : String(s); },
 
@@ -220,7 +265,7 @@ const PainelTV = {
     const pr = this.PRESETS[cs.preset];
     const t = pr ? pr : { c0:cs.c0, c1:cs.c1, c2:cs.c2, b1:cs.c1, b2:cs.c2 };
     r.style.setProperty("--tv0", t.c0); r.style.setProperty("--tv1", t.c1); r.style.setProperty("--tv2", t.c2); r.style.setProperty("--tvb1", t.b1); r.style.setProperty("--tvb2", t.b2);
-    r.className = "fx-" + (this.FUNDOS[c.fundo] ? c.fundo : "aurora");
+    r.className = "fx-" + (this.FUNDOS[c.fundo] ? c.fundo : "aurora") + (this.previaOn ? " previa" : "");
     let fx = r.querySelector(":scope > .tv-fx");
     if(!fx){ fx = document.createElement("div"); fx.className = "tv-fx"; fx.setAttribute("aria-hidden","true"); r.insertBefore(fx, r.firstChild); }
     if(c.fundo === "particulas" && !fx.firstChild){
@@ -232,10 +277,10 @@ const PainelTV = {
     if(!this.root) return;
     let d = null; try{ d = this.calc(); }catch(e){ console.error(e); }
     this._dados = d;
-    if(!d){ this.root.innerHTML = `<div class="tv-wrap"><div class="tv-vazio">Sem dados para o painel. Atualize os dados e tente de novo.</div><button type="button" class="tv-x" id="tv-x">${Icons.svg("x",22)}</button></div>`; }
+    if(!d){ this.root.innerHTML = `<div class="tv-wrap"><div class="tv-vazio">Sem dados para o painel. Atualize os dados e tente de novo.</div><button type="button" class="tv-x" id="tv-x">${Icons.svg("x",18)}<span>${this.rotuloSair()}</span></button></div>`; }
     else this.root.innerHTML = this.html(d);
     this.aplicarTema();
-    const x = this.root.querySelector("#tv-x"); if(x) x.onclick = ()=> this.fechar();
+    const x = this.root.querySelector("#tv-x"); if(x) x.onclick = ()=> this.sair();
     this.relogio(); this.rolar(true);
   },
   relogio(){
@@ -258,20 +303,56 @@ const PainelTV = {
   },
 
   /* ------------------------------ abrir / fechar ------------------------------ */
-  async tocar(){
-    if(this.aberto){ this.fechar(); return; }
+  /** botão Play do topo: abre o painel em uma janela própria (o PC continua livre); com a janela aberta, vira "Encerrar painel" */
+  tocar(){
+    if(this.modoJanela) return;
+    if(this._win && !this._win.closed){ this.encerrarJanela(); return; }
+    const w = window.open(location.href.split("#")[0] + "#painel-tv", "nucleo_painel_tv", "popup=yes,width=1280,height=720");
+    if(!w){ toast("O navegador bloqueou a nova janela. Permita pop-ups deste site e clique de novo.", "error"); return; }
+    this._win = w; this.botao(true);
+    this._vig = setInterval(()=>{ if(!this._win || this._win.closed){ clearInterval(this._vig); this._win = null; this.botao(false); } }, 1500);
+    this.moverJanela(w);
+  },
+  /** se houver 2ª tela, leva a janela para lá (precisa de permissão do navegador; se negar, fica onde abriu) */
+  async moverJanela(w){
+    try{
+      if(!window.getScreenDetails) return;
+      const det = await getScreenDetails(), o = det.screens.find(s=>s !== det.currentScreen && !s.isPrimary) || det.screens.find(s=>s !== det.currentScreen);
+      if(o && w && !w.closed){ w.moveTo(o.availLeft, o.availTop); w.resizeTo(o.availWidth, o.availHeight); }
+    }catch(e){}
+  },
+  encerrarJanela(){
+    try{ if(this._win) this._win.close(); }catch(e){}
+    this._win = null; if(this._vig) clearInterval(this._vig); this.botao(false);
+  },
+  botao(on){
+    const b = document.getElementById("btn-tv"); if(!b) return;
+    const t = b.querySelector(".btn-tx"); if(t) t.textContent = on ? "Encerrar painel" : "Painel TV";
+    b.classList.toggle("tv-on", !!on); b.title = on ? "Fechar a janela do Painel TV" : "Abre o Painel TV em uma nova janela";
+  },
+  /** pré-visualização na própria tela, com os parâmetros do formulário (sem gravar) */
+  async previa(cfgForm){
+    if(this.aberto) return;
     if(!this.pronto()){ toast("Carregue os dados primeiro (Atualizar dados).", "error"); return; }
+    this._cfgReal = this.cfg; this.cfg = this.mesclar(this.DEF, cfgForm || {}); this.previaOn = true; this.aberto = true; this._upd = null;
+    await this.fotosCarregar();
+    const r = document.createElement("div"); r.id = "tv-root"; r.setAttribute("role","dialog"); document.body.appendChild(r); this.root = r;
+    this._k = e=>{ if(e.key === "Escape") this.fechar(); }; document.addEventListener("keydown", this._k);
+    this.desenhar();
+  },
+  /** abre o painel nesta janela (usado pela janela própria do painel) */
+  async abrirAqui(){
+    if(this.aberto) return;
     this.aberto = true; this._upd = null;
     try{ if(window.AuditOnline && AuditOnline.rows === null) await AuditOnline.load(); }catch(e){}
     await Promise.all([this.cfgCarregar(), this.fotosCarregar()]);
     if(!this.aberto) return;
+    document.title = "Painel TV — Núcleo Reposição";
     const r = document.createElement("div"); r.id = "tv-root"; r.setAttribute("role","dialog"); r.setAttribute("aria-label","Painel de pontuação");
     document.body.appendChild(r); this.root = r; this.desenhar();
     this._t.push(setInterval(()=> this.relogio(), 20000));
     this._t.push(setInterval(async ()=>{ if(!this.aberto) return; await this.cfgCarregar(); await this.fotosCarregar(); this.desenhar(); }, 5*60*1000));   // pega mudanças de parâmetros e fotos
     this._t.push(setInterval(()=>{ const b = document.getElementById("btn-refresh-online"); if(b && this.aberto) b.click(); }, 15*60*1000));   // recarrega os dados sozinho
-    this._esc = ()=>{ if(!document.fullscreenElement && this.aberto && !this._entrando) this.fechar(); };
-    document.addEventListener("fullscreenchange", this._esc);
     try{ this._wl = navigator.wakeLock && await navigator.wakeLock.request("screen"); }catch(e){}
     await this.telaCheia();
   },
@@ -279,7 +360,7 @@ const PainelTV = {
   async telaCheia(){
     this._entrando = true; let alvo = null;
     try{
-      if(window.getScreenDetails){
+      if(window.getScreenDetails && !this.modoJanela){
         const det = await getScreenDetails();
         const outra = det.screens.find(s=>s !== det.currentScreen && !s.isPrimary) || det.screens.find(s=>s !== det.currentScreen);
         if(outra) alvo = outra;
@@ -296,6 +377,7 @@ const PainelTV = {
     setTimeout(()=>{ this._entrando = false; }, 800);
   },
   fechar(){
+    if(this.previaOn){ this.previaOn = false; this.cfg = this._cfgReal || this.cfg; this._cfgReal = null; document.removeEventListener("keydown", this._k); }
     this.aberto = false; this._entrando = false;
     this._t.forEach(clearInterval); this._t = []; if(this._rol){ clearInterval(this._rol); this._rol = null; }
     document.removeEventListener("fullscreenchange", this._esc);
@@ -314,7 +396,7 @@ const PainelTV = {
     const aura = (pos, nome)=>`<div class="tvp-aura"><strong>${nome}</strong>${sel("au"+pos, this.AURAS, (c.aura[pos]||{}).estilo)}<input type="color" id="tvp-ac${pos}" value="${h((c.aura[pos]||{}).cor)}" title="Cor da aura"></div>`;
     pane.innerHTML = `<div class="panel tvp">
       <div class="adm-head"><h3 class="adm-h2" style="margin:0">Parâmetros do Painel TV</h3>
-        <div class="adm-head-r"><button type="button" class="btn btn-outline" id="tvp-abrir">${Icons.svg("play",16)} Abrir painel</button></div></div>
+        <div class="adm-head-r"><button type="button" class="btn btn-outline" id="tvp-previa">${Icons.svg("eye",16)} Prévia</button><button type="button" class="btn btn-outline" id="tvp-abrir">${Icons.svg("play",16)} Abrir em nova janela</button></div></div>
       <p class="small-muted">O painel da TV lê estes parâmetros sozinho (confere a cada 5 minutos, sem precisar fechar).</p>
 
       <fieldset class="tvp-fs"><legend>Funcionários do Mês</legend>
@@ -383,6 +465,7 @@ const PainelTV = {
     };
     $("salvar").addEventListener("click", salvar);
     $("padrao").addEventListener("click", ()=>{ this.cfg = this.mesclar(this.DEF, {}); this.renderPaneLocal(); });
+    $("previa").addEventListener("click", ()=> this.previa(coletar()));
     $("abrir").addEventListener("click", async ()=>{ if(await salvar()) this.tocar(); });
   },
   renderPaneLocal(){ // restaura o padrão apenas no formulário (não grava até clicar em Salvar)
@@ -393,7 +476,8 @@ const PainelTV = {
 
   /** chamado depois de cada carga de dados: redesenha o painel aberto */
   atualizar(){
-    if(!this.aberto || !this.root) return;
+    if(this.modoJanela && !this.aberto && this.pronto()){ this.abrirAqui(); return; }
+    if(!this.aberto || !this.root || this.previaOn) return;
     const n = new Date(), p = v=>String(v).padStart(2,"0"); this._upd = `${p(n.getHours())}:${p(n.getMinutes())}`;
     this._ver++; this._cacheMes = {};   // dados novos: refaz o histórico de sequência
     Promise.all([this.cfgCarregar(), this.fotosCarregar()]).then(()=> this.desenhar());
