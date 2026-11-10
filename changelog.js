@@ -4,9 +4,15 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.12.0";
+const APP_VERSAO = "2.13.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.13.0", data:"2026-11-10", titulo:"Painel TV em janela própria, prévia e comparações justas", itens:[
+    "O botão Painel TV agora abre o painel em uma nova janela (o computador continua livre). Com a janela aberta, o botão vira 'Encerrar painel'; a janela também tem o botão 'Encerrar painel'. Se houver 2ª tela, a janela vai para ela.",
+    "Administração > Parâmetros Painel TV: botão 'Prévia' mostra como o painel vai ficar com as opções atuais, sem gravar.",
+    "Ritmo: compara somente períodos iguais. Semana: seg a hoje contra seg ao mesmo dia da semana anterior. Mês: dia 1 até hoje contra dia 1 até o mesmo dia do mês anterior.",
+    "Correção: colaborador que aparecia zerado no painel (por exclusão/filtro da Comissão) agora mostra a produção real (O.S. 58 + missões)."
+  ] },
   { v:"2.12.0", data:"2026-11-10", titulo:"Parâmetros do Painel TV, fotos e sequência", itens:[
     "Administração > Parâmetros Painel TV (somente administrador): escolhe o que aparece (qualidade, fotos, colunas, observação, melhores de 3 meses), o critério do ranking, o efeito do fundo, as cores, a velocidade da rolagem e a aura de cada posição.",
     "'Destaques' agora é 'Funcionários do Mês': dá para mostrar o mês passado ('Outubro 2026') ou o mês atual ('Novembro 2026').",
