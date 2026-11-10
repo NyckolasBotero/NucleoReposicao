@@ -906,15 +906,65 @@ function pushTeste(s) {
   return { ok: true, enviados: r.enviados };
 }
 
-/** Matrículas que recebem um tipo de alerta, conforme a configuração (padrão do tipo se o administrador nunca mudou). */
-function alertasDestinatarios(tipo, padrao) {
-  const cfg = alertasLerChave('config') || {}, t = (cfg.tipos || {})[tipo] || {};
-  if (t.ativo === false) return [];
-  const dest = t.dest !== undefined ? t.dest : padrao;
+/** Converte o destino configurado ('*', 'admin' ou lista de matrículas) em matrículas. */
+function alertasResolverDest(dest) {
   if (Array.isArray(dest)) return dest.map(String);
   const us = lerUsuarios().usuarios, mats = Object.keys(us).filter(function (m) { return !us[m].bloqueado; });
   if (dest === 'admin') return mats.filter(function (m) { return normalizar(us[m].nome || '').indexOf('FABIONYCKOLAS') === 0; });
   return mats;
+}
+
+/** Matrículas que recebem um tipo de alerta, conforme a configuração (padrão do tipo se o administrador nunca mudou). */
+function alertasDestinatarios(tipo, padrao) {
+  const cfg = alertasLerChave('config') || {}, t = (cfg.tipos || {})[tipo] || {};
+  if (t.ativo === false) return [];
+  return alertasResolverDest(t.dest !== undefined ? t.dest : padrao);
+}
+
+/** Roda a cada 5 minutos (gatilho): envia ao celular os lembretes que têm horário e estão no dia certo. */
+function alertasAgendados() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return;
+  try {
+    const cfg = alertasLerChave('config') || {};
+    const agora = new Date(), tz = tzPadrao();
+    const hojeIso = Utilities.formatDate(agora, tz, 'yyyy-MM-dd');
+    const minAgora = Number(Utilities.formatDate(agora, tz, 'H')) * 60 + Number(Utilities.formatDate(agora, tz, 'm'));
+    const dow = Number(Utilities.formatDate(agora, tz, 'u')) % 7;      // 0 = domingo
+    const dia = Number(Utilities.formatDate(agora, tz, 'd'));
+    const enviados = alertasLerChave('push_enviados') || {};
+    let mudou = false;
+    (cfg.custom || []).forEach(function (c) {
+      const r = c.regra || {};
+      if (c.ativo === false || !/^\d{1,2}:\d{2}$/.test(String(r.hora || ''))) return;
+      const p = r.hora.split(':'), m = Number(p[0]) * 60 + Number(p[1]);
+      if (minAgora < m || minAgora > m + 90) return;                    // só dentro de 90 min após o horário
+      let ciclo = null;
+      if (r.tipo === 'diario') ciclo = hojeIso;
+      else if (r.tipo === 'semanal' && Array.isArray(r.dias)) { if (r.dias.map(Number).indexOf(dow) >= 0) ciclo = hojeIso; }
+      else if (r.tipo === 'semanal') { if (Number(r.dia) === dow) ciclo = hojeIso; }
+      else if (r.tipo === 'mensal') { if (dia === (Number(r.inicio) || 1)) ciclo = hojeIso.slice(0, 7); }
+      else if (r.tipo === 'unica') { if (r.data === hojeIso) ciclo = 'unica'; }
+      if (!ciclo) return;
+      const marca = ciclo + '|' + r.hora;
+      if (enviados[c.id] === marca) return;
+      const f = (cfg.feitos || {})[c.id];
+      if (f && f.ciclo === ciclo) return;                              // já marcado como feito
+      pushEnviar(alertasResolverDest(c.dest === undefined ? '*' : c.dest), c.nome || 'Lembrete', c.texto || 'Hora de fazer este lembrete.', 'lembrete-' + c.id);
+      enviados[c.id] = marca; mudou = true;
+    });
+    if (mudou) alertasGravarChave('push_enviados', enviados);
+  } catch (e) { /* o gatilho nunca deve quebrar */ } finally { lock.releaseLock(); }
+}
+
+/** Rode UMA vez no editor (pede autorização): liga o gatilho de 5 em 5 minutos dos lembretes com horário. */
+function ativarAgendador() {
+  desativarAgendador();
+  ScriptApp.newTrigger('alertasAgendados').timeBased().everyMinutes(5).create();
+  Logger.log('Agendador de alertas ligado (a cada 5 minutos).');
+}
+function desativarAgendador() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'alertasAgendados') ScriptApp.deleteTrigger(t); });
 }
 
 /** Envia a notificação aos aparelhos das matrículas. Nunca lança erro (não pode atrapalhar quem está lançando). */
