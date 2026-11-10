@@ -4,9 +4,14 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.10.3";
+const APP_VERSAO = "2.11.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.11.0", data:"2026-11-10", titulo:"Base 8460: só tipo 58 e conferência da última linha", itens:[
+    "Ao ler o arquivo da 8460, o sistema avisa se a coluna TIPOOS tem algum tipo diferente de 58 e mostra quantas linhas há de cada tipo.",
+    "Havendo outro tipo, a gravação normal fica bloqueada. O novo botão “Gravar só tipo 58” grava apenas as linhas de tipo 58, conferindo por dia com a base e pedindo confirmação.",
+    "A última linha do arquivo (o total) é sempre verificada e mostrada na tela: se for o total, é retirada e nunca é gravada; se não parecer um total, o sistema avisa para conferir se o arquivo veio completo."
+  ]},
   { v:"2.10.3", data:"2026-11-07", titulo:"Ajuste nos alertas personalizados", itens:[
     "Configurar alertas: o botão liga/desliga dos alertas criados por você não ultrapassa mais a caixa no celular (o botão de quem recebe encolhe para dar espaço)."
   ]},

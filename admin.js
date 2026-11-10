@@ -106,6 +106,63 @@ const ConferenciaRapida = {
   }
 };
 
+/* =========================================================================
+   Regra de TIPO de O.S. por base (hoje: a 8460 só pode gravar TIPOOS = 58) e verificação da ÚLTIMA LINHA.
+   O relatório da 8460 vem com uma linha de TOTAL no fim: ela nunca pode ser gravada como se fosse O.S.
+   (sem tela — só a lógica; a tela está em AdminUI.htmlTipo / gravarSo58).
+   ========================================================================= */
+const FiltroTipoOS = {
+  REGRAS: { "8460": { coluna:"TIPOOS", valor:"58", colData:"DTFIMSEPARACAO" } },
+  regra(base){ return this.REGRAS[String(base)] || null; },
+
+  // 58, "58", "58.0" ou "58 - Separação" → "58"; vazio ou sem número no início → ""
+  codigo(v){
+    if(typeof v === "number") return Number.isFinite(v) ? String(Math.trunc(v)) : "";
+    const m = String(v==null ? "" : v).trim().match(/^(\d+)/);
+    return m ? String(Number(m[1])) : "";
+  },
+
+  // "COLUNA: valor · COLUNA: valor" com as primeiras células preenchidas da linha
+  resumoLinha(cab, linha){
+    const p = [];
+    for(let i=0; i<linha.length && p.length<6; i++){
+      const v = linha[i];
+      if(v===null || v===undefined || String(v).trim()==="") continue;
+      p.push(`${cab[i] || "coluna "+(i+1)}: ${v}`);
+    }
+    return p.join(" · ") || "(linha vazia)";
+  },
+
+  /* Analisa as linhas lidas do arquivo (já com as células normalizadas).
+     1) Última linha: é o TOTAL se não tem data válida, não tem tipo ou traz a palavra "Total" → sai da lista (nunca é gravada).
+        Se não parece total, fica na lista e o aviso pede para conferir se o arquivo veio completo.
+     2) Tipos: conta quantas linhas há de cada TIPOOS; "temOutros" = existe algo diferente do tipo permitido. */
+  analisar(cab, linhas, regra, norm){
+    const iT = cab.findIndex(c=>norm(c)===norm(regra.coluna));
+    if(iT < 0) return { ok:false, erro:`O arquivo não tem a coluna "${regra.coluna}".` };
+    const iD = regra.colData ? cab.findIndex(c=>norm(c)===norm(regra.colData)) : -1;
+    const vazia = v=> v===null || v===undefined || String(v).trim()==="";
+    const util = linhas.filter(l=> l && !l.every(vazia));
+    const ult = util.length ? util[util.length-1] : null;
+    const ultima = { valores:ult, resumo: ult ? this.resumoLinha(cab, ult) : "", eTotal:false, motivos:[] };
+    if(ult){
+      if(iD >= 0 && !ConferenciaRapida.chaveDia(ult[iD])) ultima.motivos.push("sem data válida");
+      if(!this.codigo(ult[iT])) ultima.motivos.push(`sem ${regra.coluna}`);
+      if(ult.some(v=> typeof v==="string" && /^\s*total\b/i.test(v))) ultima.motivos.push('traz a palavra "Total"');
+      ultima.eTotal = ultima.motivos.length > 0;
+    }
+    const uteis = ultima.eTotal ? util.slice(0,-1) : util;
+    const tipos = {}, linhasTipo = [];
+    uteis.forEach(l=>{
+      const c = this.codigo(l[iT]);
+      if(c === regra.valor) linhasTipo.push(l);
+      else { const k = c || "(vazio)"; tipos[k] = (tipos[k]||0) + 1; }
+    });
+    const nOutros = Object.keys(tipos).reduce((s,k)=> s + tipos[k], 0);
+    return { ok:true, regra, ultima, uteis, linhasTipo, nTipo:linhasTipo.length, tipos, nOutros, temOutros:nOutros>0 };
+  }
+};
+
 const AdminUI = {
   /* ------------------------------------------------------------------ */
   /* utilitários                                                         */
@@ -373,16 +430,28 @@ const AdminUI = {
       }
       if(dados.length >= 65535 && /\.xls$/i.test(file.name)) aviso.push("Este arquivo .xls tem "+dados.length.toLocaleString("pt-BR")+" linhas, exatamente o limite do formato .xls (65.536 contando o título). Ele pode ter sido cortado na exportação e estar sem as linhas finais. Exporte de novo em .xlsx ou em períodos menores.");
       const largura = cab ? cab.length : Math.max.apply(null, dados.map(l=>l.length));
-      const linhas = dados.map(l=>{ const o = new Array(largura); for(let i=0;i<largura;i++) o[i] = this.celula(l[i]); return o; });
+      const linhasTodas = dados.map(l=>{ const o = new Array(largura); for(let i=0;i<largura;i++) o[i] = this.celula(l[i]); return o; });
 
-      // data mais recente no arquivo (colunas DATA / DT...)
+      // bases com regra de tipo (8460 = só TIPOOS 58): verifica SEMPRE a última linha (total) e os tipos presentes.
+      // O total sai de todos os caminhos de gravação; os tipos diferentes bloqueiam a gravação normal.
+      let tipo = null;
+      const regraTipo = cab ? FiltroTipoOS.regra(base.base) : null;
+      if(regraTipo){
+        tipo = FiltroTipoOS.analisar(cab, linhasTodas, regraTipo, normStr);
+        if(!tipo.ok) throw new Error(tipo.erro);
+      }
+      const linhas = tipo ? tipo.uteis : linhasTodas;
+
+      // data mais recente no arquivo (colunas DATA / DT...), sem contar a linha de total
       let maxD = null;
       if(cab){
         const idx = cab.map((c,i)=>/DATA/i.test(c)||/^DT/i.test(c)?i:-1).filter(i=>i>=0);
-        dados.forEach(l=> idx.forEach(i=>{ const d = l[i] instanceof Date ? l[i] : null; if(d && !isNaN(d) && d.getFullYear()>1901 && (!maxD || d>maxD)) maxD = d; }));
+        const dadosData = (tipo && tipo.ultima.eTotal) ? dados.slice(0,-1) : dados;
+        dadosData.forEach(l=> idx.forEach(i=>{ const d = l[i] instanceof Date ? l[i] : null; if(d && !isNaN(d) && d.getFullYear()>1901 && (!maxD || d>maxD)) maxD = d; }));
       }
-      st.arq = { nome:file.name, aba:nomeAba, base, cab, linhas, maxD, aviso, sim:null };
+      st.arq = { nome:file.name, aba:nomeAba, base, cab, linhas, maxD, aviso, sim:null, tipo };
       this.desenharPreview();
+      if(tipo && tipo.temOutros) toast(`Atenção: há tipos diferentes de ${tipo.regra.valor} na ${base.base}`, "error", { sub:`${tipo.nOutros.toLocaleString("pt-BR")} linha(s) de outros tipos. A gravação normal está bloqueada: use “Gravar só tipo ${tipo.regra.valor}”.`, duracao:9000 });
       const alvoBox = document.getElementById("bases-envio");
       if(alvoBox) alvoBox.scrollIntoView({ behavior:"smooth", block:"start" });
       toast("Arquivo lido — ainda não foi gravado", "info", { sub:`${linhas.length.toLocaleString("pt-BR")} linhas · base ${base.base}. Falta verificar e gravar${aviso.length?" · confira os avisos":""}.`, duracao:7000,
@@ -402,13 +471,14 @@ const AdminUI = {
     // conferência rápida (só o último mês) disponível: base que acumula, com coluna de data conhecida e presente no arquivo
     const rapidoOk = a.base.modo==="acumular" && !!a.base.colData && !!a.cab && a.cab.some(c=>normStr(c)===normStr(a.base.colData));
     const rap = a.rapido && a.rapido.res;
-    const podeGravar = a.ultimaVerif==="rapido" ? !!(rap && rap.pode && rap.aGravar>0) : !!a.sim;
+    const bloq = this.bloqueadoPorTipo(a);   // há tipo diferente do permitido: só o botão "Gravar só tipo X" grava
+    const podeGravar = !bloq && (a.ultimaVerif==="rapido" ? !!(rap && rap.pode && rap.aGravar>0) : !!a.sim);
     const verificado = !!(a.sim || (rap && rap.pode));
-    const passo2 = verificado ? "verificação feita ✓" : (rapidoOk ? "clique em “Conferir por dia”" : "clique em “Verificar duplicidade”");
+    const passo2 = bloq ? `clique em “Gravar só tipo ${a.tipo.regra.valor}” (há outros tipos no arquivo)` : verificado ? "verificação feita ✓" : (rapidoOk ? "clique em “Conferir por dia”" : "clique em “Verificar duplicidade”");
     box.innerHTML = `
       <div class="panel">
         <h3 class="adm-h2">Conferir antes de enviar — ${escapeHtml(a.base.base)}</h3>
-        <div class="hint-box" style="margin-bottom:12px;"><strong>Nada foi gravado no Google Sheets ainda.</strong> Passos: <strong>1.</strong> arquivo lido ✓ &nbsp;→&nbsp; <strong>2.</strong> ${passo2} &nbsp;→&nbsp; <strong>3.</strong> clique em “Gravar na base”.</div>
+        <div class="hint-box" style="margin-bottom:12px;"><strong>Nada foi gravado no Google Sheets ainda.</strong> Passos: <strong>1.</strong> arquivo lido ✓ &nbsp;→&nbsp; <strong>2.</strong> ${passo2} &nbsp;→&nbsp; <strong>3.</strong> ${bloq ? "confirme a gravação" : "clique em “Gravar na base”"}.</div>
         <div class="adm-grid">
           <div><span class="small-muted">Arquivo</span><br><strong>${escapeHtml(a.nome)}</strong><br><span class="small-muted">aba lida: ${escapeHtml(a.aba)}</span></div>
           <div><span class="small-muted">Linhas no arquivo</span><br><strong>${this.fmtNum(a.linhas.length)}</strong></div>
@@ -417,22 +487,26 @@ const AdminUI = {
         </div>
         ${velho ? `<div class="warn-box" style="margin-top:12px;">A data mais recente do arquivo (${fmtDateBR(a.maxD)}) é anterior à que já está na base (${fmtDateBR(atual)}). Provavelmente é um arquivo antigo.</div>` : ""}
         ${a.aviso.map(t=>`<div class="hint-box" style="margin-top:10px;">${escapeHtml(t)}</div>`).join("")}
+        ${this.htmlTipo(a)}
         <div id="bases-sim" style="margin-top:14px;">${
           a.ultimaVerif==="rapido" ? this.htmlRapido(a)
           : a.sim ? this.htmlSimulacao(a)
           : (rapidoOk ? this.htmlRapido(a) : `<span class="small-muted">Clique em <strong>Verificar duplicidade</strong> para ver quantas linhas são novas antes de gravar.</span>`)}</div>
         <div class="adm-actions">
           <button class="btn btn-outline" id="bases-cancel" ${st.enviando?"disabled":""}>Cancelar</button>
-          ${rapidoOk ? `<button class="btn btn-outline" id="bases-rapido-btn" ${st.enviando?"disabled":""} title="Compara só os dias que o arquivo e a base têm em comum e grava o que falta">Conferir por dia (recomendado)</button>` : ""}
-          <button class="btn btn-outline" id="bases-sim-btn" ${st.enviando?"disabled":""} title="${rapidoOk?"Compara linha a linha com a base inteira (demora mais)":""}">${rapidoOk?"Verificação completa (mais lenta)":"Verificar duplicidade"}</button>
-          ${podeGravar?"":`<button class="btn btn-outline" id="bases-go-sem" ${st.enviando?"disabled":""} style="color:var(--danger,#c0392b)" title="Grava sem conferir antes (pede confirmação)">Gravar sem conferir</button>`}
-          <button class="btn btn-primary" id="bases-go" ${(!podeGravar||st.enviando)?"disabled":""} title="${podeGravar?"":"Faça a verificação primeiro"}">Gravar na base</button>
+          ${bloq ? `<button class="btn btn-primary" id="bases-so-tipo" ${(st.enviando||!a.tipo.nTipo)?"disabled":""} title="Grava só as linhas de tipo ${escapeHtml(a.tipo.regra.valor)} (confere por dia com a base e pede confirmação)">Gravar só tipo ${escapeHtml(a.tipo.regra.valor)}</button>` : ""}
+          ${rapidoOk ? `<button class="btn btn-outline" id="bases-rapido-btn" ${(st.enviando||bloq)?"disabled":""} title="${bloq?"Bloqueado: o arquivo tem outros tipos além de "+escapeHtml(a.tipo.regra.valor):"Compara só os dias que o arquivo e a base têm em comum e grava o que falta"}">Conferir por dia (recomendado)</button>` : ""}
+          <button class="btn btn-outline" id="bases-sim-btn" ${(st.enviando||bloq)?"disabled":""} title="${bloq?"Bloqueado: o arquivo tem outros tipos além de "+escapeHtml(a.tipo.regra.valor):(rapidoOk?"Compara linha a linha com a base inteira (demora mais)":"")}">${rapidoOk?"Verificação completa (mais lenta)":"Verificar duplicidade"}</button>
+          ${podeGravar?"":`<button class="btn btn-outline" id="bases-go-sem" ${(st.enviando||bloq)?"disabled":""} style="color:var(--danger,#c0392b)" title="${bloq?"Bloqueado: o arquivo tem outros tipos além de "+escapeHtml(a.tipo.regra.valor):"Grava sem conferir antes (pede confirmação)"}">Gravar sem conferir</button>`}
+          <button class="btn btn-primary" id="bases-go" ${(!podeGravar||st.enviando)?"disabled":""} title="${bloq?"Bloqueado: o arquivo tem outros tipos além de "+escapeHtml(a.tipo.regra.valor):(podeGravar?"":"Faça a verificação primeiro")}">Gravar na base</button>
         </div>
         <div id="bases-prog"></div>
       </div>`;
     document.getElementById("bases-cancel").addEventListener("click", ()=>{ st.arq = null; box.innerHTML = ""; });
     const rb = document.getElementById("bases-rapido-btn");
     if(rb) rb.addEventListener("click", ()=> this.conferirRapido());
+    const so = document.getElementById("bases-so-tipo");
+    if(so) so.addEventListener("click", ()=> this.gravarSoTipo());
     const fc = document.getElementById("bases-forcar");
     if(fc) fc.addEventListener("change", ()=>{ a.rapido.forcar = fc.checked; a.rapido.res = ConferenciaRapida.planejar(a.contagem, a.rapido.base, fc.checked); this.desenharPreview(); });
     document.getElementById("bases-sim-btn").addEventListener("click", ()=> this.enviar(true));
@@ -441,10 +515,72 @@ const AdminUI = {
     document.getElementById("bases-go").addEventListener("click", ()=> a.ultimaVerif==="rapido" ? this.enviarRapido() : this.enviar(false));
   },
 
+  // ---- regra de tipo (8460: só TIPOOS 58) e verificação da última linha (total) ----
+  bloqueadoPorTipo(a){ return !!(a && a.tipo && a.tipo.temOutros); },
+  avisarBloqueio(a){
+    const v = a.tipo.regra.valor;
+    toast("Gravação normal bloqueada", "error", { sub:`O arquivo tem tipos diferentes de ${v}. Use “Gravar só tipo ${v}”.` });
+  },
+
+  htmlTipo(a){
+    const t = a.tipo;
+    if(!t) return "";
+    const n = x=>this.fmtNum(x), v = t.regra.valor, col = t.regra.coluna, u = t.ultima;
+    const caixaUlt = !u.valores ? "" : u.eTotal
+      ? `<div class="hint-box" style="margin-top:10px;"><strong>Última linha verificada: é o total do relatório</strong> (${escapeHtml(u.motivos.join(", "))}). Foi retirada e não será gravada em nenhuma opção.<div class="small-muted" style="margin-top:4px;">${escapeHtml(u.resumo)}</div></div>`
+      : `<div class="warn-box" style="margin-top:10px;"><strong>Última linha verificada: não parece ser um total</strong> (tem data e ${escapeHtml(col)}). Ela foi mantida como linha normal. Confira se o arquivo veio completo e se o total não ficou de fora.<div class="small-muted" style="margin-top:4px;">${escapeHtml(u.resumo)}</div></div>`;
+    let caixaTipo;
+    if(t.temOutros){
+      const ordem = Object.keys(t.tipos).sort((x,y)=> t.tipos[y]-t.tipos[x]);
+      const linhas = [`<tr><td><strong>${escapeHtml(v)}</strong></td><td>${n(t.nTipo)}</td><td>✓ pode ser gravado</td></tr>`]
+        .concat(ordem.map(k=>`<tr><td>${escapeHtml(k)}</td><td>${n(t.tipos[k])}</td><td>⚠ fica de fora</td></tr>`)).join("");
+      caixaTipo = `<div class="warn-box" style="margin-top:10px;"><strong>⚠ A coluna ${escapeHtml(col)} tem tipos diferentes de ${escapeHtml(v)}.</strong> A gravação normal está bloqueada.
+        ${t.nTipo ? `Use <strong>Gravar só tipo ${escapeHtml(v)}</strong> para gravar apenas as ${n(t.nTipo)} linha(s) de tipo ${escapeHtml(v)}; as ${n(t.nOutros)} de outros tipos ficam de fora.` : `Não há nenhuma linha de tipo ${escapeHtml(v)} neste arquivo, então não há o que gravar.`}
+        <div class="table-wrap" style="margin-top:8px;"><table class="adm-table"><thead><tr><th>${escapeHtml(col)}</th><th>Linhas</th><th>O que acontece</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
+    } else {
+      caixaTipo = `<div class="hint-box" style="margin-top:10px;">✓ Todas as ${n(t.nTipo)} linha(s) do arquivo são do tipo ${escapeHtml(v)}.</div>`;
+    }
+    return caixaUlt + caixaTipo;
+  },
+
+  // grava SÓ as linhas do tipo permitido: confere por dia com a base, mostra o plano, pede confirmação e põe na fila
+  async gravarSoTipo(){
+    const st = this.basesState, a = st.arq;
+    if(!a || !a.tipo || st.enviando) return;
+    const t = a.tipo, v = t.regra.valor, F = d=>ConferenciaRapida.fmtDia(d), n = x=>this.fmtNum(x);
+    if(!t.nTipo){ toast(`Não há linhas de tipo ${v} neste arquivo`, "error"); return; }
+    if(!a.base.colData){ toast("Esta base não tem conferência por data no servidor", "error", { sub:"Atualize o Apps Script e tente de novo." }); return; }
+    st.enviando = true; this.desenharPreview();
+    let plano;
+    try{
+      const contagem = ConferenciaRapida.contarArquivo(a.cab, t.linhasTipo, a.base.colData, a.base.colOS, normStr);
+      if(!contagem.ok) throw new Error(contagem.erro);
+      const r = await Api.call({ acao:"bases_dias", base:a.base.base, de:contagem.minDia });
+      if(!r || !r.ok) throw new Error((r && r.erro) || "O servidor não devolveu o resumo da base.");
+      plano = { contagem, r, res: ConferenciaRapida.planejar(contagem, r, false) };
+    }catch(e){
+      st.enviando = false; this.desenharPreview();
+      toast("Não foi possível conferir com a base", "error", { sub:String(e.message||e).slice(0,140) });
+      return;
+    }
+    st.enviando = false; this.desenharPreview();
+    const res = plano.res;
+    if(!res.pode){ toast("Nada novo para gravar", "info", { sub:`As linhas de tipo ${v} já estão na base (mesma quantidade por dia, ou mais).` }); return; }
+    const erroEsp = this.conferirEspaco(a.base.base, res.aGravar, res.removidas);
+    if(erroEsp){ toast("Sem espaço na base", "error", { sub:erroEsp }); return; }
+    const partes = [];
+    if(res.novos.n) partes.push(`${n(res.novos.linhas)} linha(s) de ${res.novos.n} dia(s) novo(s) (${F(res.novos.de)}${res.novos.n>1?" a "+F(res.novos.ate):""})`);
+    if(res.substituir.length) partes.push(`${res.substituir.length} dia(s) refeito(s) (${n(res.removidas)} linha(s) antigas trocadas pelas do arquivo)`);
+    if(!confirm(`Gravar SÓ o tipo ${v} na base ${a.base.base}?\n\nSerão gravadas ${n(res.aGravar)} linha(s): ${partes.join(" + ")}.\nFicam de fora: ${n(t.nOutros)} linha(s) de outros tipos${t.ultima.eTotal?" e a linha de total":""}.`)) return;
+    const a2 = Object.assign({}, a, { linhas:t.linhasTipo, contagem:plano.contagem, sim:null });
+    this.enfileirar({ tipo:"rapido", base:a.base.base, nome:`${a.nome} (só tipo ${v})`, total:res.aGravar, a:a2, q:{ base:plano.r, forcar:false, res, linhasTotal:plano.r.linhasTotal } });
+  },
+
   // ---- conferência por dia: compara só os dias que o arquivo e a base têm em comum ----
   async conferirRapido(){
     const st = this.basesState, a = st.arq;
     if(!a || st.enviando) return;
+    if(this.bloqueadoPorTipo(a)){ this.avisarBloqueio(a); return; }
     a.rapido = { carregando:true }; a.ultimaVerif = "rapido";
     this.desenharPreview();
     try{
@@ -490,6 +626,7 @@ const AdminUI = {
   enviarRapido(){
     const st = this.basesState, a = st.arq, q = a && a.rapido, r = q && q.res;
     if(!a || !r || !r.pode || st.enviando) return;
+    if(this.bloqueadoPorTipo(a)){ this.avisarBloqueio(a); return; }
     const erroEsp = this.conferirEspaco(a.base.base, r.aGravar, r.removidas);
     if(erroEsp){ toast("Sem espaço na base", "error", { sub:erroEsp }); return; }
     const aviso = r.substituir.length ? `\n\nATENÇÃO: ${r.substituir.length} dia(s) já existem na base e serão refeitos com as linhas do arquivo (${r.removidas.toLocaleString("pt-BR")} linha(s) antigas saem).` : "";
@@ -533,6 +670,7 @@ const AdminUI = {
   async enviar(simular, semConferir){
     const st = this.basesState, a = st.arq;
     if(!a || st.enviando) return;
+    if(this.bloqueadoPorTipo(a)){ this.avisarBloqueio(a); return; }
     if(!simular){
       if(semConferir && !confirm(`⚠ GRAVAR SEM CONFERIR\n\nO arquivo ainda não foi verificado. ${a.base.modo==="substituir" ? "No modo SUBSTITUIR a base atual será APAGADA e trocada pelo arquivo." : "No modo AGREGAR o servidor ignora linhas repetidas, mas você não verá o resumo antes."}\n\nContinuar?`)) return;
       if(!semConferir && !confirm(a.base.modo==="substituir"
