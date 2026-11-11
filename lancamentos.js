@@ -1326,9 +1326,11 @@ const LancUI = {
       <div class="adm-form">
         <label>Matrícula<input type="text" id="qd-mat" inputmode="numeric" list="dl-qd" autocomplete="off"></label>
         <label>Nome<input type="text" id="qd-nome"></label>
+        <label>Cargo<span class="qd-cargo"><select id="qd-cargo"><option value="">— selecione —</option></select><button type="button" class="btn btn-outline btn-sm" id="qd-cargo-mais" title="Cadastrar um cargo novo">+ Novo cargo</button></span></label>
         <label>Ativo (automático)<input type="text" id="qd-ativo" readonly value="Sim"></label>
         <label>Data de contratação<input type="date" id="qd-adm" value="${this.hojeISO()}"></label>
       </div>
+      <div id="qd-cargo-novo" class="qd-cargo-novo" style="display:none"><input type="text" id="qd-cargo-txt" maxlength="30" placeholder="Nome do novo cargo (ex.: Op. Reposição)"><button type="button" class="btn btn-primary btn-sm" id="qd-cargo-ok">Adicionar</button><button type="button" class="btn btn-outline btn-sm" id="qd-cargo-x">Cancelar</button></div>
       ${this.datalistPessoas("dl-qd", false)}
       <fieldset class="adm-fs"><legend>Saída do quadro (preencha só se a pessoa saiu)</legend>
         <div class="adm-form">
@@ -1412,8 +1414,29 @@ const LancUI = {
     });
     $$("qd-frem").addEventListener("click", ()=>{ this.qd.foto = ""; mostrarFoto(); });
     $$("qd-mat").addEventListener("input", ()=>{ if(!this.qd.editar && this.qd.foto === undefined) mostrarFoto(); });
+    const normC = t=> String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9]/g,"").toUpperCase();
+    this.qd.cargos = this.qd.cargos || ["Líder","Auxiliar","Auditor","Repositor"];
+    /** preenche a lista de cargos e escolhe o valor (compara sem acento/maiúscula: "REPOSITOR" = "Repositor") */
+    const cargosSel = (valor)=>{
+      const sel = $$("qd-cargo"), v = String(valor||"").trim();
+      const lista = this.qd.cargos.slice(); if(v && !lista.some(c=>normC(c) === normC(v))) lista.push(v);
+      sel.innerHTML = `<option value="">— selecione —</option>` + lista.map(c=>`<option value="${this.h(c)}">${this.h(c)}</option>`).join("");
+      const ach = lista.find(c=>normC(c) === normC(v)); sel.value = ach || "";
+    };
+    cargosSel("");
+    const cargoNovo = (on)=>{ $$("qd-cargo-novo").style.display = on ? "" : "none"; if(on){ $$("qd-cargo-txt").value = ""; $$("qd-cargo-txt").focus(); } };
+    $$("qd-cargo-mais").addEventListener("click", ()=> cargoNovo($$("qd-cargo-novo").style.display === "none"));
+    $$("qd-cargo-x").addEventListener("click", ()=> cargoNovo(false));
+    const cargoAdd = async ()=>{
+      const nome = $$("qd-cargo-txt").value.trim(); if(!nome) return;
+      const r = await this.enviar($$("qd-cargo-ok"), { acao:"lanc_cargo_add", nome });
+      if(!r || !r.ok) return this.aviso("qd-msg", "erro", this.h((r && r.erro) || "Não foi possível adicionar o cargo."));
+      this.qd.cargos = r.cargos; cargosSel(r.cargo || nome); cargoNovo(false); this.aviso("qd-msg", "ok", `Cargo <strong>${this.h(r.cargo || nome)}</strong> adicionado e selecionado.`);
+    };
+    $$("qd-cargo-ok").addEventListener("click", cargoAdd);
+    $$("qd-cargo-txt").addEventListener("keydown", e=>{ if(e.key === "Enter"){ e.preventDefault(); cargoAdd(); } });
     const limpar = ()=>{
-      this.qd.editar = null; this.qd.foto = undefined; mostrarFoto();
+      this.qd.editar = null; this.qd.foto = undefined; mostrarFoto(); cargosSel(""); cargoNovo(false);
       ["qd-mat","qd-nome","qd-obs","qd-desl","qd-transf","qd-setor","qd-enc"].forEach(id=> $$(id).value = "");
       $$("qd-adm").value = this.hojeISO(); $$("qd-tipo").value = ""; $$("qd-motivo").value = "";
       $$("qd-titulo").textContent = "Nova contratação"; $$("qd-novo").style.display = "none"; $$("qd-mat").readOnly = false; atualizarAtivo();
@@ -1424,15 +1447,15 @@ const LancUI = {
       const q = this.qd.busca.toLowerCase();
       const rows = this.qd.pessoas.filter(p=> (this.qd.mostrarInativos || p.ativo) && (!q || (p.mat+" "+p.nome).toLowerCase().includes(q)))
         .sort((a,b)=> (b.ativo - a.ativo) || a.nome.localeCompare(b.nome));
-      $$("qd-lista").innerHTML = rows.length ? `<table class="adm-table"><thead><tr><th>Matrícula</th><th>Nome</th><th>Ativo</th><th>Tipo / Motivo</th><th>Contratação</th><th>Saída</th><th></th></tr></thead><tbody>
-        ${rows.map(p=>`<tr><td>${this.h(p.mat)}</td><td>${this.qd.fotos[chave(p.mat)] ? `<img class="qd-th" src="${this.qd.fotos[chave(p.mat)]}" alt="">` : ""}${this.h(p.nome)}</td><td><span class="adm-tag ${p.ativo ? "acc" : "off"}">${p.ativo ? "Sim" : "Não"}</span></td>
+      $$("qd-lista").innerHTML = rows.length ? `<table class="adm-table"><thead><tr><th>Matrícula</th><th>Nome</th><th>Cargo</th><th>Ativo</th><th>Tipo / Motivo</th><th>Contratação</th><th>Saída</th><th></th></tr></thead><tbody>
+        ${rows.map(p=>`<tr><td>${this.h(p.mat)}</td><td>${this.qd.fotos[chave(p.mat)] ? `<img class="qd-th" src="${this.qd.fotos[chave(p.mat)]}" alt="">` : ""}${this.h(p.nome)}</td><td>${this.h(p.cargo||"—")}</td><td><span class="adm-tag ${p.ativo ? "acc" : "off"}">${p.ativo ? "Sim" : "Não"}</span></td>
           <td>${this.h([p.tipo, p.motivo].filter(Boolean).join(" · "))}</td><td>${this.br(p.adm)}</td><td>${this.br(p.desl || p.transf || p.enc)}${p.setor ? " → " + this.h(p.setor) : ""}</td>
           <td><button type="button" class="btn btn-outline btn-sm" data-ed="${p.linha}">Editar</button></td></tr>`).join("")}</tbody></table>`
         : `<p class="small-muted">Nenhum registro.</p>`;
       $$("qd-lista").querySelectorAll("[data-ed]").forEach(b=> b.addEventListener("click", ()=>{
         const p = this.qd.pessoas.find(x=>x.linha === Number(b.dataset.ed)); if(!p) return;
         this.qd.editar = p.linha;
-        $$("qd-mat").value = p.mat; $$("qd-nome").value = p.nome; $$("qd-adm").value = p.adm; $$("qd-tipo").value = p.tipo; $$("qd-motivo").value = p.motivo;
+        $$("qd-mat").value = p.mat; $$("qd-nome").value = p.nome; $$("qd-adm").value = p.adm; $$("qd-tipo").value = p.tipo; $$("qd-motivo").value = p.motivo; cargosSel(p.cargo);
         $$("qd-desl").value = p.desl; $$("qd-transf").value = p.transf; $$("qd-setor").value = p.setor||""; $$("qd-enc").value = p.enc||""; $$("qd-obs").value = p.obs;
         $$("qd-titulo").textContent = "Editando " + p.nome; $$("qd-novo").style.display = ""; atualizarAtivo();
         this.qd.foto = undefined; mostrarFoto();
@@ -1442,7 +1465,7 @@ const LancUI = {
     const carregar = async ()=>{
       const r = await Api.call({ acao:"lanc_quadro_listar" }).catch(e=>({ ok:false, erro:e.message }));
       if(!r || !r.ok){ $$("qd-lista").innerHTML = `<div class="error-box">${this.h((r && r.erro) || "Falha ao carregar o quadro.")}</div>`; return; }
-      this.qd.pessoas = r.pessoas; lista();
+      this.qd.pessoas = r.pessoas; if(r.cargos) this.qd.cargos = r.cargos; cargosSel($$("qd-cargo").value); lista();
       Api.call({ acao:"tv_fotos_ler" }).then(f=>{ if(f && f.ok){ const m = {}; Object.keys(f.fotos||{}).forEach(k=>{ m[chave(k)] = f.fotos[k]; }); this.qd.fotos = m; lista(); mostrarFoto(); } }).catch(()=>{});
     };
     $$("qd-busca").addEventListener("input", ()=>{ this.qd.busca = $$("qd-busca").value; lista(); });
@@ -1450,7 +1473,7 @@ const LancUI = {
     $$("qd-salvar").addEventListener("click", async ()=>{
       this.aviso("qd-msg", "", ""); const matSalva = $$("qd-mat").value;
       const r = await this.enviar($$("qd-salvar"), { acao:"lanc_quadro_salvar", linha:this.qd.editar || 0, matric:$$("qd-mat").value, nome:$$("qd-nome").value.trim(),
-        tipo:$$("qd-tipo").value, motivo:$$("qd-motivo").disabled ? "" : $$("qd-motivo").value, obs:$$("qd-obs").value,
+        tipo:$$("qd-tipo").value, motivo:$$("qd-motivo").disabled ? "" : $$("qd-motivo").value, obs:$$("qd-obs").value, cargo:$$("qd-cargo").value,
         dtAdm:$$("qd-adm").value, dtDesl:$$("qd-desl").value, dtTransf:$$("qd-transf").value, setor:$$("qd-setor").value.trim(), dtEnc:$$("qd-enc").value });
       if(!r || !r.ok) return this.aviso("qd-msg", "erro", this.h((r && r.erro) || "Não foi possível salvar."));
       let fotoMsg = "";

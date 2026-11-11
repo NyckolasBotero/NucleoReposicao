@@ -954,3 +954,6 @@ body.sb-collapsed #sb-versao{ display:none; }
 
 #tv-root.previa{ inset:3vh 3vw; border-radius:18px; box-shadow:0 0 0 100vmax rgba(5,10,20,.72), 0 30px 80px rgba(0,0,0,.6); font-size:clamp(8px, min(.8vw, 1.45vh), 26px); }
 #btn-tv.tv-on{ background:#d64545; color:#fff; border-color:#d64545; } #btn-tv.tv-on svg{ color:#fff; }
+
+.qd-cargo{ display:flex; gap:8px; align-items:center; } .qd-cargo select{ flex:1; min-width:0; }
+.qd-cargo-novo{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:2px 0 12px; padding:10px 12px; border-radius:10px; background:rgba(120,140,170,.1); } .qd-cargo-novo input{ flex:1; min-width:200px; }

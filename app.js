@@ -1252,11 +1252,7 @@ const DataProcessor = {
 
       const cargoRaw = trimStr(getFieldFlexible(r, ["CARGO","Cargo"]));
       const cargoNorm = normStr(cargoRaw);
-      let cargo = null; // null = não informado / desconhecido
-      if(cargoNorm==="LIDER") cargo = "LIDER";
-      else if(cargoNorm==="AUXILIAR") cargo = "AUXILIAR";
-      else if(cargoNorm==="REPOSITOR") cargo = "REPOSITOR";
-      else if(cargoRaw!=="") cargo = "OUTRO"; // valor presente mas fora do padrão esperado
+      const cargo = cargoDeTexto(cargoRaw); // null = não informado / desconhecido
 
       return {
         _row: idx, data, codigo, nome,
@@ -1386,6 +1382,7 @@ const DataProcessor = {
       if(!matric && !nome) return null;
       return {
         matric, nome, ativo, tipo, motivo, obs,
+        cargoRaw: trimStr(getFieldFlexible(r,["CARGO","Cargo"])||""),
         dtAdm: dtAdmInvalida ? null : dtAdm,
         dtAdmInvalida,
         dtDesl: dtDesl && dtDesl.getFullYear()>1900 ? dtDesl : null,
@@ -1627,6 +1624,14 @@ const DataProcessor = {
 /* ---------------------------------------------------------------------- */
 /* MODULE: Current Team                                                    */
 /* ---------------------------------------------------------------------- */
+/** classifica o texto do cargo: LIDER / AUXILIAR / REPOSITOR (inclui "Op. Reposição") / OUTRO (ex.: Auditor) / null (vazio) */
+function cargoDeTexto(raw){
+  const n = normStr(trimStr(raw||"")); if(!n) return null;
+  if(n==="LIDER") return "LIDER";
+  if(n==="AUXILIAR") return "AUXILIAR";
+  if(/^(REPOSITOR(A)?|OP\.?\s*REPOSICAO|OPERADOR(A)?\s*(DE\s*)?REPOSICAO)$/.test(n)) return "REPOSITOR";
+  return "OUTRO";
+}
 const CurrentTeam = {
   compute(processed){
     const quadro = processed.quadro;
@@ -1654,6 +1659,9 @@ const CurrentTeam = {
       });
     }
 
+    // o cargo do cadastro (aba TURNOVER, preenchido em Lançar Quadro) vale mais que o da chamada
+    const cargoCad = new Map((processed.turnover||[]).filter(t=>t.codKey && t.cargoRaw).map(t=>[t.codKey, t.cargoRaw]));
+    if(cargoCad.size) members = members.map(m=>{ const c = cargoCad.get(m.codKey); return c ? { ...m, cargoRaw:c, cargo:cargoDeTexto(c) } : m; });
     const cargoDisponivel = !!processed.cargoDisponivel;
     const cargoCounts = { LIDER:0, AUXILIAR:0, REPOSITOR:0, OUTRO:0, NAO_INFORMADO:0 };
     members.forEach(m=>{
@@ -5657,7 +5665,7 @@ function renderQuadro(){
     : `<div class="hint-box">📊 Exibindo <strong>todo o histórico</strong> de O.S. 58, Missões, Feedbacks e Comissão. Use o filtro de data para restringir a um período (ex: mês atual).</div>`;
 
   const cargoLabel = { LIDER:"Líder", AUXILIAR:"Auxiliar", REPOSITOR:"Repositor" };
-  const cargoTag = (c) => c ? `<span class="tag-${c==='REPOSITOR'?'neutral':c==='LIDER'?'warn':'pos'}">${cargoLabel[c]||c}</span>` : `<span class="small-muted">—</span>`;
+  const cargoTag = (c, raw) => c ? `<span class="tag-${c==='REPOSITOR'?'neutral':c==='LIDER'?'warn':'pos'}">${c==='OUTRO' && raw ? escapeHtml(raw) : (cargoLabel[c]||c)}</span>` : `<span class="small-muted">—</span>`;
 
   pane.innerHTML = `
     <div class="toolbar">
@@ -5705,7 +5713,7 @@ function renderQuadro(){
         </tr></thead>
         <tbody>
           ${rows.map(r=>`<tr class="clickable" onclick="showEmployeeSummary('${r.codKey}')">
-            <td>${r.cod||'-'}</td><td>${escapeHtml(r.nome)}</td><td>${cargoTag(r.cargo)}</td><td>${escapeHtml(r.status)}</td>
+            <td>${r.cod||'-'}</td><td>${escapeHtml(r.nome)}</td><td>${cargoTag(r.cargo, r.cargoRaw)}</td><td>${escapeHtml(r.status)}</td>
             <td>${r.feedbacks}</td>
             <td class="${r.advertencias>0?'cell-neg':''}">${r.advertencias}</td>
             ${quadroShowComissao?`<td><strong>${fmtBRL(r.comissao)}</strong></td>`:''}
