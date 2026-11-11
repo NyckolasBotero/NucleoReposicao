@@ -4,9 +4,14 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.13.0";
+const APP_VERSAO = "2.14.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.14.0", data:"2026-11-11", titulo:"Cargo no Lançar Quadro", itens:[
+    "Lançar Quadro: novo campo Cargo (Líder, Auxiliar, Auditor, Repositor) no cadastro e na edição, com o botão '+ Novo cargo' para criar outros.",
+    "O cargo do cadastro (aba TURNOVER, coluna CARGO) vale mais que o da chamada. 'Op. Reposição' conta como Repositor; Auditor e outros cargos ficam fora do ranking de repositores.",
+    "Requer atualizar o código do Apps Script (nova versão da implantação). A coluna CARGO é criada sozinha na aba TURNOVER."
+  ] },
   { v:"2.13.0", data:"2026-11-10", titulo:"Painel TV em janela própria, prévia e comparações justas", itens:[
     "O botão Painel TV agora abre o painel em uma nova janela (o computador continua livre). Com a janela aberta, o botão vira 'Encerrar painel'; a janela também tem o botão 'Encerrar painel'. Se houver 2ª tela, a janela vai para ela.",
     "Administração > Parâmetros Painel TV: botão 'Prévia' mostra como o painel vai ficar com as opções atuais, sem gravar.",

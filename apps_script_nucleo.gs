@@ -1074,7 +1074,7 @@ const SUB_DA_ACAO = {
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
   lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
-  lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro', lanc_quadro_foto: 'Lançar Quadro',
+  lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro', lanc_quadro_foto: 'Lançar Quadro', lanc_cargo_add: 'Lançar Quadro',
   lanc_missao_salvar: 'Lançar Missões', lanc_capacidade_salvar: 'Lançar Capacidade'
 };
 const LISTA_DA_SUB = { SETOR_COLETOR: 'Controle de Coletores', STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar Avaria 9712', MOTIVO_FEEDBACK: 'Lançar Feedback', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
@@ -1118,6 +1118,7 @@ function lancamento(d, s) {
     case 'lanc_quadro_listar': return quadroListar();
     case 'lanc_quadro_salvar': return quadroSalvar(d, s);
     case 'lanc_quadro_foto': return quadroFoto(d, s);
+    case 'lanc_cargo_add': return quadroCargoAdd(d, s);
     case 'lanc_missao_salvar': return missaoSalvar(d, s);
     case 'lanc_capacidade_salvar': return capacidadeSalvar(d, s);
   }
@@ -1274,7 +1275,7 @@ const ALIAS_TURN = {
   obs: ['OBS', 'OUTRAS OBS', 'OBSERVACAO'], adm: ['DATA CONTRATACAO', 'DATA CONTRATA', 'DATA ADMISSAO', 'DT ADMISSAO', 'ADMISSAO'],
   desl: ['DATA DESLIGAMENTO', 'DT DESLIGAMENTO', 'DESLIGAMENTO', 'DEMISSAO'],
   transf: ['DATA TRANSFERENCIA', 'DT TRANSFERENCIA'],
-  enc: ['DATA ENCOSTAMENTO', 'ENCOSTAMENTO', 'DATA ENCOSTAMENTO INSS'], setor: ['SETOR DESTINO', 'SETOR']
+  enc: ['DATA ENCOSTAMENTO', 'ENCOSTAMENTO', 'DATA ENCOSTAMENTO INSS'], setor: ['SETOR DESTINO', 'SETOR'], cargo: ['CARGO']
 };
 
 function lerTurnover() {
@@ -1290,7 +1291,8 @@ function lerTurnover() {
       ativo: idx.ativo >= 0 && ['SIM', 'S', 'TRUE', '1'].indexOf(normalizar(l[idx.ativo])) >= 0,
       tipo: idx.tipo >= 0 ? texto(l[idx.tipo]) : '', motivo: idx.motivo >= 0 ? texto(l[idx.motivo]) : '', obs: idx.obs >= 0 ? texto(l[idx.obs]) : '',
       adm: idx.adm >= 0 ? chaveData(l[idx.adm]) : '', desl: idx.desl >= 0 ? chaveData(l[idx.desl]) : '', transf: idx.transf >= 0 ? chaveData(l[idx.transf]) : '',
-      enc: idx.enc >= 0 ? chaveData(l[idx.enc]) : '', setor: idx.setor >= 0 ? texto(l[idx.setor]) : ''
+      enc: idx.enc >= 0 ? chaveData(l[idx.enc]) : '', setor: idx.setor >= 0 ? texto(l[idx.setor]) : '',
+      cargo: idx.cargo >= 0 ? texto(l[idx.cargo]) : ''
     });
   });
   return { info: info, idx: idx, pessoas: out };
@@ -2006,6 +2008,7 @@ function chamadaDia(d) {
 function gravarChamada(itens) {
   const q = infoQuadro(), c = q.c, sh = q.info.sh;
   const linhas = lerLinhas(q.info), indice = {}, cargo = {};
+  let cargoCad = {}; try { lerTurnover().pessoas.forEach(function (p) { if (p.cargo && p.mat) cargoCad[soDigitos(p.mat)] = p.cargo; }); } catch (e) { cargoCad = {}; }
   linhas.forEach(function (l, i) {
     const k = chaveData(l[c.data]) + '|' + soDigitos(l[c.cod]);
     indice[k] = i + 2;
@@ -2022,7 +2025,7 @@ function gravarChamada(itens) {
     } else {
       const l = new Array(q.info.ult).fill('');
       l[c.data] = isoParaData(it.data); l[c.cod] = mat; if (c.nome >= 0) l[c.nome] = texto(it.nome); l[c.status] = st;
-      if (c.cargo >= 0 && cargo[mat]) l[c.cargo] = cargo[mat];
+      if (c.cargo >= 0 && (cargoCad[mat] || cargo[mat])) l[c.cargo] = cargoCad[mat] || cargo[mat];
       novas.push(l); indice[k] = -1; criadas++;
     }
   });
@@ -2069,7 +2072,28 @@ function chamadaLote(d, s) {
 
 /* ---------- Quadro (aba TURNOVER) ---------- */
 
-function quadroListar() { const t = lerTurnover(); return { ok: true, pessoas: t.pessoas }; }
+/** Cargos disponíveis no cadastro do quadro: padrão + os adicionados pelo usuário + os já usados na aba TURNOVER. */
+const CARGOS_PADRAO = ['Líder', 'Auxiliar', 'Auditor', 'Repositor'];
+function cargosLista(pessoas) {
+  const salvos = alertasLerChave('cargos'), out = [], vistos = {};
+  CARGOS_PADRAO.concat(Array.isArray(salvos) ? salvos : [], (pessoas || []).map(function (p) { return p.cargo; })).forEach(function (c) {
+    c = texto(c); const k = normalizar(c); if (c && !vistos[k]) { vistos[k] = 1; out.push(c); }
+  });
+  return out;
+}
+function quadroListar() { const t = lerTurnover(); return { ok: true, pessoas: t.pessoas, cargos: cargosLista(t.pessoas) }; }
+function quadroCargoAdd(d, s) {
+  const nome = texto(d.nome).replace(/\s+/g, ' ');
+  if (!nome) throw new Error('Digite o nome do cargo.');
+  if (nome.length > 30) throw new Error('Nome de cargo muito longo (máximo 30 letras).');
+  const atuais = cargosLista(lerTurnover().pessoas), k = normalizar(nome);
+  const ja = atuais.filter(function (c) { return normalizar(c) === k; })[0];
+  if (ja) return { ok: true, cargos: atuais, cargo: ja };
+  const salvos = alertasLerChave('cargos'); const lista = Array.isArray(salvos) ? salvos.slice() : [];
+  lista.push(nome); alertasGravarChave('cargos', lista);
+  registrarLog(s, 'Quadro (cargo)', 'novo cargo: ' + nome);
+  return { ok: true, cargos: atuais.concat([nome]), cargo: nome };
+}
 
 function quadroSalvar(d, s) {
   const t = lerTurnover(), info = t.info, sh = info.sh;
@@ -2099,13 +2123,14 @@ function quadroSalvar(d, s) {
     motivo: garantirCol(info, ALIAS_TURN.motivo, 'MOTIVO'), obs: garantirCol(info, ALIAS_TURN.obs, 'OBS'),
     adm: garantirCol(info, ALIAS_TURN.adm, 'DATA CONTRATAÇÃO'), desl: garantirCol(info, ALIAS_TURN.desl, 'DATA DESLIGAMENTO'),
     transf: garantirCol(info, ALIAS_TURN.transf, 'DATA TRANSFERÊNCIA'),
-    enc: garantirCol(info, ALIAS_TURN.enc, 'DATA ENCOSTAMENTO'), setor: garantirCol(info, ALIAS_TURN.setor, 'SETOR DESTINO')
+    enc: garantirCol(info, ALIAS_TURN.enc, 'DATA ENCOSTAMENTO'), setor: garantirCol(info, ALIAS_TURN.setor, 'SETOR DESTINO'),
+    cargo: garantirCol(info, ALIAS_TURN.cargo, 'CARGO')
   };
   const l = new Array(info.ult).fill('');
   if (linhaEd) { const atual = sh.getRange(linhaEd, 1, 1, info.ult).getValues()[0]; for (let i = 0; i < atual.length; i++) l[i] = atual[i]; }
   l[c.mat] = mat; l[c.nome] = nome; l[c.ativo] = ativo ? 'Sim' : 'Não'; l[c.tipo] = tipo; l[c.motivo] = motivo; l[c.obs] = obs;
   l[c.adm] = dtAdm ? isoParaData(dtAdm) : ''; l[c.desl] = dtDesl ? isoParaData(dtDesl) : ''; l[c.transf] = dtTransf ? isoParaData(dtTransf) : '';
-  l[c.enc] = dtEnc ? isoParaData(dtEnc) : ''; l[c.setor] = setor;
+  l[c.enc] = dtEnc ? isoParaData(dtEnc) : ''; l[c.setor] = setor; l[c.cargo] = texto(d.cargo);
   const n = linhaEd || (Math.max(sh.getLastRow(), 1) + 1);
   garantirTamanho(sh, n, info.ult);
   sh.getRange(n, 1, 1, info.ult).setValues([l]);
