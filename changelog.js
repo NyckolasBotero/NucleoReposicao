@@ -4,9 +4,17 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.14.0";
+const APP_VERSAO = "2.15.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.15.0", data:"2026-11-13", titulo:"Certificados", itens:[
+    "Lançamentos > Certificados: editor de certificado A4 com visualização ao vivo, download em PNG e PDF e lançamento no histórico (aba CERTIFICADOS), com opção de reabrir um certificado lançado.",
+    "Ao escolher o colaborador do quadro, o grupo de modelos vem do cargo: Repositor (12 modelos), Recuperação (10) e Auxiliar/Gestão (10). Cada modelo preenche o texto, a palavra em destaque e o selo.",
+    "Personalização: 5 layouts, 6 temas de cor, cores livres, fontes, tamanhos, logo (posição, tamanho, marca d'água ou outra imagem), ordem do rodapé, nome do assinante, local e data.",
+    "Selo por período (funcionário do mês, semana, trimestre, semestre, ano, especial ou texto livre) com 5 estilos e 14 ícones; medalhas, louros e faixa nas laterais.",
+    "Novo cargo padrão 'Recuperação' no Lançar Quadro. A tela Certificados aparece para quem administra os Acessos; para os demais, dê a permissão 'Certificados' em Lançamentos.",
+    "Requer atualizar o código do Apps Script (nova versão da implantação)."
+  ] },
   { v:"2.14.0", data:"2026-11-11", titulo:"Cargo no Lançar Quadro", itens:[
     "Lançar Quadro: novo campo Cargo (Líder, Auxiliar, Auditor, Repositor) no cadastro e na edição, com o botão '+ Novo cargo' para criar outros.",
     "O cargo do cadastro (aba TURNOVER, coluna CARGO) vale mais que o da chamada. 'Op. Reposição' conta como Repositor; Auditor e outros cargos ficam fora do ranking de repositores.",

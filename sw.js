@@ -1,6 +1,6 @@
 /* Núcleo Reposição – funcionamento como aplicativo (PWA) */
 const VERSION = 'nucleo-v3';
-const CORE = ['./', './index.html', './app.js', './changelog.js', './comissao.js', './admin.js', './alertas.js', './painel_tv.js', './design.js', './design.css', './feedbacks.js', './nc.js', './fbdocs.js', './retornos.js', './lancamentos.js', './coletores.js', './devolucao.js', './scanner.js', './manifest.json', './icon-192.png', './icon-512.png', './logo.png', './logo-branco.png'];
+const CORE = ['./', './index.html', './app.js', './changelog.js', './comissao.js', './admin.js', './alertas.js', './painel_tv.js', './certificados_modelos.js', './certificados.js', './design.js', './design.css', './feedbacks.js', './nc.js', './fbdocs.js', './retornos.js', './lancamentos.js', './coletores.js', './devolucao.js', './scanner.js', './manifest.json', './icon-192.png', './icon-512.png', './logo.png', './logo-branco.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {

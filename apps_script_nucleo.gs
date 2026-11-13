@@ -26,7 +26,7 @@ const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
-const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias'];
+const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias', 'Certificados'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
 const ABA_ADVERTENCIAS = 'ADVERTÊNCIAS';
@@ -1074,7 +1074,7 @@ const SUB_DA_ACAO = {
   lanc_ferias_listar: 'Lançar Férias', lanc_ferias_salvar: 'Lançar Férias', lanc_ferias_cancelar: 'Lançar Férias',
   lanc_anexo_ler: null,
   lanc_chamada_dia: 'Lançar Chamada', lanc_chamada_salvar: 'Lançar Chamada', lanc_chamada_lote: 'Lançar Chamada',
-  lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro', lanc_quadro_foto: 'Lançar Quadro', lanc_cargo_add: 'Lançar Quadro',
+  lanc_quadro_listar: 'Lançar Quadro', lanc_quadro_salvar: 'Lançar Quadro', lanc_quadro_foto: 'Lançar Quadro', lanc_cargo_add: 'Lançar Quadro', lanc_cert_lancar: 'Certificados', lanc_cert_listar: 'Certificados',
   lanc_missao_salvar: 'Lançar Missões', lanc_capacidade_salvar: 'Lançar Capacidade'
 };
 const LISTA_DA_SUB = { SETOR_COLETOR: 'Controle de Coletores', STATUS_CHAMADA: 'Lançar Chamada', TIPO_REP_AVARIA: 'Lançar Avaria 9712', MOTIVO_FEEDBACK: 'Lançar Feedback', MOTIVO_DESLIGAMENTO: 'Lançar Quadro', TIPO_DESLIGAMENTO: 'Lançar Quadro', TIPO_MISSAO: 'Lançar Missões' };
@@ -1119,6 +1119,8 @@ function lancamento(d, s) {
     case 'lanc_quadro_salvar': return quadroSalvar(d, s);
     case 'lanc_quadro_foto': return quadroFoto(d, s);
     case 'lanc_cargo_add': return quadroCargoAdd(d, s);
+    case 'lanc_cert_lancar': return certLancar(d, s);
+    case 'lanc_cert_listar': return certListar();
     case 'lanc_missao_salvar': return missaoSalvar(d, s);
     case 'lanc_capacidade_salvar': return capacidadeSalvar(d, s);
   }
@@ -2072,8 +2074,32 @@ function chamadaLote(d, s) {
 
 /* ---------- Quadro (aba TURNOVER) ---------- */
 
+/* ---------- Certificados (histórico dos certificados lançados) ---------- */
+const ABA_CERT = 'CERTIFICADOS';
+function certSheet() { return abaComCabecalho(ABA_CERT, ['Lançado em', 'Matrícula', 'Nome', 'Cargo', 'Grupo', 'Modelo', 'Destaque', 'Selo', 'Lançado por', 'Configuração']); }
+function certLancar(d, s) {
+  const mat = soDigitos(d.matric), nome = texto(d.nome);
+  if (!mat || !nome) throw new Error('Selecione o colaborador do quadro.');
+  const cfg = String(d.config || '');
+  if (cfg.length > 45000) throw new Error('Configuração grande demais.');
+  const sh = certSheet(), n = Math.max(sh.getLastRow(), 1) + 1, agora = Utilities.formatDate(new Date(), tzPadrao(), 'dd/MM/yyyy HH:mm');
+  sh.getRange(n, 1, 1, 10).setNumberFormat('@').setValues([[agora, mat, nome, texto(d.cargo), texto(d.grupo), texto(d.modelo), texto(d.destaque), texto(d.selo), (s && (s.nome || s.matricula)) || '', cfg]]);
+  registrarLog(s, 'Certificado', mat + ' ' + nome + ' · ' + texto(d.modelo));
+  return { ok: true };
+}
+function certListar() {
+  const sh = certSheet(), ult = sh.getLastRow(), itens = [];
+  if (ult >= 2) {
+    const ini = Math.max(2, ult - 199);
+    sh.getRange(ini, 1, ult - ini + 1, 10).getValues().forEach(function (r) {
+      itens.push({ quando: String(r[0]), mat: String(r[1]), nome: String(r[2]), cargo: String(r[3]), grupo: String(r[4]), modelo: String(r[5]), destaque: String(r[6]), selo: String(r[7]), por: String(r[8]), config: String(r[9]) });
+    });
+  }
+  return { ok: true, itens: itens.reverse() };
+}
+
 /** Cargos disponíveis no cadastro do quadro: padrão + os adicionados pelo usuário + os já usados na aba TURNOVER. */
-const CARGOS_PADRAO = ['Líder', 'Auxiliar', 'Auditor', 'Repositor'];
+const CARGOS_PADRAO = ['Líder', 'Auxiliar', 'Auditor', 'Repositor', 'Recuperação'];
 function cargosLista(pessoas) {
   const salvos = alertasLerChave('cargos'), out = [], vistos = {};
   CARGOS_PADRAO.concat(Array.isArray(salvos) ? salvos : [], (pessoas || []).map(function (p) { return p.cargo; })).forEach(function (c) {
