@@ -973,3 +973,32 @@ body.sb-collapsed #sb-versao{ display:none; }
 .ct-lays{ display:flex; flex-wrap:wrap; gap:6px; } .ct-lays button{ padding:7px 11px; border-radius:999px; border:1px solid #c5cfdb; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:.86em; } .ct-lays button.on{ background:#2150a8; border-color:#2150a8; color:#fff; }
 .ct-tema{ display:inline-flex; align-items:center; gap:5px; } .ct-tema i{ width:12px; height:12px; border-radius:50%; display:inline-block; }
 @media (max-width:1100px){ .ct-wrap{ grid-template-columns:1fr; } .ct-pv{ position:static; order:-1; } .ct-ed{ max-height:none; } }
+
+/* ---------- Gestão > Atribuição Ruas ---------- */
+.rs-bar{ display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; margin:10px 0 12px; } .rs-bar label{ display:flex; flex-direction:column; gap:3px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--gray-500); } .rs-bar select{ padding:6px 10px; border:1px solid var(--gray-200); border-radius:8px; background:var(--white); color:var(--ink); font-size:13px; font-weight:600; text-transform:none; letter-spacing:0; }
+.rs-zoom{ display:inline-flex; gap:6px; } .rs-dica{ margin-left:auto; }
+.rs-main{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
+.rs-mapwrap{ overflow:auto; border:1px solid var(--gray-200); border-radius:12px; background:var(--gray-50); max-height:calc(100vh - 210px); }
+.rs-svg{ display:block; min-width:520px; user-select:none; font-family:inherit; }
+.rs-out{ fill:var(--white); stroke:var(--gray-300); stroke-width:3; }
+.rs-rua{ cursor:pointer; } .rs-rua rect{ stroke:rgba(0,0,0,.28); stroke-width:1.5; transition:filter .12s; } .rs-rua:hover rect{ filter:brightness(1.12); stroke-width:3; }
+.rs-rua.vazia rect{ fill:var(--gray-100); stroke:var(--gray-300); stroke-dasharray:6 5; } .rs-rua.vazia text{ fill:var(--gray-500); }
+.rs-rua.sel rect{ stroke:#2f6fce; stroke-width:5; stroke-dasharray:none; filter:drop-shadow(0 0 8px rgba(47,111,206,.8)); }
+.rs-rua text{ fill:#fff; pointer-events:none; } .rs-n{ font-size:17px; font-weight:800; } .rs-nm{ font-size:15px; font-weight:700; } .rs-q{ font-size:13px; font-weight:700; }
+.rs-lbl{ fill:var(--gray-500); font-size:15px; font-weight:700; letter-spacing:.3px; }
+.rs-side{ min-width:0; } .rs-side h4{ margin:12px 0 6px; font-size:14px; }
+.rs-acoes{ display:flex; flex-wrap:wrap; gap:8px; }
+.rs-det{ margin-top:10px; border:1px solid var(--gray-200); border-radius:10px; padding:10px 12px; background:var(--gray-50); } .rs-det h4{ margin:0 0 6px; }
+.rs-rep{ margin-bottom:10px; } .rs-cards{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:6px 0; } .rs-c{ border:1px solid var(--gray-200); border-radius:8px; padding:5px 6px; background:var(--white); text-align:center; } .rs-c b{ display:block; font-size:9px; text-transform:uppercase; color:var(--gray-500); } .rs-c i{ font-style:normal; font-size:15px; font-weight:800; }
+.rs-tb{ max-height:300px; overflow:auto; } .rs-leg{ margin-top:8px; }
+.rs-menu{ position:fixed; z-index:9999; min-width:210px; background:var(--white); color:var(--ink); border:1px solid var(--gray-300); border-radius:10px; box-shadow:var(--shadow-lg); padding:6px; display:flex; flex-direction:column; }
+.rs-menu-h{ font-size:11px; font-weight:800; text-transform:uppercase; color:var(--gray-500); padding:4px 10px; } .rs-menu button{ text-align:left; background:none; border:0; color:inherit; font:inherit; font-size:13px; padding:8px 10px; border-radius:7px; cursor:pointer; } .rs-menu button:hover{ background:var(--blue-light); }
+.rs-mod{ display:flex; flex-direction:column; gap:10px; } .rs-mod input[type=text]{ padding:9px 12px; border:1px solid var(--gray-200); border-radius:8px; background:var(--white); color:var(--ink); font-size:14px; }
+.rs-chk{ font-size:12px; display:flex; align-items:center; gap:6px; }
+.rs-lista{ max-height:260px; overflow:auto; border:1px solid var(--gray-200); border-radius:10px; display:flex; flex-direction:column; }
+.rs-p{ display:flex; justify-content:space-between; gap:10px; align-items:center; text-align:left; padding:9px 12px; border:0; border-bottom:1px solid var(--gray-200); background:var(--white); color:var(--ink); font:inherit; font-size:13px; cursor:pointer; } .rs-p small{ color:var(--gray-500); } .rs-p:hover{ background:var(--blue-light); } .rs-p.on{ background:var(--blue-soft); outline:2px solid #2f6fce; outline-offset:-2px; }
+.rs-modo{ display:flex; flex-direction:column; gap:6px; font-size:13px; } .rs-modo label{ display:flex; gap:8px; align-items:flex-start; }
+.rs-dt{ margin-top:16px; border:1px solid var(--gray-200); border-radius:12px; padding:10px 14px; } .rs-dt summary{ cursor:pointer; font-weight:800; }
+.rs-hbar{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin:10px 0; } .rs-hbar label{ display:flex; flex-direction:column; gap:3px; font-size:11px; font-weight:700; text-transform:uppercase; color:var(--gray-500); } .rs-hbar select,.rs-hbar input{ padding:6px 10px; border:1px solid var(--gray-200); border-radius:8px; background:var(--white); color:var(--ink); }
+.rs-foto{ border:1px solid var(--gray-200); border-radius:10px; padding:10px; margin-bottom:12px; background:var(--gray-50); }
+@media (max-width:1100px){ .rs-main{ grid-template-columns:1fr; } .rs-mapwrap{ max-height:none; } .rs-dica{ margin-left:0; } }

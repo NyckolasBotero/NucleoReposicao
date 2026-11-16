@@ -4,9 +4,20 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.15.0";
+const APP_VERSAO = "2.16.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.16.0", data:"2026-11-16", titulo:"Atribuição Ruas e revisão das auditorias", itens:[
+    "Nova aba Gestão > Atribuição Ruas: mapa 2D do CD (ruas 1 a 49) com o repositor de cada rua, % qualidade de retornos, de ruas e geral, e a produção média (O.S. 58 por dia). Clique seleciona várias ruas (Shift+clique seleciona faixa) e o botão direito atribui um repositor a todas de uma vez (substituir, adicionar ou liberar).",
+    "Cada mudança grava data e hora no histórico (aba ATRIBUICAO_RUAS_HIST) e o sistema guarda uma foto diária do estado de todas as ruas (ATRIBUICAO_RUAS_DIA). O estado atual fica em ATRIBUICAO_RUAS e é copiado para a coluna Ruas da Quadro_Repositores da planilha de auditoria.",
+    "Correção: 'Atualizar dados' da Auditoria agora relê também Auditoria_Retorno, Rotina_Retorno e Quadro_Repositores (antes só relia a Auditoria de Ruas e os retornos ficavam velhos).",
+    "Correção: erros de retorno contam um a um (1 linha com erro = 1 NC), igual ao PDF da auditoria de retorno; antes eram agrupados por dia/rua (a Alice aparecia com 2 em vez de 5). Erro = Possui_NC ou divergência etiqueta × físico, em todas as telas.",
+    "Correção: Auditoria > Retornos por repositor usa as linhas do próprio repositor (auditados, erros, acuracidade e qualidade com o peso por rua) e respeita os filtros de rua, repositor e quadro atual.",
+    "Correção: a qualidade de ruas por repositor passa a incluir as auditorias impecáveis das ruas dele (quem respondia pela rua na data), e os filtros 'Repositor' e 'Somente quadro atual' não descartam mais essas auditorias.",
+    "Correção: PDF de feedback agora lê as bases de auditoria antes de montar e mostra Qualidade Ruas e Retornos do período escolhido (com erros e acuracidade). O Ranking de Repositores usa a mesma conta da Auditoria.",
+    "Quadro: o cargo lançado em Lançar Quadro também é gravado na aba QUADRO REP (coluna CARGO, criada se faltar) para aquele código e aparece como Repositor em Gestão > Quadro.",
+    "Requer atualizar o código do Apps Script (nova versão da implantação) e liberar 'Gestão > Atribuição Ruas' na planilha de acessos para quem for usar (administradores dos Acessos já veem). Para a foto diária automática, rode instalarGatilhoRuas uma vez no editor."
+  ] },
   { v:"2.15.0", data:"2026-11-13", titulo:"Certificados", itens:[
     "Lançamentos > Certificados: editor de certificado A4 com visualização ao vivo, download em PNG e PDF e lançamento no histórico (aba CERTIFICADOS), com opção de reabrir um certificado lançado.",
     "Ao escolher o colaborador do quadro, o grupo de modelos vem do cargo: Repositor (12 modelos), Recuperação (10) e Auxiliar/Gestão (10). Cada modelo preenche o texto, a palavra em destaque e o selo.",

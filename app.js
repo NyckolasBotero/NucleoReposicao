@@ -1662,7 +1662,8 @@ const CurrentTeam = {
     // o cargo do cadastro (aba TURNOVER, preenchido em Lançar Quadro) vale mais que o da chamada
     const cargoCad = new Map((processed.turnover||[]).filter(t=>t.codKey && t.cargoRaw).map(t=>[t.codKey, t.cargoRaw]));
     if(cargoCad.size) members = members.map(m=>{ const c = cargoCad.get(m.codKey); return c ? { ...m, cargoRaw:c, cargo:cargoDeTexto(c) } : m; });
-    const cargoDisponivel = !!processed.cargoDisponivel;
+    // cargo lançado em Lançar Quadro vale mesmo sem a coluna CARGO na QUADRO REP — desde que todo o quadro já tenha cargo (senão quem ficou sem cargo sumiria dos repositores)
+    const cargoDisponivel = !!processed.cargoDisponivel || (cargoCad.size > 0 && members.length > 0 && members.every(m=>m.cargo!==null && m.cargo!==undefined));
     const cargoCounts = { LIDER:0, AUXILIAR:0, REPOSITOR:0, OUTRO:0, NAO_INFORMADO:0 };
     members.forEach(m=>{
       if(!cargoDisponivel || m.cargo===null) cargoCounts.NAO_INFORMADO++;
@@ -2529,7 +2530,7 @@ const Audit = {
   },
 
   byRepositor(){
-    const rows = this.getRows().filter(r=>r.codKey);
+    const rows = this.rowsComResponsavel(this.getRows());
     const registry = window.APP_STATE.nameRegistry;
     const map = new Map();
     rows.forEach(r=>{
@@ -2806,14 +2807,43 @@ const AuditOnline = {
     const st = this.state;
     if(st.dataInicial){ const di=dateOnly(st.dataInicial); rows = rows.filter(r=>dateOnly(r.data)>=di); }
     if(st.dataFinal){ const df=dateOnly(st.dataFinal); rows = rows.filter(r=>dateOnly(r.data)<=df); }
+    return this.filtrarRepQuadro(rows, st);
+  },
+
+  // quem responde por uma auditoria: o repositor da linha (NC) ou, numa auditoria impecável da rua
+  // (sem ninguém apontado), quem era o responsável pela rua naquele dia (Atribuição Ruas / Quadro_Repositores)
+  respKeys(r){
+    if(r.codKey) return [r.codKey];
+    if(!r.impecavel || typeof RetornoQ==="undefined") return [];
+    return RetornoQ.responsaveisEm(r.rua, r.data).map(x=>x.codKey).filter(Boolean);
+  },
+  // Repositor e "Somente Quadro Atual": a auditoria impecável da rua não tem repositor na planilha — antes ela sumia
+  // desses filtros e a qualidade só enxergava as auditorias com erro (média sempre para baixo).
+  filtrarRepQuadro(rows, st){
     if(st.rua) rows = rows.filter(r=>String(r.rua)===String(st.rua));
-    if(st.repositor) rows = rows.filter(r=>r.codKey===st.repositor);
     if(st.auditor) rows = rows.filter(r=>r.auditor===st.auditor);
+    if(st.repositor) rows = rows.filter(r=>this.respKeys(r).includes(st.repositor));
     if(st.apenasQuadroAtual==="SIM"){
       const codes = window.APP_STATE.currentTeam ? window.APP_STATE.currentTeam.codes : null;
-      if(codes) rows = rows.filter(r=>r.codKey && codes.has(r.codKey));
+      if(codes) rows = rows.filter(r=>{
+        if(r.codKey) return codes.has(r.codKey);
+        if(!r.impecavel) return false;
+        const k = this.respKeys(r);
+        return !k.length || k.some(x=>codes.has(x));
+      });
     }
     return rows;
+  },
+
+  // linhas por repositor: a própria linha (NC) + as auditorias impecáveis das ruas dele (cópias com o codKey do responsável)
+  rowsComResponsavel(rows){
+    const out = [];
+    rows.forEach(r=>{
+      if(r.codKey){ out.push(r); return; }
+      if(!r.impecavel || typeof RetornoQ==="undefined") return;
+      RetornoQ.responsaveisEm(r.rua, r.data).forEach(x=>{ if(x.codKey) out.push({ ...r, codKey:x.codKey, nome:x.nome, cod:null, atribuida:true }); });
+    });
+    return out;
   },
 
   // "penalidade" de uma linha, em item-equivalentes: cada ocorrência de um critério
@@ -2849,13 +2879,7 @@ const AuditOnline = {
   qualidadeNoIntervalo(ini, fim){
     const st = this.state;
     let rows = (this.rows||[]).filter(r=>{ const d=dateOnly(r.data); return d>=ini && d<=fim; });
-    if(st.rua) rows = rows.filter(r=>String(r.rua)===String(st.rua));
-    if(st.repositor) rows = rows.filter(r=>r.codKey===st.repositor);
-    if(st.auditor) rows = rows.filter(r=>r.auditor===st.auditor);
-    if(st.apenasQuadroAtual==="SIM"){
-      const codes = window.APP_STATE.currentTeam ? window.APP_STATE.currentTeam.codes : null;
-      if(codes) rows = rows.filter(r=>r.codKey && codes.has(r.codKey));
-    }
+    rows = this.filtrarRepQuadro(rows, st);
     return this.qualidadeDe(rows);
   },
 
@@ -2864,7 +2888,7 @@ const AuditOnline = {
   // que precisam de um número "cru" e estável independente do que está selecionado
   // em Gestão > Auditoria no momento)
   qualidadePorRepositorNoIntervalo(ini, fim){
-    const rows = (this.rows||[]).filter(r=>{ const d=dateOnly(r.data); return d>=ini && d<=fim && r.codKey; });
+    const rows = this.rowsComResponsavel((this.rows||[]).filter(r=>{ const d=dateOnly(r.data); return d>=ini && d<=fim; }));
     const map = new Map();
     rows.forEach(r=>{ if(!map.has(r.codKey)) map.set(r.codKey, []); map.get(r.codKey).push(r); });
     const out = new Map();
@@ -3402,7 +3426,7 @@ const FeedbackDoc = {
           (employee.qualidade===null||employee.qualidade===undefined) ? '#7a8798' : employee.qualidade>=90 ? '#1a9c62' : employee.qualidade>=70 ? '#e08a1f' : '#d64545')}
         ${(employee.qualMeses||[]).map(q=>cardHtml("% Qualidade "+q.rot, q.qualidade!==null?fmtNum(q.qualidade,1)+'%':'Sem auditoria', q.auditorias+' auditoria(s)',
           q.qualidade===null ? '#7a8798' : q.qualidade>=90 ? '#1a9c62' : q.qualidade>=70 ? '#e08a1f' : '#d64545')).join("")}
-        ${cardHtml("% Qualidade Retornos (3m)", employee.retornoQual!==null&&employee.retornoQual!==undefined?fmtNum(employee.retornoQual,1)+'%':'Sem auditoria', (employee.retornoAud||0)+' auditoria(s) de retorno',
+        ${cardHtml("% Qualidade Retornos (3m)", employee.retornoQual!==null&&employee.retornoQual!==undefined?fmtNum(employee.retornoQual,1)+'%':'Sem auditoria', (employee.retornoAud||0)+' auditoria(s) · '+(employee.retornoErros||0)+' erro(s)',
           (employee.retornoQual===null||employee.retornoQual===undefined) ? '#7a8798' : employee.retornoQual>=90 ? '#1a9c62' : employee.retornoQual>=70 ? '#e08a1f' : '#d64545')}
       </div>
 
@@ -3606,6 +3630,8 @@ const FeedbackDoc = {
       return;
     }
     toast(`Gerando Termo de Feedback (PDF) — ${employees.length} funcionário(s)...`);
+    await FeedbackFolha.garantirBases();
+    employees = FeedbackFolha.atualizarEmps(employees);
 
     const containers = [];
     const savedEmp = Production.state.employees;
@@ -4040,7 +4066,8 @@ const UI = {
       { id:"cronograma", label:"Cronograma" },
       { id:"turnover", label:"Turnover" },
       { id:"ferias", label:"Férias" },
-      { id:"organograma", label:"Organograma" }
+      { id:"organograma", label:"Organograma" },
+      { id:"ruas", label:"Atribuição Ruas" }
     ],
     lancamentos: [
       { id:"lfeedback", label:"Lançar Feedback" },
@@ -4338,7 +4365,7 @@ const UI = {
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
       bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(), alertas: ()=>window.Alertas && Alertas.renderPane(), tv: ()=>window.PainelTV && PainelTV.renderPane(),
       lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
-      lcertificado: ()=>window.CertUI && CertUI.renderPane(),
+      lcertificado: ()=>window.CertUI && CertUI.renderPane(), ruas: ()=>window.RuasUI && RuasUI.renderPane(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };
     if(fns[pane]) fns[pane]();
@@ -5377,7 +5404,15 @@ function getFeedbackRankingData(){
     const fim = k===0 ? dateOnly(maxDate) : new Date(ini.getFullYear(), ini.getMonth()+1, 0);
     return { ini, fim, rot: MESES_CAP[ini.getMonth()]+"/"+String(ini.getFullYear()).slice(2), mapa: AuditOnline.qualidadePorRepositorNoIntervalo(ini, fim) };
   }) : [];
-  const retornoByEmp = (qIni && qFim && window.RetornoOnline) ? RetornoOnline.porRepositor(qIni, qFim) : new Map();
+  // retornos: mesma conta de Gestão > Auditoria (linhas do próprio repositor); sem ela pronta, cai na acuracidade simples
+  let retornoByEmp = new Map();
+  if(qIni && qFim){
+    if(window.RetornoQ && RetornoQ.dados && !(RetornoQ.dados.diag.falta||[]).length){
+      RetornoQ.porRepositor(qIni, qFim).forEach((v,k)=> retornoByEmp.set(k, { auditorias:v.auditados, erros:v.erros, qualidade:v.qualidade, acuracidade:v.acuracidade }));
+    } else if(window.RetornoOnline){
+      RetornoOnline.porRepositor(qIni, qFim).forEach((v,k)=> retornoByEmp.set(k, { auditorias:v.auditorias, erros:v.erros||0, qualidade:v.qualidade, acuracidade:v.qualidade }));
+    }
+  }
   const rows58 = processed.p8460.filter(r=>r.tipoos===58);
 
   // base de funcionários: quadro atual ou todo o histórico, conforme o toggle
@@ -5414,7 +5449,7 @@ function getFeedbackRankingData(){
     const ret = retornoByEmp.get(m.codKey);
     const qualMeses = mesesQ.map(x=>{ const a = x.mapa.get(m.codKey); return { rot:x.rot, auditorias:a?a.auditorias:0, qualidade:a&&a.qualidadeMedia!==null?a.qualidadeMedia:null }; });
     return {
-      qualMeses, retornoQual: ret && ret.qualidade!==null ? ret.qualidade : null, retornoAud: ret ? ret.auditorias : 0,
+      qualMeses, retornoQual: ret && ret.qualidade!==null ? ret.qualidade : null, retornoAud: ret ? ret.auditorias : 0, retornoErros: ret ? ret.erros : 0, retornoAcur: ret && ret.acuracidade!==undefined ? ret.acuracidade : null,
       codKey: m.codKey, cod: m.codigo, nome: registry.get(m.codKey)||m.nome,
       os3m, osUltimoMes, osSemana, osDia,
       auditorias: aud ? aud.auditorias : 0,
@@ -5467,7 +5502,7 @@ function renderFeedbackRankingPanel(){
           <thead><tr>
             <th style="width:30px;"><input type="checkbox" id="feedback-select-all" ${allSelected?'checked':''}></th>
             <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
-            <th>O.S. Último Dia</th><th>Auditorias (3m)</th>${(data[0]?data[0].qualMeses:[]).map(q=>`<th>Qualidade % ${q.rot}</th>`).join("")}<th>Qualidade % (média 3m)</th><th>Retornos % (3m)</th>
+            <th>O.S. Último Dia</th><th>Auditorias (3m)</th>${(data[0]?data[0].qualMeses:[]).map(q=>`<th>Qualidade % ${q.rot}</th>`).join("")}<th>Qualidade % (média 3m)</th><th>Retornos % (3m)</th><th>Acurac. retornos (3m)</th>
           </tr></thead>
           <tbody>
             ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployees.has(e.codKey)?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="toggleFeedbackEmployee('${escapeHtml(e.codKey)}')">
@@ -5481,8 +5516,9 @@ function renderFeedbackRankingPanel(){
               <td>${fmtNum(e.auditorias)}</td>
               ${e.qualMeses.map(q=>`<td>${q.qualidade!==null?fmtNum(q.qualidade,1)+'%':'-'}</td>`).join("")}
               <td><strong>${e.qualidade!==null?fmtNum(e.qualidade,1)+'%':'-'}</strong></td>
-              <td title="${e.retornoAud} auditoria(s) de retorno">${e.retornoQual!==null?fmtNum(e.retornoQual,1)+'%':'-'}</td>
-            </tr>`).join("") || '<tr><td colspan="13" class="small-muted">Nenhum repositor encontrado para os filtros selecionados.</td></tr>'}
+              <td title="${e.retornoAud} auditoria(s) de retorno · ${e.retornoErros} erro(s)${e.retornoAcur!=null?' · acuracidade '+fmtNum(e.retornoAcur,1)+'%':''}">${e.retornoQual!==null?fmtNum(e.retornoQual,1)+'%':'-'}</td>
+              <td title="conformes ÷ auditados — mesma conta do PDF da auditoria de retorno">${e.retornoAcur!=null?fmtNum(e.retornoAcur,1)+'%':'-'}${e.retornoAud?` <span class="small-muted">(${e.retornoErros} erro(s) em ${e.retornoAud})</span>`:''}</td>
+            </tr>`).join("") || '<tr><td colspan="14" class="small-muted">Nenhum repositor encontrado para os filtros selecionados.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -5537,6 +5573,9 @@ function renderFeedbacks(){
   }
   if(window.RetornoOnline && RetornoOnline.rows===null && !RetornoOnline.loading){
     RetornoOnline.load().then(()=> renderFeedbacksContent());
+  }
+  if(typeof RetornoQ!=="undefined" && !RetornoQ.dados && !RetornoQ.carregando && !RetornoQ.erro){
+    RetornoQ.carregar().then(()=> renderFeedbacksContent());
   }
   pane.innerHTML = `
     <div class="toolbar">
@@ -6295,6 +6334,13 @@ function renderChamada(){
 /* ---------------------------------------------------------------------- */
 /* RENDER: Auditoria (fonte online — Google Sheets)                        */
 /* ---------------------------------------------------------------------- */
+/** "Atualizar dados": relê Auditoria_Ruas, Auditoria_Retorno, Rotina_Retorno e Quadro_Repositores (antes só relia as ruas e os retornos ficavam velhos). */
+function audAtualizarTudo(){
+  const ps = [AuditOnline.load(true)];
+  if(typeof RetornoQ!=="undefined") ps.push(RetornoQ.carregar(true));
+  return Promise.all(ps.map(p=>Promise.resolve(p).catch(()=>{})));
+}
+
 function renderAuditoria(){
   const pane = $("#pane-auditoria");
   const st = AuditOnline.state;
@@ -6317,7 +6363,7 @@ function renderAuditoria(){
     pane.innerHTML = `<div class="warn-box">${statusBadge}<br><br>Nao foi possivel atualizar os dados da Auditoria. Verifique a conexao ou a disponibilidade da planilha online.<br><strong>${escapeHtml(AuditOnline.error)}</strong><br>
       Confira se o link do Google Sheets esta compartilhado como "Qualquer pessoa com o link pode visualizar".
       <div style="margin-top:10px;"><button class="btn btn-outline btn-sm" id="aud-retry">Tentar novamente</button></div></div>`;
-    $("#aud-retry").addEventListener("click", ()=>{ AuditOnline.load(true).then(()=>renderAuditoria()); });
+    $("#aud-retry").addEventListener("click", ()=>{ audAtualizarTudo().then(()=>renderAuditoria()); });
     return;
   }
 
@@ -6370,7 +6416,7 @@ function renderAuditoria(){
   $("#aud-rep").addEventListener("change", e=>{ st.repositor = e.target.value||null; renderAuditoria(); });
   $("#aud-auditor").addEventListener("change", e=>{ st.auditor = e.target.value||null; renderAuditoria(); });
   $("#aud-clear").addEventListener("click", ()=>{ AuditOnline.state = {dataInicial:null,dataFinal:null,atalhoSel:null,rua:null,repositor:null,auditor:null,apenasQuadroAtual:"SIM"}; renderAuditoria(); });
-  $("#aud-refresh").addEventListener("click", ()=>{ AuditOnline.load(true).then(()=>renderAuditoria()); });
+  $("#aud-refresh").addEventListener("click", ()=>{ audAtualizarTudo().then(()=>renderAuditoria()); });
   $("#aud-quadro-toggle").addEventListener("click", e=>{
     const b = e.target.closest("button"); if(!b) return;
     st.apenasQuadroAtual = b.dataset.v; renderAuditoria();
