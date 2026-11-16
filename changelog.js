@@ -4,9 +4,15 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.16.0";
+const APP_VERSAO = "2.17.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.17.0", data:"2026-11-16", titulo:"Regras e pesos da auditoria de ruas", itens:[
+    "Qualidade da rua = 1 − (pontos ÷ endereços da rua). Pesos: picking errado 6, avaria 4, próximo do vencimento 3, sem saldo 2 e outra não conformidade 1; no mesmo lançamento os pesos somam.",
+    "O mesmo endereço lançado mais de uma vez na auditoria da rua vale o maior peso (não soma). Endereços da rua = picking na 8022; se a auditoria tiver mais endereços, vale a quantidade auditada.",
+    "Fechamento: cada rua usa a última auditoria do período e a qualidade média é a média dessas ruas. Ruas 14, 15, 21, 31 e 50 a 54 ficam fora da auditoria.",
+    "Exemplo conferido: rua com 260 endereços, 2 picking errado e 1 avaria = 16 pontos = 93,8%."
+  ] },
   { v:"2.16.0", data:"2026-11-16", titulo:"Atribuição Ruas e revisão das auditorias", itens:[
     "Nova aba Gestão > Atribuição Ruas: mapa 2D do CD (ruas 1 a 49) com o repositor de cada rua, % qualidade de retornos, de ruas e geral, e a produção média (O.S. 58 por dia). Clique seleciona várias ruas (Shift+clique seleciona faixa) e o botão direito atribui um repositor a todas de uma vez (substituir, adicionar ou liberar).",
     "Cada mudança grava data e hora no histórico (aba ATRIBUICAO_RUAS_HIST) e o sistema guarda uma foto diária do estado de todas as ruas (ATRIBUICAO_RUAS_DIA). O estado atual fica em ATRIBUICAO_RUAS e é copiado para a coluna Ruas da Quadro_Repositores da planilha de auditoria.",
