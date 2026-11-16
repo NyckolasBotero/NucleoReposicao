@@ -3334,21 +3334,36 @@ function computeEmployeeProductionHistory(codKey){
   const maxDate = Production.maxDataDate();
   if(!maxDate) return { osDiaAnterior:0, osSemana:0, osMesAnterior:0, mesAnteriorLabel:null, os3Meses:0, ontem:null, maxDate:null };
 
-  const ontem = addDays(dateOnly(maxDate), -1);
-  const inicioSemana = startOfWeekMonday(maxDate);
+  const hojeD = dateOnly(maxDate);
+  // última SEMANA FECHADA (segunda a sexta anterior à semana da data base)
+  const inicioSemanaAtual = startOfWeekMonday(maxDate);
+  const inicioSemana = addDays(inicioSemanaAtual, -7), fimSemana = addDays(inicioSemanaAtual, -1);
   // mês anterior COMPLETO (não confundir com "mês atual até hoje", que é o mesmo período do card "O.S. Atual")
   const inicioMesAnterior = dateOnly(addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -1));
   const fimMesAnterior = dateOnly(new Date(maxDate.getFullYear(), maxDate.getMonth(), 0)); // último dia do mês anterior
   const mesAnteriorLabel = fmtMonthYear(inicioMesAnterior.getFullYear(), inicioMesAnterior.getMonth());
   const inicio3Meses = addMonths(new Date(maxDate.getFullYear(), maxDate.getMonth(), 1), -2);
-  const hojeD = dateOnly(maxDate);
+
+  // último dia PRODUZIDO pelo colaborador antes da data base (o dia da data base ainda está em andamento);
+  // sem produção antes dela, usa o último dia em que ele produziu
+  const dias = uniq(rows.map(r=>dateOnly(r.dtinicio).getTime())).sort((x,y)=>x-y);
+  const antes = dias.filter(t=>t<hojeD.getTime());
+  const tOntem = antes.length ? antes[antes.length-1] : (dias.length ? dias[dias.length-1] : null);
+  const ontem = tOntem!==null ? new Date(tOntem) : addDays(hojeD, -1);
 
   const osDiaAnterior = rows.filter(r=>dateOnly(r.dtinicio).getTime()===ontem.getTime()).length;
-  const osSemana = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicioSemana && d<=hojeD; }).length;
+  const osSemana = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicioSemana && d<=fimSemana && isWeekday(r.dtinicio); }).length;
   const osMesAnterior = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicioMesAnterior && d<=fimMesAnterior; }).length;
   const os3Meses = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=inicio3Meses && d<=hojeD; }).length;
 
-  return { osDiaAnterior, osSemana, osMesAnterior, mesAnteriorLabel, os3Meses, ontem, maxDate };
+  // média do MÊS ATUAL: O.S. do mês ÷ dias úteis em que o colaborador produziu; projeção = média × dias úteis do mês
+  const iniMes = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+  const rowsMes = rows.filter(r=>{ const d=dateOnly(r.dtinicio); return d>=iniMes && d<=hojeD && isWeekday(r.dtinicio); });
+  const diasMes = uniq(rowsMes.map(r=>ymdKey(r.dtinicio))).length;
+  const mediaMes = diasMes ? rowsMes.length/diasMes : 0;
+  const projMes = Math.round(mediaMes * countWeekdaysInMonth(maxDate.getFullYear(), maxDate.getMonth()));
+
+  return { osDiaAnterior, osSemana, osMesAnterior, mesAnteriorLabel, os3Meses, ontem, maxDate, mediaMes, projMes, diasMes, inicioSemana, fimSemana };
 }
 
 // Reaproveita EXATAMENTE a lógica de Indicadores > Produção (executiveSummary, modeComparison,

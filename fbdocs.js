@@ -57,6 +57,13 @@ const FeedbackFolha = {
     const porTipo = NC.TIPOS.map(t=>({ tipo:t.key, label:t.label, curto:t.curto, nc: lista.filter(g=>g.tipos[t.key]).length, erros: lista.reduce((n,g)=>n+(g.tipos[t.key]||0),0) }));
     const soma = porTipo.reduce((n,x)=>n+x.nc,0);
     porTipo.forEach(x=>{ x.pct = soma ? x.nc/soma*100 : 0; });
+    // auditorias do período (base para entender o %): ruas = data+rua auditadas do repositor; retorno = retornos auditados
+    const ini = P.ini || new Date(2000,0,1);
+    const ru = (window.AuditOnline && AuditOnline.rows) ? AuditOnline.qualidadePorRepositorNoIntervalo(ini, P.fim).get(codKey) : null;
+    let audRet = 0;
+    if(window.RetornoQ && RetornoQ.dados && RetornoQ.dados.aud){ const i = dateOnly(ini), f = dateOnly(P.fim); RetornoQ.dados.aud.forEach(x=>{ if(x.codKey===codKey && x.data){ const d = dateOnly(x.data); if(d>=i && d<=f) audRet++; } }); }
+    const audRua = ru ? ru.auditorias : 0;
+    porTipo.forEach(x=>{ x.aud = x.tipo==="retorno" ? audRet : audRua; x.pctErro = x.aud ? x.erros/x.aud*100 : null; });
     return { all, lista, porTipo, totalNC: lista.length,
       errosRua: lista.filter(g=>g.origem==="RUA").reduce((n,g)=>n+g.qtd,0), errosRet: lista.filter(g=>g.origem==="RETORNO").reduce((n,g)=>n+g.qtd,0),
       ncRua: lista.filter(g=>g.origem==="RUA").length, ncRet: lista.filter(g=>g.origem==="RETORNO").length };
@@ -140,19 +147,25 @@ const FeedbackFolha = {
   /** Qualidade (ruas e retornos) do colaborador NO PERÍODO do documento, com as mesmas contas de Gestão > Auditoria. */
   qualidadeDoPeriodo(emp, P){
     const ini = P.ini || new Date(2000,0,1), fim = P.fim;
-    const ru = (window.AuditOnline && AuditOnline.rows) ? AuditOnline.qualidadePorRepositorNoIntervalo(ini, fim).get(emp.codKey) : null;
-    let re = null;
-    if(window.RetornoQ && RetornoQ.dados && !(RetornoQ.dados.diag.falta||[]).length){ re = RetornoQ.porRepositor(ini, fim).get(emp.codKey) || null; }
-    else if(window.RetornoOnline && RetornoOnline.rows){ const x = RetornoOnline.porRepositor(ini, fim).get(emp.codKey); if(x) re = { auditados:x.auditorias, erros:x.erros||0, qualidade:x.qualidade, acuracidade:x.qualidade }; }
-    return { ruaQ: ru && ru.qualidadeMedia!==null ? ru.qualidadeMedia : null, ruaN: ru ? ru.auditorias : 0,
-      retQ: re ? re.qualidade : null, retN: re ? re.auditados : 0, retErros: re ? re.erros : 0, retAcur: re ? re.acuracidade : null };
+    // Ruas: sempre o MÊS ATUAL (do dia 1 até a data base da produção)
+    const iniMes = new Date(fim.getFullYear(), fim.getMonth(), 1);
+    const ru = (window.AuditOnline && AuditOnline.rows) ? AuditOnline.qualidadePorRepositorNoIntervalo(iniMes, fim).get(emp.codKey) : null;
+    // Retornos: % sobre os retornos AUDITADOS do período (acuracidade = (auditados − erros) ÷ auditados)
+    let ra = 0, rerr = 0, racur = null;
+    if(window.RetornoQ && RetornoQ.dados && RetornoQ.dados.aud){
+      const i = dateOnly(ini), f = dateOnly(fim);
+      RetornoQ.dados.aud.forEach(x=>{ if(x.codKey!==emp.codKey || !x.data) return; const d = dateOnly(x.data); if(d<i||d>f) return; ra++; if(x.nc) rerr++; });
+      racur = ra ? (ra-rerr)*100/ra : null;
+    }
+    return { ruaQ: ru && ru.qualidadeMedia!==null ? ru.qualidadeMedia : null, ruaN: ru ? ru.auditorias : 0, ruaLabel: fmtDateBR(iniMes)+" a "+fmtDateBR(fim),
+      retQ: racur, retN: ra, retErros: rerr, retAcur: racur };
   },
   blocoQualidade(emp, nd, P){
-    const q = P ? this.qualidadeDoPeriodo(emp, P) : { ruaQ:emp.qualidade, ruaN:emp.auditorias||0, retQ:emp.retornoQual, retN:emp.retornoAud||0, retErros:nd.errosRet, retAcur:null };
+    const q = P ? this.qualidadeDoPeriodo(emp, P) : { ruaQ:emp.qualidade, ruaN:emp.auditorias||0, ruaLabel:"", retQ:emp.retornoAcur!=null?emp.retornoAcur:emp.retornoQual, retN:emp.retornoAud||0, retErros:nd.errosRet, retAcur:emp.retornoAcur };
     const cq = this.corQ(q.ruaQ), cr = this.corQ(q.retQ);
     return `<div class="sec"><h2>Qualidade — resumo das auditorias${P ? " ("+escapeHtml(P.label)+")" : ""}</h2><div class="cards">
-      ${this.card("Qualidade · Ruas", this.fq(q.ruaQ), q.ruaN+" auditoria(s) · "+nd.ncRua+" NC · "+nd.errosRua+" erro(s) apontado(s)", cq)}
-      ${this.card("Qualidade · Retornos", this.fq(q.retQ), q.retN+" retorno(s) auditado(s) · "+q.retErros+" erro(s)"+(q.retAcur!=null ? " · acuracidade "+fmtNum(q.retAcur,1)+"%" : ""), cr)}
+      ${this.card("Qualidade · Ruas"+(q.ruaLabel?" (mês atual)":""), this.fq(q.ruaQ), q.ruaN+" auditoria(s) no mês"+(q.ruaLabel?" ("+q.ruaLabel+")":"")+" · "+nd.ncRua+" NC · "+nd.errosRua+" erro(s) apontado(s) no período", cq)}
+      ${this.card("Qualidade · Retornos", this.fq(q.retQ), q.retN+" retorno(s) auditado(s) · "+q.retErros+" erro(s) · % de acerto sobre os auditados", cr)}
       ${(emp.qualMeses||[]).map(m=> this.card("Ruas "+m.rot, this.fq(m.qualidade), m.auditorias+" auditoria(s)", this.corQ(m.qualidade))).join("")}
     </div></div>`;
   },
@@ -165,10 +178,10 @@ const FeedbackFolha = {
       <table style="flex:1"><thead><tr><th>Ocorrência</th><th class="num">Dias</th><th class="num">% do total</th><th></th></tr></thead><tbody>${linhas || `<tr><td colspan="4" style="color:#7a8798">Sem registros de chamada no período.</td></tr>`}</tbody></table></div></div>`;
   },
   blocoTipos(nd){
-    return `<div class="sec"><h2>Não conformidades por motivo (rua: 1 NC = 1 data + 1 rua · retorno: cada erro = 1 NC)</h2><table><thead><tr><th>Motivo</th><th class="num">NC</th><th class="num">% do total</th><th class="num">Erros apontados</th><th style="width:30%"></th></tr></thead><tbody>
-      ${nd.porTipo.map(x=>`<tr><td>${x.label}</td><td class="num"><strong>${x.nc}</strong></td><td class="num">${fmtNum(x.pct,1)}%</td><td class="num">${x.erros}</td><td><div class="bar"><span style="width:${x.pct}%;background:#d64545"></span></div></td></tr>`).join("")}
-      <tr><td><strong>Total de NC</strong></td><td class="num"><strong>${nd.totalNC}</strong></td><td class="num">100%</td><td class="num">${nd.errosRua+nd.errosRet}</td><td></td></tr></tbody></table>
-      <div style="font-size:8.5px;color:#7a8798;margin-top:3px">Uma NC que reúne mais de um motivo conta uma vez em cada motivo; o total de NC conta cada data + rua uma única vez e cada erro de retorno separadamente.</div></div>`;
+    return `<div class="sec"><h2>Não conformidades por motivo (rua: 1 NC = 1 data + 1 rua · retorno: cada erro = 1 NC)</h2><table><thead><tr><th>Motivo</th><th class="num">Auditorias</th><th class="num">NC</th><th class="num">Erros apontados</th><th class="num">% erro s/ auditorias</th><th class="num">% do total de NC</th><th style="width:18%"></th></tr></thead><tbody>
+      ${nd.porTipo.map(x=>`<tr><td>${x.label}</td><td class="num">${x.aud}</td><td class="num"><strong>${x.nc}</strong></td><td class="num">${x.erros}</td><td class="num">${x.pctErro===null?"—":fmtNum(x.pctErro,1)+"%"}</td><td class="num">${fmtNum(x.pct,1)}%</td><td><div class="bar"><span style="width:${x.pct}%;background:#d64545"></span></div></td></tr>`).join("")}
+      <tr><td><strong>Total de NC</strong></td><td class="num">${(nd.porTipo.find(x=>x.tipo==="retorno")||{aud:0}).aud + (nd.porTipo.find(x=>x.tipo!=="retorno")||{aud:0}).aud}</td><td class="num"><strong>${nd.totalNC}</strong></td><td class="num">${nd.errosRua+nd.errosRet}</td><td class="num">—</td><td class="num">100%</td><td></td></tr></tbody></table>
+      <div style="font-size:8.5px;color:#7a8798;margin-top:3px">Auditorias: nas ruas = datas + ruas auditadas do colaborador (a mesma base para os 4 motivos de rua); nos retornos = retornos auditados. Uma NC que reúne mais de um motivo conta uma vez em cada motivo; o total de NC conta cada data + rua uma única vez e cada erro de retorno separadamente.</div></div>`;
   },
   blocoDetalhe(nd, max){
     const lista = nd.lista.slice().sort((a,b)=>b.data-a.data), vis = lista.slice(0, max), resto = lista.length - vis.length;
@@ -232,16 +245,16 @@ const FeedbackFolha = {
     let meta = "";
     if(ind){
       const m = individualState.meta, corte = individualState.linhaDeCorteMes, nec = ind.mediaNecessaria!==null ? fmtNum(ind.mediaNecessaria,1) : "—";
-      const msg = ind.projetadoRitmoAtual >= m ? `🎯 No ritmo atual, a projeção é de <strong style="color:#1a9c62">${fmtNum(ind.projetadoRitmoAtual)} O.S.</strong> no mês — acima da meta. Continue assim.`
-        : ind.projetadoRitmoAtual >= corte ? `💪 Acima da linha de corte. Com <strong style="color:#e08a1f">${nec} O.S./dia</strong> nos próximos ${ind.diasRestantes} dias úteis a meta de ${fmtNum(m)} O.S. é alcançada.`
+      const msg = hist.projMes >= m ? `🎯 No ritmo atual, a projeção é de <strong style="color:#1a9c62">${fmtNum(hist.projMes)} O.S.</strong> no mês — acima da meta. Continue assim.`
+        : hist.projMes >= corte ? `💪 Acima da linha de corte. Com <strong style="color:#e08a1f">${nec} O.S./dia</strong> nos próximos ${ind.diasRestantes} dias úteis a meta de ${fmtNum(m)} O.S. é alcançada.`
         : `🚀 Restam ${ind.diasRestantes} dias úteis. Mantendo <strong style="color:#2f6fce">${nec} O.S./dia</strong>, a meta de ${fmtNum(m)} O.S. fica ao alcance.`;
-      meta = `<div class="sec"><h2>Acompanhamento da meta</h2><div class="cards">${this.card("O.S. atual", fmtNum(ind.osAtual), "de "+fmtNum(m)+" na meta")}${this.card("Dias restantes", ind.diasRestantes, "de "+ind.diasUteisMes+" úteis")}${this.card("Ritmo atual", fmtNum(ind.mediaDiaMesAtual,1), "O.S./dia")}${this.card("Projeção", fmtNum(ind.projetadoRitmoAtual), "no ritmo atual")}${this.card("Para a meta", nec, "O.S./dia")}</div>
+      meta = `<div class="sec"><h2>Acompanhamento da meta</h2><div class="cards">${this.card("O.S. atual", fmtNum(ind.osAtual), "de "+fmtNum(m)+" na meta")}${this.card("Dias restantes", ind.diasRestantes, "de "+ind.diasUteisMes+" úteis")}${this.card("Ritmo atual", fmtNum(hist.mediaMes,1), "média O.S./dia do mês atual")}${this.card("Projeção", fmtNum(hist.projMes), "média do mês × "+ind.diasUteisMes+" dias úteis")}${this.card("Para a meta", nec, "O.S./dia")}</div>
         <div class="rule" style="margin-top:6px">${msg}</div></div>`;
     }
     const p1 = this.cab("Feedback — Produção e Qualidade", "Desempenho de produção, qualidade, presença e regras", doc)
       + this.ident(emp, P)
-      + `<div class="sec"><h2>Histórico de produção (O.S. 58)</h2><div class="cards">${this.card("O.S. dia anterior", fmtNum(hist.osDiaAnterior), hist.ontem?fmtDateBR(hist.ontem):"-")}${this.card("O.S. última semana", fmtNum(hist.osSemana))}${this.card("O.S. mês anterior", fmtNum(hist.osMesAnterior), hist.mesAnteriorLabel||"")}${this.card("O.S. últimos 3 meses", fmtNum(hist.os3Meses))}</div></div>`
-      + `<div class="sec"><h2>Indicadores de desempenho — comparação mensal</h2><div class="cards">${this.card("O.S. atual", fmtNum(exec?exec.totalAtual:0), cmp?cmp.labelAtual:"")}${this.card("Mês anterior (mesmo período)", fmtNum(cmp?cmp.anterior:0), cmp?cmp.labelAnterior:"")}${this.card("Variação", cmp&&cmp.variacao!==null?fmtPct(cmp.variacao,1):"s/ base", "", cmp&&cmp.variacao>0?"#1a9c62":cmp&&cmp.variacao<0?"#d64545":"#7a8798")}${this.card("Média diária", exec?fmtNum(exec.mediaDiaria,1):"0", "O.S./dia útil", "#e08a1f")}</div></div>`
+      + `<div class="sec"><h2>Histórico de produção (O.S. 58)</h2><div class="cards">${this.card("O.S. dia anterior", fmtNum(hist.osDiaAnterior), hist.ontem?fmtDateBR(hist.ontem):"-")}${this.card("O.S. última semana", fmtNum(hist.osSemana), hist.inicioSemana?fmtDateBR(hist.inicioSemana)+" a "+fmtDateBR(hist.fimSemana):"")}${this.card("O.S. mês anterior", fmtNum(hist.osMesAnterior), hist.mesAnteriorLabel||"")}${this.card("O.S. últimos 3 meses", fmtNum(hist.os3Meses))}</div></div>`
+      + `<div class="sec"><h2>Indicadores de desempenho — comparação mensal</h2><div class="cards">${this.card("O.S. atual", fmtNum(exec?exec.totalAtual:0), cmp?cmp.labelAtual:"")}${this.card("Mês anterior (mesmo período)", fmtNum(cmp?cmp.anterior:0), cmp?cmp.labelAnterior:"")}${this.card("Variação", cmp&&cmp.variacao!==null?fmtPct(cmp.variacao,1):"s/ base", "", cmp&&cmp.variacao>0?"#1a9c62":cmp&&cmp.variacao<0?"#d64545":"#7a8798")}${this.card("Média diária", fmtNum(hist.mediaMes,1), "mês atual · "+hist.diasMes+" dia(s) produzido(s)", "#e08a1f")}</div></div>`
       + `<div class="sec" style="display:flex;gap:8px"><div style="flex:1;border:1px solid #dde3ea;border-radius:5px;padding:5px"><div style="font-size:9.5px;font-weight:700;color:#123a6b;margin-bottom:2px">Evolução real + projeção — ${proj?proj.mesAtual:""}</div><canvas id="fbdoc-chart-evo-${idx}" width="350" height="180"></canvas></div>
         <div style="flex:1;border:1px solid #dde3ea;border-radius:5px;padding:5px"><div style="font-size:9.5px;font-weight:700;color:#123a6b;margin-bottom:2px">Ano atual — mês a mês com projeção</div><canvas id="fbdoc-chart-ano-${idx}" width="350" height="180"></canvas></div></div>`
       + meta + this.blocoQualidade(emp, nd, P) + this.blocoPresenca(pr);
