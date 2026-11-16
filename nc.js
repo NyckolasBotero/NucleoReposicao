@@ -4,6 +4,7 @@
      · Auditoria_Retorno (Possui_NC = TRUE)  → 1 erro de retorno para Matricula/Nome_Colaborador_NC
      · Auditoria_Ruas    (Possui_NC = TRUE)  → 1 erro de rua para CADA critério TRUE da linha:
                             Erro_Produto · Prox_Vencimento · Sem_Saldo · Avaria
+   Retorno: cada linha com erro (Possui_NC ou divergência) é 1 NC — não agrupa por dia.
    Regras de alerta (por colaborador e por motivo):
      · NC_POR_FB (4) NCs do mesmo motivo desde o último feedback desse motivo → gerar FEEDBACK (4 NC = 1 feedback)
      · NC_FB_PARA_ADV (3) feedbacks do mesmo motivo → gerar ADVERTÊNCIA (3 feedbacks = 1 advertência)
@@ -35,8 +36,8 @@ const NC = {
     if(ps.length && cb) Promise.all(ps).then(()=>cb()).catch(()=>cb());
   },
 
-  /** Não conformidades (NC) = 1 por colaborador + data + rua (várias falhas na mesma rua no mesmo dia = 1 NC).
-   *  Retorno: 1 por colaborador + data (+ rua, se informada). Cada NC guarda os tipos de erro, a quantidade
+  /** Não conformidades (NC) de RUA = 1 por colaborador + data + rua (várias falhas na mesma rua no mesmo dia = 1 NC).
+   *  Retorno: cada linha com erro é 1 NC. Cada NC guarda os tipos de erro, a quantidade
    *  de linhas/produtos com erro e os itens. Ex.: 20 erros na rua 34 e 10 na rua 33 no mesmo dia = 2 NC. */
   grupos(){
     const reg = window.APP_STATE && window.APP_STATE.nameRegistry;
@@ -44,7 +45,7 @@ const NC = {
     const add = (r, tipoKeys)=>{
       const codKey = r.cod ? normStr(r.cod) : (r.nome ? "NOME::"+normStr(r.nome) : null);
       if(!codKey || !r.data) return;
-      const k = codKey+"|"+ymdKey(r.data)+"|"+r.origem+"|"+(r.rua||"");
+      const k = codKey+"|"+ymdKey(r.data)+"|"+r.origem+"|"+(r.rua||"")+(r.origem==="RETORNO" ? "|"+(r.id||Math.random()) : "");   // erro de retorno: 1 linha = 1 NC
       if(!m.has(k)) m.set(k, { codKey, cod:r.cod||"", nome:(reg && reg.get(codKey)) || r.nome || r.cod || codKey, data:r.data, origem:r.origem, rua:r.rua||"",
         auditor:r.auditor||"", tipos:{}, qtd:0, itens:[] });
       const g = m.get(k); g.qtd++;

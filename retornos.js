@@ -6,8 +6,9 @@
    - cada linha de Auditoria_Retorno é um retorno auditado, na RUA em questão; Possui_NC = TRUE = erro encontrado;
    - peso do erro por faixa de auditados na rua: até 10 = 1 · 11–20 = 2 · 21–30 = 3 ... (= ceil(auditados ÷ 10));
    - qualidade = 100% − (peso × erros × 100 ÷ auditados);
-   - rua com mais de um repositor: o erro conta para todos os repositores da rua (Quadro_Repositores);
-   - qualidade do repositor = pontos perdidos somados nas ruas dele ÷ auditados somados nas ruas dele;
+   - erro = Possui_NC = TRUE ou divergência etiqueta × físico (mesma contagem do PDF da auditoria de retorno);
+   - por repositor: as linhas auditadas/erros são as do próprio repositor (Matricula_Colaborador_NC), igual ao PDF;
+   - qualidade do repositor = 100% − (pontos perdidos dele ÷ auditados dele); cada erro perde o peso da rua; acuracidade = conformes ÷ auditados (igual ao PDF);
    - Rotina_Retorno informa quantos retornos a rua teve (cobertura = auditados ÷ retornos).
    ========================================================================== */
 const RetornoQ = {
@@ -46,11 +47,12 @@ const RetornoQ = {
   async _carregar(){
     this.carregando = true; this.erro = null;
     try{
-      const [a, r, q] = await Promise.all([ this.buscar(this.abas.aud), this.buscar(this.abas.rot), this.buscar(this.abas.quadro) ]);
+      // a leitura de Auditoria_Retorno é UMA só (RetornoOnline): NCs, feedbacks, PDF e esta tela usam as mesmas linhas
+      const [, r, q] = await Promise.all([ RetornoOnline.load(true), this.buscar(this.abas.rot), this.buscar(this.abas.quadro) ]);
+      if(RetornoOnline.error) throw new Error(RetornoOnline.error);
+      const rowsA = RetornoOnline.rows || [];
       const diag = {};
-      // Auditoria_Retorno
-      const ca = a[0]||[]; const ia = { rua:this.achar(ca,["Rua"],["rua"]), nc:this.achar(ca,["Possui_NC","PossuiNC"],["possuinc","nc"]), data:this.achar(ca,["Data","Data_Auditoria"],["data","dt"]) };
-      diag.aud = { cab:ca, idx:ia, linhas:Math.max(0,a.length-1) };
+      diag.aud = { cab:["DataHora","Rua","Possui_NC","Matricula_Colaborador_NC"], idx:{ rua:0, nc:0, data:0 }, linhas:rowsA.length };
       // Rotina_Retorno
       const cr = r[0]||[]; const ir = { rua:this.achar(cr,["Rua"],["rua"]), data:this.achar(cr,["Data","Data_Retorno"],["data","dt"]) };
       diag.rot = { cab:cr, idx:ir, linhas:Math.max(0,r.length-1) };
@@ -58,17 +60,25 @@ const RetornoQ = {
       const cq = q[0]||[]; const iq = { mat:this.achar(cq,["Matricula","Matrícula"],["matric","cod"]), nome:this.achar(cq,["Nome"],["nome"]), func:this.achar(cq,["Funcao","Função"],["func","cargo"]), ruas:this.achar(cq,["Ruas","Rua"],["rua"]) };
       diag.quadro = { cab:cq, idx:iq, linhas:Math.max(0,q.length-1) };
       const falta = [];
-      if(ia.rua<0) falta.push(`${this.abas.aud}: coluna da rua`); if(ia.nc<0) falta.push(`${this.abas.aud}: coluna Possui_NC`);
       if(ir.rua<0) falta.push(`${this.abas.rot}: coluna da rua`);
       if(iq.ruas<0) falta.push(`${this.abas.quadro}: coluna Ruas`); if(iq.nome<0 && iq.mat<0) falta.push(`${this.abas.quadro}: coluna Nome/Matricula`);
       diag.falta = falta;
-      const aud = a.slice(1).map(l=>({ rua:this.numRua(l[ia.rua]), data: ia.data>=0 ? this.data(l[ia.data]) : null, nc: ia.nc>=0 && this.ehVerdade(l[ia.nc]) })).filter(x=>x.rua!=null);
+      const aud = rowsA.map(x=>({ rua:this.numRua(x.rua), data:x.data, nc:!!x.nc, codKey:x.codKey||"", nome:x.nome||"" })).filter(x=>x.rua!=null);
       const rot = r.slice(1).map(l=>({ rua:this.numRua(l[ir.rua]), data: ir.data>=0 ? this.data(l[ir.data]) : null })).filter(x=>x.rua!=null);
-      const reps = q.slice(1).map(l=>({ mat:String(l[iq.mat]||"").trim(), nome:String(l[iq.nome]||"").trim(), funcao:String(l[iq.func]||"").trim(),
-        ruas:String(l[iq.ruas]||"").split(/[,;\/\s]+/).map(x=>this.numRua(x)).filter(x=>x!=null) })).filter(x=>x.nome && x.ruas.length);
+      const reps = q.slice(1).map(l=>{ const mat = String(l[iq.mat]||"").trim(), nome = String(l[iq.nome]||"").trim();
+        return { mat, nome, codKey: mat ? normStr(mat) : (nome ? "NOME::"+normStr(nome) : ""), funcao:String(l[iq.func]||"").trim(),
+          ruas:String(l[iq.ruas]||"").split(/[,;\/\s]+/).map(x=>this.numRua(x)).filter(x=>x!=null) }; }).filter(x=>x.nome && x.ruas.length);
       this.dados = { aud, rot, reps, diag }; this.quando = new Date();
     }catch(e){ this.erro = e && e.message ? e.message : String(e); }
     finally{ this.carregando = false; }
+  },
+
+  /** quem responde pela rua numa data (histórico da Atribuição Ruas, se carregado; senão a coluna Ruas do Quadro_Repositores) */
+  respHook: null,
+  responsaveisEm(rua, data){
+    if(this.respHook){ try{ const r = this.respHook(Number(rua), data); if(r) return r; }catch(e){} }
+    const D = this.dados; if(!D) return [];
+    return D.reps.filter(p=>p.ruas.includes(Number(rua))).map(p=>({ codKey:p.codKey, nome:p.nome }));
   },
 
   /* ---------------- regra ---------------- */
@@ -85,8 +95,14 @@ const RetornoQ = {
     });
   },
 
-  calcular(ini, fim){
-    const D = this.dados, aud = this.filtrar(D.aud, ini, fim), rot = this.filtrar(D.rot, ini, fim);
+  /** f (opcional): { rua:Number, codKey, quadro:Set<codKey> } — mesmos filtros da tela de Auditoria */
+  calcular(ini, fim, f){
+    f = f || {};
+    const D = this.dados;
+    let aud = this.filtrar(D.aud, ini, fim), rot = this.filtrar(D.rot, ini, fim);
+    if(f.rua!=null){ aud = aud.filter(x=>x.rua===f.rua); rot = rot.filter(x=>x.rua===f.rua); }
+    if(f.codKey) aud = aud.filter(x=>x.codKey===f.codKey);
+    const reg = window.APP_STATE && window.APP_STATE.nameRegistry;
     const ruasMap = new Map();
     const rua = n=>{ if(!ruasMap.has(n)) ruasMap.set(n,{ rua:n, retornos:0, auditados:0, erros:0 }); return ruasMap.get(n); };
     rot.forEach(x=> rua(x.rua).retornos++);
@@ -95,15 +111,34 @@ const RetornoQ = {
       .map(r=>({ ...r, qualidade:this.qualidade(r.auditados, r.perdidos), cobertura: r.retornos ? r.auditados*100/r.retornos : null }))
       .sort((a,b)=>a.rua-b.rua);
     const porRua = new Map(ruas.map(r=>[r.rua,r]));
-    ruas.forEach(r=>{ r.reps = D.reps.filter(p=>p.ruas.includes(r.rua)).map(p=>p.nome); });
-    const reps = D.reps.map(p=>{
-      let retornos=0, auditados=0, erros=0, perdidos=0; const detalhe = [];
-      p.ruas.forEach(n=>{ const r = porRua.get(n); if(!r) return; retornos+=r.retornos; auditados+=r.auditados; erros+=r.erros; perdidos+=r.perdidos; detalhe.push(r); });
-      return { ...p, retornos, auditados, erros, perdidos, qualidade:this.qualidade(auditados, perdidos), cobertura: retornos ? auditados*100/retornos : null, detalhe };
-    }).sort((a,b)=> (a.qualidade==null?101:a.qualidade) - (b.qualidade==null?101:b.qualidade));
+    // repositores de cada rua = quem teve retorno auditado nela no período; sem auditoria, quem responde pela rua no Quadro_Repositores
+    ruas.forEach(r=>{
+      const vistos = new Map(); aud.filter(x=>x.rua===r.rua && x.codKey).forEach(x=>vistos.set(x.codKey, (reg&&reg.get(x.codKey)) || x.nome || x.codKey));
+      r.reps = vistos.size ? Array.from(vistos.values()) : D.reps.filter(p=>p.ruas.includes(r.rua)).map(p=>p.nome);
+    });
+    // por repositor: as linhas dele (igual ao PDF). Quem tem rua no Quadro_Repositores aparece mesmo sem auditoria.
+    const porRep = new Map();
+    const rep = (codKey, nome)=>{ if(!porRep.has(codKey)) porRep.set(codKey,{ codKey, nome:nome||codKey, mat:"", ruas:[], auditados:0, erros:0, perdidos:0, ruasAud:new Set(), retornos:0 }); return porRep.get(codKey); };
+    D.reps.forEach(p=>{ if(!p.codKey) return; const e = rep(p.codKey, p.nome); e.mat = p.mat; e.ruas = p.ruas.slice(); p.ruas.forEach(n=>{ const r = porRua.get(n); if(r) e.retornos += r.retornos; }); });
+    aud.forEach(x=>{ if(!x.codKey) return; const e = rep(x.codKey, x.nome); e.auditados++; e.ruasAud.add(x.rua); if(x.nc){ e.erros++; e.perdidos += (porRua.get(x.rua)||{peso:1}).peso; } });
+    let reps = Array.from(porRep.values()).map(e=>({ ...e, nome:(reg&&reg.get(e.codKey)) || e.nome, ruasAud:Array.from(e.ruasAud).sort((a,b)=>a-b),
+      qualidade:this.qualidade(e.auditados, e.perdidos), acuracidade: e.auditados ? (e.auditados-e.erros)*100/e.auditados : null,
+      cobertura: e.retornos ? e.auditados*100/e.retornos : null }));
+    if(f.codKey) reps = reps.filter(e=>e.codKey===f.codKey);
+    if(f.quadro) reps = reps.filter(e=>f.quadro.has(e.codKey));
+    reps.sort((a,b)=> (a.qualidade==null?101:a.qualidade) - (b.qualidade==null?101:b.qualidade));
     const tot = ruas.reduce((t,r)=>({ retornos:t.retornos+r.retornos, auditados:t.auditados+r.auditados, erros:t.erros+r.erros, perdidos:t.perdidos+r.perdidos }), { retornos:0, auditados:0, erros:0, perdidos:0 });
     tot.qualidade = this.qualidade(tot.auditados, tot.perdidos); tot.cobertura = tot.retornos ? tot.auditados*100/tot.retornos : null;
+    tot.acuracidade = tot.auditados ? (tot.auditados-tot.erros)*100/tot.auditados : null;
     return { ruas, reps, tot };
+  },
+
+  /** Map codKey → { auditados, erros, qualidade, acuracidade } no período, sem filtros de tela (usado no Ranking de Feedback, no PDF e no mapa de ruas) */
+  porRepositor(ini, fim){
+    const m = new Map();
+    if(!this.dados || (this.dados.diag.falta||[]).length) return m;
+    this.calcular(ini, fim).reps.forEach(e=>{ if(e.auditados) m.set(e.codKey, { auditados:e.auditados, erros:e.erros, qualidade:e.qualidade, acuracidade:e.acuracidade }); });
+    return m;
   },
 
   /** qualidade geral mês a mês (todas as ruas), para a linha de evolução */
@@ -118,6 +153,14 @@ const RetornoQ = {
   },
 
 
+  /** mesmos filtros da tela de Auditoria (rua, repositor, quadro atual) para os blocos de retorno */
+  filtrosTela(){
+    const st = AuditOnline.state, f = {};
+    if(st.rua){ const n = this.numRua(st.rua); if(n!=null) f.rua = n; }
+    if(st.repositor) f.codKey = st.repositor;
+    if(st.apenasQuadroAtual==="SIM"){ const ct = window.APP_STATE && window.APP_STATE.currentTeam; if(ct && ct.codes) f.quadro = ct.codes; }
+    return f;
+  },
   /* ---------------- topo da Auditoria: % geral de Retornos, de Ruas e dos dois ---------------- */
   mesKey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); },
   media(a, b){ const v = [a,b].filter(x=>x!=null); return v.length ? v.reduce((s,x)=>s+x,0)/v.length : null; },
@@ -142,7 +185,7 @@ const RetornoQ = {
     const rowsPer = (AuditOnline.rows||[]).filter(x=>{ const d = dateOnly(x.data); return (!ini || d>=dateOnly(ini)) && (!fim || d<=dateOnly(fim)); });
     const qRua = this.qRuas(rowsPer);
     const pronto = !!(this.dados && !this.dados.diag.falta.length);
-    const qRet = pronto ? this.calcular(ini, fim).tot.qualidade : null;
+    const qRet = pronto ? this.calcular(ini, fim, this.filtrosTela()).tot.qualidade : null;
     const geral = this.media(qRet, qRua);
     const cl = q=> q==null ? "" : q>=90 ? "pos" : q>=70 ? "warn" : "neg";
     const f = q=> q==null ? "—" : fmtNum(q,1)+"%";
@@ -192,7 +235,7 @@ const RetornoQ = {
       box.innerHTML = `<div class="panel"><h3 style="margin:0 0 6px;">Qualidade de Retornos</h3><div class="warn-box">Não encontrei: <strong>${D.diag.falta.map(escapeHtml).join("; ")}</strong>.<br>Estas são as colunas que li (me passe se algum nome for diferente):</div>${lista("aud")}${lista("rot")}${lista("quadro")}</div>`;
       return;
     }
-    const c = this.calcular(st.dataInicial, st.dataFinal), t = c.tot;
+    const c = this.calcular(st.dataInicial, st.dataFinal, this.filtrosTela()), t = c.tot;
     const per = (st.dataInicial||st.dataFinal) ? `${st.dataInicial?fmtDateBR(st.dataInicial):"início"} até ${st.dataFinal?fmtDateBR(st.dataFinal):"hoje"}` : "todo o histórico";
     const cor = q=> q==null ? "" : q>=90 ? "cell-pos" : q>=70 ? "cell-warn" : "cell-neg";
     const fq = q=> q==null ? '<span class="small-muted">sem auditoria</span>' : fmtNum(q,1)+"%";
@@ -201,18 +244,19 @@ const RetornoQ = {
     box.innerHTML = `<div class="panel" id="rq-panel">
       <div class="adm-head"><h3 style="margin:0;">Qualidade de Retornos <span class="small-muted" style="font-weight:500">· ${per} · segue o filtro de período acima</span></h3>
         <div class="adm-head-r"><span class="small-muted">${this.quando?("atualizado "+this.quando.toLocaleTimeString("pt-BR")):""}</span><button class="btn btn-outline btn-sm" id="rq-reload">↻ Atualizar retornos</button></div></div>
-      <p class="small-muted" style="margin:6px 0 10px">Cada retorno auditado com <strong>Possui_NC = TRUE</strong> é um erro. Peso do erro pela quantidade auditada na rua: até 10 = 1 · 11–20 = 2 · 21–30 = 3… Qualidade = 100% − (peso × erros ÷ auditados). Rua com mais de um repositor: o erro conta para todos.</p>
+      <p class="small-muted" style="margin:6px 0 10px">Cada retorno auditado com <strong>Possui_NC = TRUE</strong> (ou divergência entre etiqueta e físico) é um erro, contado para o repositor da própria linha — mesma contagem do PDF da auditoria de retorno. <strong>Acuracidade</strong> = (auditados − erros) ÷ auditados. <strong>Qualidade</strong> = 100% − pontos perdidos ÷ auditados; cada erro perde o peso da rua pela quantidade auditada nela (até 10 = 1 · 11–20 = 2 · 21–30 = 3…).</p>
       ${avisoData}
       <div class="cards-grid">
         ${card("Retornos na rotina", fmtNum(t.retornos))}
         ${card("Retornos auditados", fmtNum(t.auditados), t.cobertura==null?"":fmtNum(t.cobertura,1)+"% dos retornos")}
         ${card("Erros encontrados", fmtNum(t.erros), "", t.erros?"neg":"")}
-        ${card("Qualidade geral", t.qualidade==null?"—":fmtNum(t.qualidade,1)+"%", "", t.qualidade==null?"":(t.qualidade>=90?"pos":t.qualidade>=70?"warn":"neg"))}
+        ${card("Acuracidade", t.acuracidade==null?"—":fmtNum(t.acuracidade,1)+"%", "conformes ÷ auditados (igual ao PDF)", t.acuracidade==null?"":(t.acuracidade>=95?"pos":t.acuracidade>=85?"warn":"neg"))}
+        ${card("Qualidade geral", t.qualidade==null?"—":fmtNum(t.qualidade,1)+"%", "com peso por rua", t.qualidade==null?"":(t.qualidade>=90?"pos":t.qualidade>=70?"warn":"neg"))}
       </div>
       <div>
         <div><h4 style="margin:6px 0 8px;font-size:14px;">Por repositor</h4>
-          <div class="table-wrap"><table class="data-table"><thead><tr><th>Repositor</th><th>Ruas</th><th>Retornos</th><th>Auditados</th><th>Erros</th><th>Qualidade</th></tr></thead><tbody>
-          ${c.reps.map(p=>`<tr><td>${escapeHtml(p.nome)}</td><td>${p.ruas.join(", ")}</td><td>${fmtNum(p.retornos)}</td><td>${fmtNum(p.auditados)}</td><td>${p.erros?`<strong style="color:var(--red)">${p.erros}</strong>`:"0"}</td><td class="${cor(p.qualidade)}"><strong>${fq(p.qualidade)}</strong></td></tr>`).join("")||`<tr><td colspan="6" class="small-muted">Nenhum repositor com ruas em ${this.abas.quadro}.</td></tr>`}
+          <div class="table-wrap"><table class="data-table"><thead><tr><th>Repositor</th><th>Ruas (Quadro_Repositores)</th><th>Auditados</th><th>Erros</th><th>Acuracidade</th><th>Qualidade</th></tr></thead><tbody>
+          ${c.reps.map(p=>`<tr><td>${escapeHtml(p.nome)}</td><td>${p.ruas.join(", ")||'<span class="small-muted">—</span>'}</td><td>${fmtNum(p.auditados)}</td><td>${p.erros?`<strong style="color:var(--red)">${p.erros}</strong>`:"0"}</td><td class="${cor(p.acuracidade)}"><strong>${p.acuracidade==null?'<span class="small-muted">sem auditoria</span>':fmtNum(p.acuracidade,1)+"%"}</strong></td><td class="${cor(p.qualidade)}"><strong>${fq(p.qualidade)}</strong></td></tr>`).join("")||`<tr><td colspan="6" class="small-muted">Nenhum repositor com ruas em ${this.abas.quadro}.</td></tr>`}
           </tbody></table></div></div>
         <div style="margin-top:18px;"><h4 style="margin:6px 0 8px;font-size:14px;">Por rua <span class="small-muted" style="font-weight:500">· retornos auditados em cada rua</span></h4>
           <div class="table-wrap"><table class="data-table"><thead><tr><th>Rua</th><th>Repositor(es)</th><th>Retornos</th><th>Auditados</th><th>% audit.</th><th>Erros</th><th>Peso</th><th>Qualidade</th></tr></thead><tbody>

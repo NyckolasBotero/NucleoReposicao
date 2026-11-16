@@ -5,7 +5,7 @@
                situação (NC → feedback → advertência → suspensão), presença, qualidade, avaliações e assinaturas
      · "prod" — Feedback de Produção e Qualidade: o antigo (histórico de O.S., gráficos de evolução/projeção,
                acompanhamento da meta) agora vertical, com o mesmo bloco de presença, qualidade, NCs e regras
-   Regra de NC: 1 NC = 1 colaborador + 1 data + 1 rua (20 erros na rua 34 e 10 na 33 no mesmo dia = 2 NC).
+   Regra de NC: rua = 1 colaborador + 1 data + 1 rua (20 erros na rua 34 e 10 na 33 no mesmo dia = 2 NC); retorno = cada erro é 1 NC.
    Depende de app.js (FeedbackDoc, Export, Attendance), nc.js (NC) e feedbacks.js (FeedbackAdv).
    ========================================================================= */
 const FeedbackFolha = {
@@ -137,12 +137,23 @@ const FeedbackFolha = {
   card(rot, val, sub, cor){ return `<div class="card" style="border-left-color:${cor||'#2f6fce'}"><b>${rot}</b><i style="color:${cor||'#123a6b'}">${val}</i>${sub?`<u>${sub}</u>`:""}</div>`; },
   fq(v){ return v===null||v===undefined ? "s/ auditoria" : fmtNum(v,1)+"%"; },
 
-  blocoQualidade(emp, nd){
-    const cq = this.corQ(emp.qualidade), cr = this.corQ(emp.retornoQual);
-    return `<div class="sec"><h2>Qualidade — resumo das auditorias</h2><div class="cards">
-      ${this.card("Qualidade · Ruas", this.fq(emp.qualidade), (emp.auditorias||0)+" auditoria(s) · "+nd.ncRua+" NC · "+nd.errosRua+" erro(s) apontado(s)", cq)}
-      ${this.card("Qualidade · Retornos", this.fq(emp.retornoQual), (emp.retornoAud||0)+" retorno(s) auditado(s) · "+nd.errosRet+" erro(s) encontrado(s)", cr)}
-      ${(emp.qualMeses||[]).map(q=> this.card("Ruas "+q.rot, this.fq(q.qualidade), q.auditorias+" auditoria(s)", this.corQ(q.qualidade))).join("")}
+  /** Qualidade (ruas e retornos) do colaborador NO PERÍODO do documento, com as mesmas contas de Gestão > Auditoria. */
+  qualidadeDoPeriodo(emp, P){
+    const ini = P.ini || new Date(2000,0,1), fim = P.fim;
+    const ru = (window.AuditOnline && AuditOnline.rows) ? AuditOnline.qualidadePorRepositorNoIntervalo(ini, fim).get(emp.codKey) : null;
+    let re = null;
+    if(window.RetornoQ && RetornoQ.dados && !(RetornoQ.dados.diag.falta||[]).length){ re = RetornoQ.porRepositor(ini, fim).get(emp.codKey) || null; }
+    else if(window.RetornoOnline && RetornoOnline.rows){ const x = RetornoOnline.porRepositor(ini, fim).get(emp.codKey); if(x) re = { auditados:x.auditorias, erros:x.erros||0, qualidade:x.qualidade, acuracidade:x.qualidade }; }
+    return { ruaQ: ru && ru.qualidadeMedia!==null ? ru.qualidadeMedia : null, ruaN: ru ? ru.auditorias : 0,
+      retQ: re ? re.qualidade : null, retN: re ? re.auditados : 0, retErros: re ? re.erros : 0, retAcur: re ? re.acuracidade : null };
+  },
+  blocoQualidade(emp, nd, P){
+    const q = P ? this.qualidadeDoPeriodo(emp, P) : { ruaQ:emp.qualidade, ruaN:emp.auditorias||0, retQ:emp.retornoQual, retN:emp.retornoAud||0, retErros:nd.errosRet, retAcur:null };
+    const cq = this.corQ(q.ruaQ), cr = this.corQ(q.retQ);
+    return `<div class="sec"><h2>Qualidade — resumo das auditorias${P ? " ("+escapeHtml(P.label)+")" : ""}</h2><div class="cards">
+      ${this.card("Qualidade · Ruas", this.fq(q.ruaQ), q.ruaN+" auditoria(s) · "+nd.ncRua+" NC · "+nd.errosRua+" erro(s) apontado(s)", cq)}
+      ${this.card("Qualidade · Retornos", this.fq(q.retQ), q.retN+" retorno(s) auditado(s) · "+q.retErros+" erro(s)"+(q.retAcur!=null ? " · acuracidade "+fmtNum(q.retAcur,1)+"%" : ""), cr)}
+      ${(emp.qualMeses||[]).map(m=> this.card("Ruas "+m.rot, this.fq(m.qualidade), m.auditorias+" auditoria(s)", this.corQ(m.qualidade))).join("")}
     </div></div>`;
   },
   blocoPresenca(pr){
@@ -154,10 +165,10 @@ const FeedbackFolha = {
       <table style="flex:1"><thead><tr><th>Ocorrência</th><th class="num">Dias</th><th class="num">% do total</th><th></th></tr></thead><tbody>${linhas || `<tr><td colspan="4" style="color:#7a8798">Sem registros de chamada no período.</td></tr>`}</tbody></table></div></div>`;
   },
   blocoTipos(nd){
-    return `<div class="sec"><h2>Não conformidades por motivo (1 NC = 1 data + 1 rua)</h2><table><thead><tr><th>Motivo</th><th class="num">NC</th><th class="num">% do total</th><th class="num">Erros apontados</th><th style="width:30%"></th></tr></thead><tbody>
+    return `<div class="sec"><h2>Não conformidades por motivo (rua: 1 NC = 1 data + 1 rua · retorno: cada erro = 1 NC)</h2><table><thead><tr><th>Motivo</th><th class="num">NC</th><th class="num">% do total</th><th class="num">Erros apontados</th><th style="width:30%"></th></tr></thead><tbody>
       ${nd.porTipo.map(x=>`<tr><td>${x.label}</td><td class="num"><strong>${x.nc}</strong></td><td class="num">${fmtNum(x.pct,1)}%</td><td class="num">${x.erros}</td><td><div class="bar"><span style="width:${x.pct}%;background:#d64545"></span></div></td></tr>`).join("")}
       <tr><td><strong>Total de NC</strong></td><td class="num"><strong>${nd.totalNC}</strong></td><td class="num">100%</td><td class="num">${nd.errosRua+nd.errosRet}</td><td></td></tr></tbody></table>
-      <div style="font-size:8.5px;color:#7a8798;margin-top:3px">Uma NC que reúne mais de um motivo conta uma vez em cada motivo; o total de NC conta cada data + rua uma única vez.</div></div>`;
+      <div style="font-size:8.5px;color:#7a8798;margin-top:3px">Uma NC que reúne mais de um motivo conta uma vez em cada motivo; o total de NC conta cada data + rua uma única vez e cada erro de retorno separadamente.</div></div>`;
   },
   blocoDetalhe(nd, max){
     const lista = nd.lista.slice().sort((a,b)=>b.data-a.data), vis = lista.slice(0, max), resto = lista.length - vis.length;
@@ -169,7 +180,7 @@ const FeedbackFolha = {
   },
   blocoRegra(){
     return `<div class="rule"><strong>Como contamos e como as penalizações acontecem</strong><ul style="margin:3px 0 0 14px;padding:0">
-      <li><strong>Não conformidade (NC):</strong> 1 por colaborador, data e rua. Várias falhas na mesma rua no mesmo dia contam como 1 NC (ex.: 20 erros na rua 34 e 10 na rua 33 no mesmo dia = 2 NC).</li>
+      <li><strong>Não conformidade (NC) de rua:</strong> 1 por colaborador, data e rua. Várias falhas na mesma rua no mesmo dia contam como 1 NC (ex.: 20 erros na rua 34 e 10 na rua 33 no mesmo dia = 2 NC). <strong>De retorno:</strong> cada retorno com erro é 1 NC.</li>
       <li><strong>Feedback:</strong> ${NC_POR_FB} NC pelo mesmo motivo geram 1 feedback.</li>
       <li><strong>Advertência:</strong> ${NC_FB_PARA_ADV} feedbacks pelo mesmo motivo de NC geram 1 advertência (demais motivos: ${FB_A_CADA} feedbacks).</li>
       <li><strong>Suspensão:</strong> ${FB_ADV_PARA_SUSP} advertências pelo mesmo motivo geram solicitação de suspensão.</li></ul></div>`;
@@ -204,7 +215,7 @@ const FeedbackFolha = {
     const p1 = this.cab("Feedback — Não Conformidades", "Histórico de não conformidades, regras e situação do colaborador", doc)
       + this.ident(emp, P)
       + `<div class="sec"><div class="cards">${this.card("Não conformidades", nd.totalNC, nd.ncRua+" de rua · "+nd.ncRet+" de retorno", nd.totalNC?"#d64545":"#1a9c62")}${this.card("Feedbacks", sit.fb, "no histórico")}${this.card("Advertências", sit.adv, "no histórico", sit.adv?"#e08a1f":"#2f6fce")}${this.card("Suspensões", sit.susp, "no histórico", sit.susp?"#d64545":"#2f6fce")}</div></div>`
-      + this.blocoTipos(nd) + this.blocoQualidade(emp, nd) + this.blocoPresenca(pr);
+      + this.blocoTipos(nd) + this.blocoQualidade(emp, nd, P) + this.blocoPresenca(pr);
     const p2 = this.blocoDetalhe(nd, 11) + this.blocoRegra() + `<div style="height:9px"></div>` + this.blocoSituacao(sit)
       + this.termo(emp, P, resumoTxt)
       + this.caixa("Resumo do assunto tratado / plano de ação combinado:", 40)
@@ -233,7 +244,7 @@ const FeedbackFolha = {
       + `<div class="sec"><h2>Indicadores de desempenho — comparação mensal</h2><div class="cards">${this.card("O.S. atual", fmtNum(exec?exec.totalAtual:0), cmp?cmp.labelAtual:"")}${this.card("Mês anterior (mesmo período)", fmtNum(cmp?cmp.anterior:0), cmp?cmp.labelAnterior:"")}${this.card("Variação", cmp&&cmp.variacao!==null?fmtPct(cmp.variacao,1):"s/ base", "", cmp&&cmp.variacao>0?"#1a9c62":cmp&&cmp.variacao<0?"#d64545":"#7a8798")}${this.card("Média diária", exec?fmtNum(exec.mediaDiaria,1):"0", "O.S./dia útil", "#e08a1f")}</div></div>`
       + `<div class="sec" style="display:flex;gap:8px"><div style="flex:1;border:1px solid #dde3ea;border-radius:5px;padding:5px"><div style="font-size:9.5px;font-weight:700;color:#123a6b;margin-bottom:2px">Evolução real + projeção — ${proj?proj.mesAtual:""}</div><canvas id="fbdoc-chart-evo-${idx}" width="350" height="180"></canvas></div>
         <div style="flex:1;border:1px solid #dde3ea;border-radius:5px;padding:5px"><div style="font-size:9.5px;font-weight:700;color:#123a6b;margin-bottom:2px">Ano atual — mês a mês com projeção</div><canvas id="fbdoc-chart-ano-${idx}" width="350" height="180"></canvas></div></div>`
-      + meta + this.blocoQualidade(emp, nd) + this.blocoPresenca(pr);
+      + meta + this.blocoQualidade(emp, nd, P) + this.blocoPresenca(pr);
     const p2 = this.blocoTipos(nd) + this.blocoSituacao(sit) + this.blocoRegra() + `<div style="height:9px"></div>`
       + this.termo(emp, P, "")
       + this.caixa("Resumo do assunto tratado:", 44)
@@ -244,6 +255,22 @@ const FeedbackFolha = {
     return [this.pagina(p1, 1, 2, doc), this.pagina(p2, 2, 2, doc)];
   },
 
+  /** recalcula a linha do ranking de cada colaborador depois que as bases de auditoria foram lidas (antes ela vinha vazia se a lista foi aberta cedo demais) */
+  atualizarEmps(emps){
+    try{
+      const fresh = new Map((typeof getFeedbackRankingData==="function" ? getFeedbackRankingData() : []).map(e=>[e.codKey, e]));
+      return emps.map(e=> fresh.get(e.codKey) || e);
+    }catch(err){ return emps; }
+  },
+  /** garante que as bases de auditoria estejam lidas antes de montar o documento */
+  async garantirBases(){
+    const ps = [];
+    if(window.AuditOnline && AuditOnline.rows===null && !AuditOnline.loading) ps.push(AuditOnline.load());
+    if(window.RetornoOnline && RetornoOnline.rows===null && !RetornoOnline.loading) ps.push(RetornoOnline.load());
+    if(typeof RetornoQ!=="undefined" && !RetornoQ.dados) ps.push(RetornoQ.carregar());
+    if(ps.length){ try{ await Promise.all(ps); }catch(e){ console.warn(e); } }
+  },
+
   /* ------------------------------ geração ------------------------------ */
   async gerarNC(emps, per){
     if(typeof html2canvas === "undefined" || typeof window.jspdf === "undefined"){ toast("As bibliotecas de exportação (html2canvas/jsPDF) ainda não carregaram. Aguarde e tente novamente.", "error"); return; }
@@ -252,8 +279,10 @@ const FeedbackFolha = {
       const ps = [];
       if(window.AuditOnline && AuditOnline.rows===null && !AuditOnline.loading) ps.push(AuditOnline.load());
       if(window.RetornoOnline && RetornoOnline.rows===null && !RetornoOnline.loading) ps.push(RetornoOnline.load());
+      if(typeof RetornoQ!=="undefined" && !RetornoQ.dados) ps.push(RetornoQ.carregar());
       if(ps.length) await Promise.all(ps);
     }catch(e){ console.warn(e); }
+    emps = this.atualizarEmps(emps);
     const P = this.periodo(per), pages = [];
     try{
       emps.forEach(e=> this.paginasNC(e, P).forEach(p=>pages.push(p)));

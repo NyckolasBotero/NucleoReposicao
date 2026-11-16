@@ -664,7 +664,11 @@ const RetornoOnline = {
   rows: null, ncs: [], ncInfo: null, loading: false, error: null,
   csvUrl(){ return `https://docs.google.com/spreadsheets/d/${AUDITORIA_ONLINE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent("Auditoria_Retorno")}&_ts=${Date.now()}`; },
   async load(force){
-    if(this.loading || (this.rows && !force)) return;
+    if(this.loading && this._p) return this._p;      // já está lendo: espera a leitura em andamento
+    if(this.rows && !force) return;
+    this._p = this._ler(); return this._p;
+  },
+  async _ler(){
     this.loading = true; this.error = null;
     try{
       const res = await fetch(this.csvUrl(), { cache:"no-store" });
@@ -687,21 +691,25 @@ const RetornoOnline = {
     const num = (v)=>{ const n = parseFloat(String(v).replace(/\./g,"").replace(",",".")); return isNaN(n) ? null : n; };
     const out = [], ncs = [], ncInfo = { linhasNC:0, semColab:0, semColuna:iNC<0 };
     const iRua = col("Rua"), iProd = col("Produto"), iDesc = col("Descricao_Produto");
+    // Erro de retorno = Possui_NC = TRUE OU divergência entre etiqueta e físico (mesmo critério do PDF da auditoria de retorno).
+    // Cada linha com erro é 1 erro / 1 NC de retorno (não agrupa por dia).
     for(let i=1;i<lines.length;i++){
       const c = lines[i]; const data = AuditOnline.parseDateFlexible(c[iData]); if(!data) continue;
       const mat = trimStr(c[iMat]), nome = iNome>=0 ? trimStr(c[iNome]) : "";
       const audMat = iAM>=0 ? trimStr(c[iAM]) : "", audNome = iAN>=0 ? trimStr(c[iAN]) : "";
-      // Não conformidade estrita (Possui_NC = TRUE) → erro de retorno do colaborador (usado por NCs / Feedbacks)
-      if(iNC>=0 && sim(c[iNC])){
-        ncInfo.linhasNC++;
-        if(!mat && !nome) ncInfo.semColab++;
-        else ncs.push({ origem:"RETORNO", data, rua:iRua>=0?trimStr(c[iRua]):"", cod:mat||null, nome, auditor:audNome, produto:iProd>=0?trimStr(c[iProd]):"", desc:iDesc>=0?trimStr(c[iDesc]):"", endereco:"", tipos:{ retorno:true } });
-      }
-      const ncFlag = iNC>=0 && sim(c[iNC]);
-      if(!mat && !nome){ if(audMat || audNome) out.push({ data, codKey:"", nc:false, ncFlag, audMat, audNome, soAuditor:true }); continue; }     // sem repositor atribuído: não entra no ranking individual
+      const rua = iRua>=0 ? trimStr(c[iRua]) : "";
       const etq = iEtq>=0 ? num(c[iEtq]) : null, fis = iFis>=0 ? num(c[iFis]) : null, dv = iDiv>=0 ? num(c[iDiv]) : null;
-      const nc = (iNC>=0 && sim(c[iNC])) || (dv!==null && dv!==0) || (etq!==null && fis!==null && etq!==fis);
-      out.push({ data, codKey: mat ? normStr(mat) : "NOME::"+normStr(nome), nc, ncFlag, audMat, audNome });
+      const ncFlag = iNC>=0 && sim(c[iNC]);
+      const divergente = (dv!==null && dv!==0) || (etq!==null && fis!==null && etq!==fis);
+      const nc = ncFlag || divergente;
+      const temColab = !!(mat || nome);
+      if(nc){
+        ncInfo.linhasNC++;
+        if(!temColab) ncInfo.semColab++;
+        else ncs.push({ id:"R"+i, origem:"RETORNO", data, rua, cod:mat||null, nome, auditor:audNome, produto:iProd>=0?trimStr(c[iProd]):"", desc:iDesc>=0?trimStr(c[iDesc]):"", endereco:"", tipos:{ retorno:true } });
+      }
+      // linhas sem repositor entram só para o auditor e para os totais por rua (soAuditor)
+      out.push({ data, rua, codKey: temColab ? (mat ? normStr(mat) : "NOME::"+normStr(nome)) : "", nome, nc, ncFlag, audMat, audNome, soAuditor: !temColab });
     }
     this.ncs = ncs; this.ncInfo = ncInfo;
     return out;
@@ -742,8 +750,8 @@ const RetornoOnline = {
     const m = new Map(), i = dateOnly(ini), f = dateOnly(fim);
     (this.rows||[]).forEach(r=>{
       const d = dateOnly(r.data); if(d<i || d>f || r.soAuditor) return;
-      if(!m.has(r.codKey)) m.set(r.codKey, { auditorias:0, ok:0 });
-      const e = m.get(r.codKey); e.auditorias++; if(!r.nc) e.ok++;
+      if(!m.has(r.codKey)) m.set(r.codKey, { auditorias:0, ok:0, erros:0 });
+      const e = m.get(r.codKey); e.auditorias++; if(!r.nc) e.ok++; else e.erros++;
     });
     m.forEach(e=>{ e.qualidade = e.auditorias ? e.ok/e.auditorias*100 : null; });
     return m;

@@ -26,6 +26,7 @@ const VALIDADE_LOGIN_DIAS = 180;
 const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
+const PERM_RUAS = ['Gestão', 'Atribuição Ruas'];
 const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias', 'Certificados'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
@@ -114,6 +115,10 @@ function doPost(e) {
       if (d.acao === 'bases_modo') { exigir(s, PERM_BASES); return resposta(basesModo(d)); }
       if (d.acao === 'bases_excluir') { exigir(s, PERM_BASES); return resposta(basesExcluir(d, s)); }
       if (d.acao === 'bases_concluir') { exigir(s, PERM_BASES); return resposta(basesConcluir(d, s)); }
+      if (d.acao === 'ruas_listar') { exigir(s, PERM_RUAS); return resposta(ruasListar(s)); }
+      if (d.acao === 'ruas_atribuir') { exigir(s, PERM_RUAS); return resposta(ruasAtribuir(d, s)); }
+      if (d.acao === 'ruas_historico') { exigir(s, PERM_RUAS); return resposta(ruasHistorico(d)); }
+      if (d.acao === 'ruas_estado_em') { exigir(s, PERM_RUAS); return resposta(ruasEstadoEm(d)); }
       if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
     } finally { if (lk) lk.releaseLock(); }
     return resposta({ ok: false, erro: 'Ação desconhecida.' });
@@ -126,7 +131,7 @@ function doPost(e) {
 
 /** Ações que só leem: rodam sem a trava global (várias pessoas podem consultar enquanto alguém grava). */
 const LEITURAS_SEM_TRAVA = {
-  admin_listar: 1, admin_historico: 1, alertas_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
+  admin_listar: 1, admin_historico: 1, alertas_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1
 };
@@ -188,6 +193,8 @@ function lerUsuarios() {
       const velho = normalizar(ABA_LANC) + '|' + (NOMES_ANTIGOS[normalizar(sub)] || '#');
       if (!u._vistos[k] && !u._vistos[velho]) { u._vistos[k] = true; u.perms.push({ aba: ABA_LANC, sub: sub }); }
     });
+    const kr = normalizar(PERM_RUAS[0]) + '|' + normalizar(PERM_RUAS[1]);
+    if (!u._vistos[kr]) { u._vistos[kr] = true; u.perms.push({ aba: PERM_RUAS[0], sub: PERM_RUAS[1] }); }
   });
   return { T: T, usuarios: mapa };
 }
@@ -2162,8 +2169,25 @@ function quadroSalvar(d, s) {
   sh.getRange(n, 1, 1, info.ult).setValues([l]);
   [c.adm, c.desl, c.transf, c.enc].forEach(function (k) { formatarDatas(sh, k, n, 1); });
   CacheService.getScriptCache().remove('nome_' + mat);
+  let cargosSync = 0; try { cargosSync = quadroSincronizarCargos(); } catch (e) { /* sem QUADRO REP: segue */ }
   registrarLog(s, linhaEd ? 'Quadro (edição)' : 'Quadro (novo)', mat + ' ' + nome + ' · ' + (ativo ? 'ATIVO' : 'NÃO ativo' + (tipo ? ' (' + tipo + ')' : '')));
-  return { ok: true, ativo: ativo, linha: n };
+  return { ok: true, ativo: ativo, linha: n, cargosSync: cargosSync };
+}
+
+/** Copia o CARGO do cadastro (TURNOVER, preenchido em Lançar Quadro) para todas as linhas daquele código na aba QUADRO REP. */
+function quadroSincronizarCargos() {
+  const q = infoAba('QUADRO REP'), iCod = acharCol(q, ALIAS_Q.cod);
+  if (iCod < 0) return 0;
+  const iCar = garantirCol(q, ALIAS_Q.cargo, 'CARGO');
+  const cad = {};
+  lerTurnover().pessoas.forEach(function (p) { const m = soDigitos(p.mat); if (m && p.cargo) cad[m] = p.cargo; });
+  const ult = q.sh.getLastRow();
+  if (ult < 2) return 0;
+  const rng = q.sh.getRange(2, iCar + 1, ult - 1, 1), atual = rng.getValues(), cods = q.sh.getRange(2, iCod + 1, ult - 1, 1).getValues();
+  let mud = 0;
+  const novo = atual.map(function (v, i) { const c = cad[soDigitos(cods[i][0])]; if (c && texto(v[0]) !== c) { mud++; return [c]; } return v; });
+  if (mud) rng.setValues(novo);
+  return mud;
 }
 
 /* ---------- Missões ---------- */
@@ -2290,4 +2314,209 @@ function feriasCancelar(d, s) {
   info.sh.getRange(linha, cSt + 1).setValue('Cancelada');
   registrarLog(s, 'Férias (cancelamento)', soDigitos(info.sh.getRange(linha, cM + 1).getValue()) + ' ' + texto(info.sh.getRange(linha, cN + 1).getValue()));
   return { ok: true };
+}
+
+/* ===================== Atribuição de Ruas (Gestão > Atribuição Ruas) ===================== */
+/* Estado atual: aba ATRIBUICAO_RUAS (uma linha por rua + repositor) na planilha de dados.
+   Histórico: ATRIBUICAO_RUAS_HIST (cada mudança, com data e hora) e ATRIBUICAO_RUAS_DIA (foto do estado de cada rua, 1x por dia).
+   Cópia do estado atual: aba Quadro_Repositores (coluna Ruas) da planilha de auditoria, para o outro setor. */
+
+const QUADRO_REPOSITORES_SS_ID = '1Srs2JdL1WEGsaa-SaLec2TaYQYX_eUmNsU2zE1M4CAA';
+const ABA_QUADRO_REPOSITORES = 'Quadro_Repositores';
+const ABA_RUAS_ATUAL = 'ATRIBUICAO_RUAS', ABA_RUAS_HIST = 'ATRIBUICAO_RUAS_HIST', ABA_RUAS_DIA = 'ATRIBUICAO_RUAS_DIA';
+const CAB_RUAS = ['Rua', 'Matrícula', 'Nome', 'Desde', 'Atualizado por'];
+const CAB_RUAS_HIST = ['Data', 'Hora', 'Rua', 'Matrícula anterior', 'Nome anterior', 'Matrícula nova', 'Nome novo', 'Ação', 'Usuário'];
+const CAB_RUAS_DIA = ['Data', 'Rua', 'Matrícula', 'Nome'];
+const RUA_MIN = 1, RUA_MAX = 49;
+
+function ruasNumero(v) { const n = parseInt(String(v == null ? '' : v).replace(/\D/g, ''), 10); return n >= RUA_MIN && n <= RUA_MAX ? n : 0; }
+function ruasParse(txt) { return String(txt == null ? '' : txt).split(/[,;\/\s]+/).map(ruasNumero).filter(Boolean); }
+function agoraTxt() { return Utilities.formatDate(new Date(), tzDados(), 'dd/MM/yyyy HH:mm'); }
+
+/** Planilha de auditoria: aba Quadro_Repositores (Matricula, Nome, Funcao, Ruas). */
+function ruasQuadroExterno() {
+  const sh = SpreadsheetApp.openById(QUADRO_REPOSITORES_SS_ID).getSheetByName(ABA_QUADRO_REPOSITORES);
+  if (!sh) throw new Error('A aba "' + ABA_QUADRO_REPOSITORES + '" não existe na planilha de auditoria.');
+  const ult = Math.max(sh.getLastColumn(), 1);
+  const cab = sh.getRange(1, 1, 1, ult).getDisplayValues()[0].map(normalizar);
+  const ach = function (al) { for (let i = 0; i < al.length; i++) { const k = cab.indexOf(normalizar(al[i])); if (k >= 0) return k; } return -1; };
+  const X = { sh: sh, ult: ult, iMat: ach(['MATRICULA', 'COD', 'CODIGO']), iNome: ach(['NOME']), iFunc: ach(['FUNCAO', 'CARGO']), iRuas: ach(['RUAS', 'RUA']) };
+  if (X.iMat < 0 || X.iRuas < 0) throw new Error('Quadro_Repositores precisa das colunas Matricula e Ruas.');
+  X.linhas = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, ult).getDisplayValues() : [];
+  return X;
+}
+
+/** { sh, mapa: { rua: [{mat, nome, desde, por}] } } — na 1ª vez importa as ruas que já estão no Quadro_Repositores. */
+function ruasEstado(s) {
+  const sh = abaComCabecalho(ABA_RUAS_ATUAL, CAB_RUAS), mapa = {}, ult = sh.getLastRow();
+  if (ult >= 2) sh.getRange(2, 1, ult - 1, 5).getDisplayValues().forEach(function (l) {
+    const r = ruasNumero(l[0]), mat = soDigitos(l[1]);
+    if (r && mat) (mapa[r] = mapa[r] || []).push({ mat: mat, nome: texto(l[2]), desde: texto(l[3]), por: texto(l[4]) });
+  });
+  const props = PropertiesService.getScriptProperties();
+  if (!Object.keys(mapa).length && !props.getProperty('ruas_semeado')) {
+    props.setProperty('ruas_semeado', '1');
+    try {
+      const X = ruasQuadroExterno(), agora = agoraTxt(), hist = [];
+      X.linhas.forEach(function (l) {
+        const mat = soDigitos(l[X.iMat]), nome = X.iNome >= 0 ? texto(l[X.iNome]) : '';
+        ruasParse(l[X.iRuas]).forEach(function (r) {
+          (mapa[r] = mapa[r] || []).push({ mat: mat, nome: nome, desde: agora, por: 'Importado do Quadro_Repositores' });
+          hist.push([agora.slice(0, 10), agora.slice(11), r, '', '', mat, nome, 'Importado', 'Sistema']);
+        });
+      });
+      if (Object.keys(mapa).length) { ruasEscrever(sh, mapa); ruasGravarHist(hist); }
+    } catch (e) { /* planilha de auditoria indisponível: começa vazio */ }
+  }
+  return { sh: sh, mapa: mapa };
+}
+function ruasEscrever(sh, mapa) {
+  const linhas = [];
+  Object.keys(mapa).map(Number).sort(function (a, b) { return a - b; }).forEach(function (r) { mapa[r].forEach(function (p) { linhas.push([r, p.mat, p.nome, p.desde, p.por]); }); });
+  const ult = sh.getLastRow();
+  if (ult >= 2) sh.getRange(2, 1, ult - 1, 5).clearContent();
+  if (linhas.length) {
+    garantirTamanho(sh, linhas.length + 1, 5);
+    sh.getRange(2, 4, linhas.length, 1).setNumberFormat('@');
+    sh.getRange(2, 1, linhas.length, 5).setValues(linhas);
+  }
+}
+function ruasGravarHist(linhas) {
+  if (!linhas.length) return;
+  const sh = abaComCabecalho(ABA_RUAS_HIST, CAB_RUAS_HIST), n = Math.max(sh.getLastRow(), 1) + 1;
+  garantirTamanho(sh, n + linhas.length - 1, CAB_RUAS_HIST.length);
+  sh.getRange(n, 1, linhas.length, 2).setNumberFormat('@');
+  sh.getRange(n, 1, linhas.length, CAB_RUAS_HIST.length).setValues(linhas);
+}
+
+/** Foto do estado de cada rua (1x por dia): a primeira chamada do dia grava as 49 ruas. */
+function ruasFotoDoDia(E) {
+  const iso = hoje(), props = PropertiesService.getScriptProperties();
+  if (props.getProperty('ruas_foto_dia') === iso) return false;
+  const dia = iso.split('-').reverse().join('/'), linhas = [];
+  for (let r = RUA_MIN; r <= RUA_MAX; r++) {
+    const ps = E.mapa[r] || [];
+    linhas.push([dia, r, ps.map(function (p) { return p.mat; }).join(', '), ps.map(function (p) { return p.nome; }).join(', ')]);
+  }
+  const sh = abaComCabecalho(ABA_RUAS_DIA, CAB_RUAS_DIA), n = Math.max(sh.getLastRow(), 1) + 1;
+  garantirTamanho(sh, n + linhas.length - 1, CAB_RUAS_DIA.length);
+  sh.getRange(n, 1, linhas.length, 4).setNumberFormat('@');
+  sh.getRange(n, 1, linhas.length, 4).setValues(linhas);
+  props.setProperty('ruas_foto_dia', iso);
+  return true;
+}
+/** Para agendar a foto diária sem ninguém abrir o site: rode UMA vez no editor (cria o gatilho das ~1h). */
+function instalarGatilhoRuas() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'ruasFotoGatilho') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('ruasFotoGatilho').timeBased().everyDays(1).atHour(1).create();
+}
+function ruasFotoGatilho() { ruasFotoDoDia(ruasEstado(null)); }
+
+function ruasPessoas() {
+  try {
+    return lerTurnover().pessoas.filter(function (p) { return p.ativo && p.mat; }).map(function (p) { return { mat: soDigitos(p.mat), nome: p.nome, cargo: p.cargo }; });
+  } catch (e) { return []; }
+}
+
+function ruasListar(s) {
+  const E = ruasEstado(s);
+  try { ruasFotoDoDia(E); } catch (e) { /* a foto diária não pode travar a tela */ }
+  return { ok: true, ruas: E.mapa, pessoas: ruasPessoas(), hoje: hoje() };
+}
+
+/** d = { ruas:[n...], mat, modo: 'substituir' | 'adicionar' | 'remover' }. Sem matrícula, 'substituir' e 'remover' liberam a rua. */
+function ruasAtribuir(d, s) {
+  const bruto = (Array.isArray(d.ruas) ? d.ruas : []).map(ruasNumero).filter(Boolean);
+  const ruas = bruto.filter(function (r, i) { return bruto.indexOf(r) === i; }).sort(function (a, b) { return a - b; });
+  if (!ruas.length) throw new Error('Selecione ao menos uma rua (de ' + RUA_MIN + ' a ' + RUA_MAX + ').');
+  const modo = texto(d.modo) || 'substituir';
+  if (['substituir', 'adicionar', 'remover'].indexOf(modo) < 0) throw new Error('Modo inválido.');
+  const mat = soDigitos(d.mat);
+  let nome = '';
+  if (mat) { nome = nomePorMatricula(mat) || texto(d.nome); if (!nome) throw new Error('Matrícula ' + mat + ' não encontrada.'); }
+  else if (modo === 'adicionar') throw new Error('Escolha o repositor.');
+  const E = ruasEstado(s);
+  try { ruasFotoDoDia(E); } catch (e) { /* idem */ }      // a foto do dia sai ANTES da mudança: guarda como a rua começou o dia
+  const agora = agoraTxt(), quem = s.nome || s.matricula, hist = [];
+  const ids = function (l, k) { return l.map(function (p) { return p[k]; }).join(' / '); };
+  ruas.forEach(function (r) {
+    const antes = (E.mapa[r] || []).slice();
+    const novo = { mat: mat, nome: nome, desde: agora, por: quem };
+    let depois, acao;
+    if (modo === 'adicionar') { depois = antes.some(function (p) { return p.mat === mat; }) ? antes : antes.concat([novo]); acao = 'Adição'; }
+    else if (modo === 'remover') { depois = mat ? antes.filter(function (p) { return p.mat !== mat; }) : []; acao = mat ? 'Remoção' : 'Liberação'; }
+    else { depois = mat ? [antes.filter(function (p) { return p.mat === mat; })[0] || novo] : []; acao = mat ? (antes.length ? 'Troca' : 'Atribuição') : 'Liberação'; }
+    if (ids(antes, 'mat') === ids(depois, 'mat')) return;
+    if (depois.length) E.mapa[r] = depois; else delete E.mapa[r];
+    hist.push([agora.slice(0, 10), agora.slice(11), r, ids(antes, 'mat'), ids(antes, 'nome'), ids(depois, 'mat'), ids(depois, 'nome'), acao, quem]);
+  });
+  if (!hist.length) return { ok: true, mudou: 0, ruas: E.mapa, sync: { ok: true, msg: 'Nada mudou.' } };
+  ruasEscrever(E.sh, E.mapa);
+  ruasGravarHist(hist);
+  registrarLog(s, 'Atribuição de ruas', ruas.join(', ') + ' · ' + (nome ? mat + ' ' + nome : 'liberada') + ' · ' + modo);
+  const sync = ruasSincronizar(E.mapa);
+  return { ok: true, mudou: hist.length, ruas: E.mapa, sync: sync };
+}
+
+/** Copia o estado atual para a coluna Ruas de Quadro_Repositores (planilha de auditoria). Falha aqui não desfaz a atribuição. */
+function ruasSincronizar(mapa) {
+  try {
+    const X = ruasQuadroExterno(), porMat = {}, nomes = {};
+    Object.keys(mapa).forEach(function (r) { mapa[r].forEach(function (p) { (porMat[p.mat] = porMat[p.mat] || []).push(Number(r)); nomes[p.mat] = p.nome; }); });
+    const vistos = {};
+    const valores = X.linhas.map(function (l) {
+      const m = soDigitos(l[X.iMat]); if (m) vistos[m] = true;
+      return [(porMat[m] || []).sort(function (a, b) { return a - b; }).join(', ')];
+    });
+    if (valores.length) { const rg = X.sh.getRange(2, X.iRuas + 1, valores.length, 1); rg.setNumberFormat('@'); rg.setValues(valores); }
+    const faltam = Object.keys(porMat).filter(function (m) { return !vistos[m]; });
+    if (faltam.length) {
+      const cargos = {}; ruasPessoas().forEach(function (p) { cargos[p.mat] = p.cargo; });
+      const novas = faltam.map(function (m) {
+        const l = new Array(X.ult).fill('');
+        l[X.iMat] = m; if (X.iNome >= 0) l[X.iNome] = nomes[m]; if (X.iFunc >= 0) l[X.iFunc] = (cargos[m] || 'REPOSITOR').toUpperCase();
+        l[X.iRuas] = porMat[m].sort(function (a, b) { return a - b; }).join(', ');
+        return l;
+      });
+      const n = Math.max(X.sh.getLastRow(), 1) + 1;
+      garantirTamanho(X.sh, n + novas.length - 1, X.ult);
+      X.sh.getRange(n, X.iRuas + 1, novas.length, 1).setNumberFormat('@');
+      X.sh.getRange(n, 1, novas.length, X.ult).setValues(novas);
+    }
+    return { ok: true, msg: 'Quadro_Repositores atualizado.', novos: faltam.length };
+  } catch (e) { return { ok: false, msg: String(e && e.message ? e.message : e) }; }
+}
+
+function ruasHistorico(d) {
+  const sh = abaComCabecalho(ABA_RUAS_HIST, CAB_RUAS_HIST), ult = sh.getLastRow();
+  if (ult < 2) return { ok: true, itens: [] };
+  const rua = ruasNumero(d.rua), mat = soDigitos(d.mat), ini = Math.max(2, ult - 1999);
+  const itens = [];
+  sh.getRange(ini, 1, ult - ini + 1, CAB_RUAS_HIST.length).getDisplayValues().forEach(function (l) {
+    if (rua && ruasNumero(l[2]) !== rua) return;
+    if (mat && String(l[3]).indexOf(mat) < 0 && String(l[5]).indexOf(mat) < 0) return;
+    itens.push({ data: l[0], hora: l[1], rua: ruasNumero(l[2]), matAnt: l[3], nomeAnt: l[4], matNovo: l[5], nomeNovo: l[6], acao: l[7], por: l[8] });
+  });
+  itens.reverse();
+  return { ok: true, itens: itens.slice(0, 400) };
+}
+
+/** Estado das ruas numa data (foto do dia, ou a mais recente antes dela) + o que mudou naquele dia. d.data = aaaa-MM-dd */
+function ruasEstadoEm(d) {
+  const iso = texto(d.data); isoParaData(iso);
+  const alvo = iso.split('-').reverse().join('/');
+  const sh = abaComCabecalho(ABA_RUAS_DIA, CAB_RUAS_DIA), ult = sh.getLastRow(), mapa = {};
+  let dia = '';
+  if (ult >= 2) {
+    const v = sh.getRange(2, 1, ult - 1, 4).getDisplayValues();
+    const chave = function (t) { return t.split('/').reverse().join('-'); };
+    v.forEach(function (l) { const k = chave(l[0]); if (k <= iso && k > dia) dia = k; });
+    if (dia) v.forEach(function (l) {
+      if (chave(l[0]) !== dia) return;
+      const mats = String(l[2]).split(',').map(soDigitos).filter(String), nomes = String(l[3]).split(',').map(texto);
+      if (mats.length) mapa[ruasNumero(l[1])] = mats.map(function (m, i) { return { mat: m, nome: nomes[i] || '' }; });
+    });
+  }
+  const mudancas = ruasHistorico({}).itens.filter(function (x) { return x.data === alvo; });
+  return { ok: true, pedido: iso, foto: dia, ruas: mapa, mudancas: mudancas };
 }
