@@ -2622,6 +2622,7 @@ function auditoriaStatusQual(v){
 }
 
 const AuditOnline = {
+  RUAS_FORA: new Set([14,15,21,31,50,51,52,53,54]),
   state: { dataInicial:null, dataFinal:null, atalhoSel:null, rua:null, repositor:null, auditor:null, apenasQuadroAtual:"SIM" },
   rows: null,        // null = ainda não carregado
   loading: false,
@@ -2738,6 +2739,7 @@ const AuditOnline = {
     //    atribuído ao colaborador de Matricula_Colaborador_NC / Nome_Colaborador_NC (usado por NCs / Feedbacks)
     const ncRuas = [], ncInfo = { linhasNC:0, semCriterio:0, semColab:0, semColuna:iPossuiNC===-1 };
     // 1) agrupa as linhas (produtos) por dia + rua + repositor
+    const pesosAud = AUDITORIA_PESOS_CRITERIOS;
     const grupos = new Map();
     for(let li=1; li<lines.length; li++){
       const cols = lines[li];
@@ -2746,15 +2748,24 @@ const AuditOnline = {
       if(!data) continue;
       const rua = cell(cols,iRua);
       if(!rua) continue;
+      if(this.RUAS_FORA.has(parseInt(rua,10))) continue;     // ruas fora da auditoria e dos mapas
       const cod = cell(cols,iMatricula) || null;
       const nome = cell(cols,iNomeColab);
       const gkey = ymdKey(data)+"|"+rua+"|"+(cod?normStr(cod):(nome?"N:"+normStr(nome):""));
-      if(!grupos.has(gkey)) grupos.set(gkey, { data, rua, cod, nome, auditores:new Set(), pickErrado:0, avariado:0, proxVenc:0, semSaldo:0, produtos:0, itens:[], fotos:[] });
+      if(!grupos.has(gkey)) grupos.set(gkey, { data, rua, cod, nome, auditores:new Set(), pickErrado:0, avariado:0, proxVenc:0, semSaldo:0, outra:0, ends:new Map(), produtos:0, itens:[], fotos:[] });
       const g = grupos.get(gkey);
       g.produtos++;
       const aud = cell(cols,iAuditor); if(aud) g.auditores.add(aud);
       const pe = isTrue(cols[iPickErrado]), av = isTrue(cols[iAvariado]), pv = isTrue(cols[iProxVenc]), ss = isTrue(cols[iSemSaldo]);
       if(pe) g.pickErrado++; if(av) g.avariado++; if(pv) g.proxVenc++; if(ss) g.semSaldo++;
+      // pontos do lançamento: os pesos SOMAM (picking 6, avaria 4, vencimento 3, sem saldo 2); NC sem nenhuma ocorrência = 1.
+      // Mesmo endereço lançado mais de uma vez na auditoria da rua: vale o MAIOR peso daquele endereço.
+      const ncMarcada = iPossuiNC!==-1 && isTrue(cols[iPossuiNC]);
+      const outra = ncMarcada && !(pe||av||pv||ss);
+      if(outra) g.outra++;
+      const pts = (pe?pesosAud.pickErrado:0) + (av?pesosAud.avariado:0) + (pv?pesosAud.proxVenc:0) + (ss?pesosAud.semSaldo:0) + (outra?1:0);
+      const ek = cell(cols,iEndereco) || cell(cols,iProduto) || ("L"+li);
+      g.ends.set(ek, Math.max(g.ends.get(ek)||0, pts));
       if(iPossuiNC!==-1 && isTrue(cols[iPossuiNC])){
         ncInfo.linhasNC++;
         if(!cod && !nome) ncInfo.semColab++;
@@ -2780,6 +2791,8 @@ const AuditOnline = {
     }).sort((x,y)=> x.data-y.data || String(x.rua).localeCompare(String(y.rua),undefined,{numeric:true}));
 
     this.ncRuas = ncRuas; this.ncInfo = ncInfo;
+    const endsDia = new Map();   // dia|rua → endereços distintos auditados
+    lista.forEach(g=>{ const k = ymdKey(g.data)+"|"+g.rua; if(!endsDia.has(k)) endsDia.set(k, new Set()); g.ends.forEach((v,e)=>endsDia.get(k).add(e)); });
     // 3) converte cada grupo em uma "auditoria" com as contagens de ocorrência
     const pesos = AUDITORIA_PESOS_CRITERIOS;
     const pesoTotal = pesos.avariado + pesos.pickErrado + pesos.proxVenc + pesos.semSaldo;
@@ -2793,6 +2806,7 @@ const AuditOnline = {
         auditor: Array.from(g.auditores).join(" / "),
         codKey: g.cod ? normStr(g.cod) : (g.nome?"NOME::"+normStr(g.nome):null),
         pickErrado, avariado, proxVenc, semSaldo, totalOcorrencias,
+        outra: g.outra, pontos: Array.from(g.ends.values()).reduce((a,b)=>a+b,0), enderecosAud: endsDia.get(ymdKey(g.data)+"|"+g.rua).size,
         criteriosOk, qualidade: pesoOk/pesoTotal*100,
         impecavel: totalOcorrencias===0,
         temProblema: totalOcorrencias>0,
@@ -2846,31 +2860,38 @@ const AuditOnline = {
     return out;
   },
 
-  // "penalidade" de uma linha, em item-equivalentes: cada ocorrência de um critério
-  // "consome" o peso daquele critério em itens da rua. Ex.: 1 avaria (peso 4) tira
-  // 4 dos itens da rua; 3 avarias tiram 12.
+  // pontos de uma auditoria (grupo) = soma dos pesos dos endereços (mesmo endereço lançado de novo: vale o maior peso)
   penalidadeLinha(row){
+    if(row.pontos!==undefined) return row.pontos;
     const p = AUDITORIA_PESOS_CRITERIOS;
     return row.pickErrado*p.pickErrado + row.avariado*p.avariado + row.proxVenc*p.proxVenc + row.semSaldo*p.semSaldo;
   },
-
-  // qualidade de UMA linha = (itens cadastrados na 8022 da rua - penalidade ponderada
-  // daquela auditoria) / itens da rua. Ex.: rua com 100 itens e 1 avaria (peso 4) →
-  // (100-4)/100 = 96%. Quando a rua não tem itens conhecidos na 8022, cai para a nota
-  // por critério em percentual (peso OK / peso total × 100).
+  // endereços da rua = endereços de picking da rua na 8022; se a auditoria tiver mais endereços que a base, vale a quantidade auditada
+  enderecosDaRua(rua, rows){
+    const base = this.ruaItensMap().get(String(rua)) || 0;
+    const aud = Math.max(0, ...rows.map(r=>r.enderecosAud||0));
+    return Math.max(base, aud);
+  },
+  // qualidade de UMA auditoria = 1 − pontos ÷ endereços da rua
   qualidadeLinha(row){
-    const itens = this.ruaItensMap().get(String(row.rua)) || 0;
-    if(itens>0){
-      const pen = this.penalidadeLinha(row);
-      return Math.max(0, Math.min(100, (itens-pen)/itens*100));
-    }
+    const n = this.enderecosDaRua(row.rua, [row]);
+    if(n>0) return Math.max(0, Math.min(100, (1 - this.penalidadeLinha(row)/n)*100));
     return row.qualidade;
   },
 
-  // qualidade média de um conjunto de linhas — média da qualidade (por volume ponderado,
-  // com fallback por critério) de cada uma
+  // Fechamento: cada rua usa a ÚLTIMA auditoria do período (o dia mais recente dela); a qualidade média é a média dessas ruas.
   qualidadeDe(rows){
-    return rows.length ? avg(rows.map(r=>this.qualidadeLinha(r))) : null;
+    if(!rows.length) return null;
+    const porRua = new Map();
+    rows.forEach(r=>{ const k = String(r.rua); if(!porRua.has(k)) porRua.set(k, []); porRua.get(k).push(r); });
+    const qs = [];
+    porRua.forEach((lista, rua)=>{
+      const ult = Math.max(...lista.map(r=>ymdKey(r.data)));
+      const dia = lista.filter(r=>ymdKey(r.data)===ult);
+      const n = this.enderecosDaRua(rua, dia);
+      qs.push(n>0 ? Math.max(0, Math.min(100, (1 - sum(dia.map(r=>this.penalidadeLinha(r)))/n)*100)) : avg(dia.map(r=>r.qualidade)));
+    });
+    return avg(qs);
   },
 
   // qualidade média num intervalo [ini,fim], respeitando os filtros de repositor/rua/
@@ -3000,12 +3021,7 @@ const AuditOnline = {
   // ponderada de todas as auditorias daquela rua) / itens. Sem itens conhecidos,
   // cai para a média da nota por critério.
   qualidadeRuaPorCatalogo(rua, ocorrencias, rowsDaRua){
-    const itens = this.ruaItensMap().get(String(rua)) || 0;
-    if(itens>0){
-      const penTotal = sum(rowsDaRua.map(r=>this.penalidadeLinha(r)));
-      return { qualidade: Math.max(0, Math.min(100, (itens-penTotal)/itens*100)), itens };
-    }
-    return { qualidade: this.qualidadeDe(rowsDaRua), itens: 0 };
+    return { qualidade: this.qualidadeDe(rowsDaRua), itens: this.ruaItensMap().get(String(rua)) || 0 };
   },
 
   byRua(){
@@ -6458,7 +6474,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade de uma auditoria = (Itens cadastrados na 8022 da rua − penalidade) / Itens, onde penalidade = Avariados×4 + Prox.Vencimento×3 + Picking Errado×6 + Sem Saldo×2. Ex.: rua com 100 itens e 1 avaria = (100−4)/100 = 96%. Sem itens conhecidos na 8022, usa a nota por critério (peso OK / 15 × 100). Qualidade do grupo = media das auditorias.</div>
+    <div class="hint-box">Qualidade da rua = 1 − (pontos das ocorrências ÷ endereços da rua). Pesos: Picking errado 6, Avaria 4, Próximo do vencimento 3, Sem saldo 2, outra não conformidade 1; no mesmo lançamento os pesos somam, e o mesmo endereço lançado mais de uma vez vale o maior peso. Endereços da rua = endereços de picking na 8022 (se a auditoria tiver mais, vale a quantidade auditada). No fechamento cada rua usa a última auditoria do período e a qualidade média é a média dessas ruas. Ruas fora da auditoria: 14, 15, 21, 31 e 50 a 54.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
