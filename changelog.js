@@ -4,9 +4,16 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.17.0";
+const APP_VERSAO = "2.17.1";
 
 const NOTAS_VERSAO = [
+  { v:"2.17.1", data:"2026-11-16", titulo:"Correções no Feedback de Produção e Qualidade", itens:[
+    "O.S. dia anterior = último dia em que o colaborador produziu antes da data base (sem produção no dia anterior, mostra o último dia produzido).",
+    "O.S. última semana = soma de segunda a sexta da última semana fechada (a semana em andamento não entra); o card mostra o período.",
+    "Média diária, Ritmo atual e Projeção usam a média de O.S. do mês atual (O.S. do mês ÷ dias produzidos); projeção = média × dias úteis do mês.",
+    "Qualidade · Ruas é do mês atual; Qualidade · Retornos mostra o % de acerto sobre os retornos auditados (ex.: 47 auditados, 5 erros, 89,4%).",
+    "Tabela \"Não conformidades por motivo\" ganhou as colunas Auditorias e % de erro sobre as auditorias, para entender o percentual."
+  ]},
   { v:"2.17.0", data:"2026-11-16", titulo:"Regras e pesos da auditoria de ruas", itens:[
     "Qualidade da rua = 1 − (pontos ÷ endereços da rua). Pesos: picking errado 6, avaria 4, próximo do vencimento 3, sem saldo 2 e outra não conformidade 1; no mesmo lançamento os pesos somam.",
     "O mesmo endereço lançado mais de uma vez na auditoria da rua vale o maior peso (não soma). Endereços da rua = picking na 8022; se a auditoria tiver mais endereços, vale a quantidade auditada.",
