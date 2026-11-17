@@ -30,7 +30,7 @@ const DOC_FILTROS = {
       ["Quadro Atual?","alternar","toggle-group","Sim / Não"],
       ["Comparar semana com","alternar","toggle-group","só no modo Semana (Semana anterior / Mês anterior)"],
       ["Mesma periodicidade?","alternar","toggle-group","só no modo Mês"],
-      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Tudo"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"],
       ["Comparar ano × ano","lista","inline","year-cmp-select-1 / 2 — sem rótulo, sem filter-group"],
       ["Mês da produção diária","lista","inline","prod-daily-mes-select — estilo solto na tela"],
       ["Base da projeção","lista","filter-group","proj-base-select"],
@@ -38,8 +38,9 @@ const DOC_FILTROS = {
     ]},
     { id:"projecao", menu:"indicadores", nome:"Projeção", filtros:[
       ["Data Inicial","data","filter-group","proj-data-ini"],
-      ["Data Final","data","filter-group","proj-data-fim"]
-    ], obs:"Sem atalhos de período, sem filtro de funcionário e sem Quadro Atual — diferente de Produção." },
+      ["Data Final","data","filter-group","proj-data-fim"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"]
+    ], obs:"Sem filtro de funcionário e sem Quadro Atual — diferente de Produção." },
     { id:"individual", menu:"indicadores", nome:"Acompanhamento Individual", filtros:[
       ["Funcionário","lista","filter-group","ind-emp-select — Código - Nome"],
       ["Meta Mensal (O.S.)","número","inline","ind-meta — largura fixa no estilo da tela"],
@@ -55,24 +56,25 @@ const DOC_FILTROS = {
       ["Mesmo período","alternar","toggle-group","comparativo de períodos"]
     ]},
     { id:"operadores", menu:"indicadores", nome:"Produção Operadores", filtros:[
-      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Tudo"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"],
       ["Data Inicial","data","filter-group","op-dt-ini"],
       ["Data Final","data","filter-group","op-dt-fim"],
       ["Operador","lista","filter-group","op-oper-select"],
       ["Mesma periodicidade","alternar","toggle-group","Sim / Não"]
     ]},
     { id:"relacoes", menu:"indicadores", nome:"Relações Rep", filtros:[
-      ["Atalhos de período","atalho","atalhos","padrão do renderAtalhos"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"],
       ["Data Inicial","data","filter-group","rel-dt-ini"],
       ["Data Final","data","filter-group","rel-dt-fim"],
       ["Busca (funcionário, produto, motivo, rua, depto)","busca","filter-group","rel-busca"],
-      ["Apenas Reposição?","alternar","inline","botões montados à mão (não usam toggle-group)"]
+      ["Apenas Reposição?","alternar","toggle-group","Sim / Não"],
+      ["Apenas REP.AVARIA?","alternar","toggle-group","Sim / Não"]
     ]},
     { id:"capacidade", menu:"indicadores", nome:"Capacidade CD", filtros:[
       ["Produto / Código","busca","filter-group","cap-prod-search"],
       ["Data Inicial","data","filter-group","cap-dt-ini"],
       ["Data Final","data","filter-group","cap-dt-fim"],
-      ["Atalhos de período","atalho","próprio","Mês Atual, Mês Anterior, Ano Atual, Ano Anterior, Tudo — cópia do estilo do renderAtalhos"],
+      ["Atalhos de período","atalho","próprio","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo — versão própria do capSetAtalho, com o mesmo conjunto"],
       ["Período Sheet Tipo (início / fim)","data","inline","demanda por tipo"],
       ["Intervalo de ruas (início / fim)","número","inline","Rua ini / Rua fim"],
       ["Qtd total de itens","número","inline","simulação"],
@@ -92,23 +94,25 @@ const DOC_FILTROS = {
     { id:"feedbacks", menu:"gestao", nome:"Feedbacks e Advertências", filtros:[
       ["Data Inicial","data","filter-group","fb-data-ini"],
       ["Data Final","data","filter-group","fb-data-fim"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"],
       ["Apenas Quadro Atual?","alternar","toggle-group","Ranking de Repositores"],
       ["Apenas Repositor?","alternar","toggle-group","Ranking de Repositores"],
       ["Ordenação por coluna","alternar","próprio","clique no cabeçalho da tabela"],
       ["Seleção de funcionários","marcar","inline","checkbox por linha + marcar todos (para gerar PDF)"],
       ["Período dos dados (ao gerar documento)","lista","próprio","fbf-per — janela de geração do feedback"]
-    ], obs:"Sem atalhos de período. Contém o bloco Insights (cards sem filtro próprio: usa o período da página). Pendência pedida: manter ordenação ao selecionar funcionário." },
+    ], obs:"Contém o bloco Insights (cards sem filtro próprio: usa o período da página). Pendência pedida: manter ordenação ao selecionar funcionário." },
     { id:"quadro", menu:"gestao", nome:"Quadro", filtros:[
       ["Data Inicial","data","filter-group","quadro-data-ini"],
       ["Data Final","data","filter-group","quadro-data-fim"],
-      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Tudo"]
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"]
     ]},
     { id:"chamada", menu:"gestao", nome:"Chamada", filtros:[
       ["Data Inicial","data","filter-group","cham-data-ini"],
-      ["Data Final","data","filter-group","cham-data-fim"]
-    ], obs:"Sem atalhos de período, sem filtro de colaborador/status/Quadro Atual." },
+      ["Data Final","data","filter-group","cham-data-fim"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"]
+    ], obs:"Sem filtro de colaborador/status/Quadro Atual." },
     { id:"auditoria", menu:"gestao", nome:"Auditoria", filtros:[
-      ["Atalhos de período","atalho","atalhos","8 atalhos (Mês Atual, Anterior, 3 meses, Ano Atual/Anterior, 30 e 90 dias, Tudo)"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"],
       ["Data Inicial","data","filter-group","aud-data-ini"],
       ["Data Final","data","filter-group","aud-data-fim"],
       ["Rua","lista","filter-group","aud-rua"],
@@ -119,14 +123,14 @@ const DOC_FILTROS = {
     { id:"comissao", menu:"gestao", nome:"Comissão", filtros:[
       ["Data Inicial","data","filter-group","comm-data-ini"],
       ["Data Final","data","filter-group","comm-data-fim"],
-      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Tudo"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"],
       ["Quadro Atual?","alternar","toggle-group","comm-quadro-toggle"],
       ["Apenas Repositor?","alternar","toggle-group","comm-repositor-toggle"],
       ["Valer a partir de (parâmetros)","data","próprio","cp-desde (mês)"]
     ]},
     { id:"cronograma", menu:"gestao", nome:"Cronograma", filtros:[], obs:"Só formulário de atividade (nome, hora início/fim, prioridade). Sem filtros de listagem." },
     { id:"turnover", menu:"gestao", nome:"Turnover", filtros:[
-      ["Atalhos de período","atalho","atalhos","Mês Atual, Anterior, 3 meses, Ano Atual/Anterior, Tudo"],
+      ["Atalhos de período","atalho","atalhos","Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior, Tudo"],
       ["Data Inicial","data","filter-group","tv-filtro-ini"],
       ["Data Final","data","filter-group","tv-filtro-fim"],
       ["Período de análise","lista","inline","tv-periodo-select"],
@@ -220,9 +224,9 @@ const DOC_FILTROS = {
 
   /* inconsistências já detectadas na leitura do código */
   achados: [
-    { sev:"alta", t:"Atalhos de período diferentes por tela", d:"Produção, Quadro, Comissão e Operadores têm 3 atalhos (Mês Atual, Anterior, Tudo); Auditoria tem 8; Turnover 6; Capacidade 5 (versão copiada); Relações usa o padrão; Projeção, Chamada e Feedbacks não têm atalhos." },
-    { sev:"média", t:"Colaborador sem Código na frente", d:"Listas Funcionário (Produção, Individual) e Repositor (Auditoria), Ranking de Feedbacks, Insights e tabelas de Auditoria já seguem Código - Nome (v2.18.1). Falta varrer NC, Retornos, Comissão, Lançamentos, PDFs e demais telas." },
-    { sev:"média", t:"Sim / Não montado de formas diferentes", d:"toggle-group (padrão), cap-toggle-group (Capacidade) e botões soltos com estilo inline (Relações → Apenas Reposição)." },
+    { sev:"baixa", t:"Atalhos de período padronizados (v2.18.2)", d:"Todas as telas com período usam os mesmos 6 atalhos. Exceção: Avaria XML, que monta os atalhos a partir das datas dos arquivos carregados." },
+    { sev:"média", t:"Colaborador sem Código na frente", d:"Listas Funcionário (Produção, Individual) e Repositor (Auditoria), Ranking de Feedbacks, Insights e tabelas de Auditoria já seguem Código - Nome (v2.18.1). NC, Retornos e Atribuição Ruas também (v2.18.2). Tabelas de Lançamentos e Acessos usam Matrícula antes de Nome; PDFs e Painel TV ainda não foram revisados." },
+    { sev:"média", t:"Sim / Não montado de formas diferentes", d:"toggle-group é o padrão; Capacidade ainda usa cap-toggle-group. Relações já foi convertida." },
     { sev:"média", t:"Campos fora do filter-group", d:"Selects de comparação ano × ano e mês da produção diária (Produção), Meta/Linha de Corte (Individual), Período de análise (Turnover), buscas das telas de Lançamento e inputs da Capacidade usam estilo inline." },
     { sev:"média", t:"Filtro de Quadro Atual só em parte das telas", d:"Existe em Produção, Auditoria e Comissão; não existe em Projeção, Chamada, Quadro, Operadores e Relações." },
     { sev:"baixa", t:"Telas de análise sem nenhum filtro", d:"NVL 3D, Férias e Cronograma." }

@@ -4475,6 +4475,21 @@ function atalhoOp8457(tipo){
   Op8457State.ini=ini; Op8457State.fim=fim;
   renderOperadores();
 }
+function atalhoProjecao(tipo){
+  const {ini,fim}=periodoAtalho(tipo);
+  Projection.state.dataInicial=ini; Projection.state.dataFinal=fim;
+  renderProjecao();
+}
+function atalhoFeedbacks(tipo){
+  const {ini,fim}=periodoAtalho(tipo);
+  FeedbackState.dataInicial=ini; FeedbackState.dataFinal=fim;
+  renderFeedbacks();
+}
+function atalhoChamada(tipo){
+  const {ini,fim}=periodoAtalho(tipo);
+  Attendance.state.dataInicial=ini; Attendance.state.dataFinal=fim;
+  renderChamada();
+}
 function atalhoTurnover(tipo){
   const {ini,fim}=periodoAtalho(tipo);
   TurnoverState.filtroIni = ini; TurnoverState.filtroFim = fim; TurnoverState.atalhoSel = tipo;
@@ -4485,7 +4500,7 @@ function atalhoTurnover(tipo){
 // Detecta qual atalho está ativo comparando as datas (dia local, sem UTC)
 function _ymd(d){ return d? d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate() : ''; }
 function atalhoAtivoPorDatas(ini,fim,tipos){
-  tipos = tipos || ['mes_atual','mes_ant','ano_atual','ano_ant','ultimos_3m'];
+  tipos = tipos || ATALHOS_PADRAO;
   if(!ini && !fim) return 'tudo';
   for(const t of tipos){
     if(t==='tudo'||t==='ultimos_30'||t==='ultimos_90') continue;
@@ -4509,11 +4524,14 @@ function periodoAtalho(tipo){
   return { ini: null, fim: null }; // tudo
 }
 
+// Conjunto ÚNICO de atalhos de período usado em todas as telas
+const ATALHOS_PADRAO = ['mes_atual','mes_ant','ultimos_3m','ano_atual','ano_ant','tudo'];
+
 // Renderiza bloco de atalhos padronizado.
 // selected = 'mes_atual' | 'mes_ant' | 'tudo' etc. | null
 // onclickFn = nome da função JS a chamar com o tipo como string
 function renderAtalhos(selected, onclickFn, opcoes){
-  opcoes = opcoes || ['mes_atual','mes_ant','ano_atual','ano_ant','tudo'];
+  opcoes = opcoes || ATALHOS_PADRAO;
   const labels = {mes_atual:'Mês Atual', mes_ant:'Mês Anterior', ano_atual:'Ano Atual', ano_ant:'Ano Anterior', ultimos_3m:'Últimos 3 Meses', ultimos_30:'Últimos 30 Dias', ultimos_90:'Últimos 90 Dias', tudo:'Tudo'};
   return opcoes.map(t=>{
     const ativo = selected===t;
@@ -4582,7 +4600,7 @@ function renderProducao(){
       <div class="filter-group">
         <label>Atalhos</label>
         <div id="prod-atalhos" style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,['mes_atual','mes_ant']),'atalhoProducao',['mes_atual','mes_ant','tudo'])}
+          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,ATALHOS_PADRAO),'atalhoProducao',ATALHOS_PADRAO)}
         </div>
       </div>
       <div class="spacer"></div>
@@ -5025,7 +5043,7 @@ function renderProjecaoExpandida(proj){
                 const necColor = e.mediaNecessaria===null?'#7a8798':e.mediaNecessaria<=meta/e.diasUteisMes*1.05?'#1a9c62':e.mediaNecessaria<=e.mediaHistorica*1.5?'#e08a1f':'#d64545';
                 return `<tr class="clickable" onclick="selectIndividualFromTable('${escapeHtml(e.codKey)}')">
                   <td style="color:#7a8798;">${i+1}</td>
-                  <td>${escapeHtml(e.nome)}</td>
+                  <td>${escapeHtml(codNome(e.codKey,e.nome))}</td>
                   <td>${fmtNum(e.totalAtual||e.osAtual)}</td>
                   <td>${fmtNum(e.mediaDiariaEmp||e.mediaDiaMesAtual,1)}</td>
                   <td style="font-weight:700;">${fmtNum(projVal)}</td>
@@ -5182,7 +5200,7 @@ function renderRankingSection(periodoKey){
             <table class="data-table">
               <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
               <tbody>
-                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-pos">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
+                ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(codNome(r.codKey,r.nome))}</td><td class="cell-pos">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -5202,7 +5220,7 @@ function renderRankingSection(periodoKey){
             <table class="data-table">
               <thead><tr><th>#</th><th>Repositor</th><th>O.S. 58</th><th>O.S. 58 Mês Anterior</th></tr></thead>
               <tbody>
-                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(r.nome)}</td><td class="cell-neg">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
+                ${[...rows].reverse().map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(codNome(r.codKey,r.nome))}</td><td class="cell-neg">${fmtNum(r.total)}</td><td class="small-muted">${fmtNum(r.osMesAnterior)}</td></tr>`).join("") || '<tr><td colspan="4" class="small-muted">—</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -5329,6 +5347,7 @@ function renderProjecao(){
         <label>Data Final</label>
         <input type="date" id="proj-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}">
       </div>
+      <div class="filter-group"><label>Atalhos de período</label><div class="atalhos-row" style="display:flex;gap:4px;flex-wrap:wrap;">${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal),'atalhoProjecao')}</div></div>
       <div class="spacer"></div>
       <button class="btn btn-outline btn-sm" id="proj-clear">Limpar filtros</button>
     </div>
@@ -5615,6 +5634,7 @@ function renderFeedbacks(){
     <div class="toolbar">
       <div class="filter-group"><label>Data Inicial</label><input type="date" id="fb-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
       <div class="filter-group"><label>Data Final</label><input type="date" id="fb-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+      <div class="filter-group"><label>Atalhos de período</label><div class="atalhos-row" style="display:flex;gap:4px;flex-wrap:wrap;">${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal),'atalhoFeedbacks')}</div></div>
       <div class="spacer"></div>
       <button class="btn btn-outline btn-sm" id="fb-clear">Limpar filtros</button>
     </div>
@@ -5749,7 +5769,7 @@ function renderQuadro(){
       <div class="filter-group">
         <label>Atalhos</label>
         <div id="quadro-atalhos" style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,['mes_atual','mes_ant']),'atalhoQuadro',['mes_atual','mes_ant','tudo'])}
+          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,ATALHOS_PADRAO),'atalhoQuadro',ATALHOS_PADRAO)}
         </div>
       </div>
       <div class="spacer"></div>
@@ -6221,6 +6241,7 @@ function renderChamada(){
         <div class="toolbar" style="padding:0;border:none;background:none;box-shadow:none;margin:0;">
           <div class="filter-group"><label>Data Inicial</label><input type="date" id="cham-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
           <div class="filter-group"><label>Data Final</label><input type="date" id="cham-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
+          <div class="filter-group"><label>Atalhos de período</label><div style="display:flex;gap:4px;flex-wrap:wrap;">${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal),'atalhoChamada')}</div></div>
           <button class="btn btn-outline btn-sm" id="cham-clear">Limpar</button>
         </div>
       </div>
@@ -6412,7 +6433,7 @@ function renderAuditoria(){
   pane.innerHTML = `
     <div class="toolbar" style="margin-bottom:6px;">
       <div class="filter-group"><label>Atalhos de Periodo</label>
-        <div>${renderAtalhos(st.atalhoSel, 'atalhoAuditoria', ['mes_atual','mes_ant','ultimos_3m','ano_atual','ano_ant','ultimos_30','ultimos_90','tudo'])}</div>
+        <div>${renderAtalhos(st.atalhoSel, 'atalhoAuditoria', ATALHOS_PADRAO)}</div>
       </div>
       <div class="filter-group">
         <label>Somente Quadro Atual?</label>
@@ -6714,7 +6735,7 @@ function renderComissao(){
       <div class="filter-group">
         <label>Atalhos</label>
         <div id="comm-atalhos" style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,['mes_atual','mes_ant']),'atalhoComissao',['mes_atual','mes_ant','tudo'])}
+          ${renderAtalhos(atalhoAtivoPorDatas(st.dataInicial,st.dataFinal,ATALHOS_PADRAO),'atalhoComissao',ATALHOS_PADRAO)}
         </div>
       </div>
       <div class="filter-group">
@@ -7448,7 +7469,7 @@ function buildResumoTable(rows, meta, corte){
           const isClickable = typeof selectIndividualFromTable !== 'undefined';
           return `<tr class="clickable" onclick="selectIndividualFromTable('${escapeHtml(d.codKey)}')">
             <td style="color:#7a8798;">${i+1}</td>
-            <td><strong>${escapeHtml(d.nome)}</strong></td>
+            <td><strong>${escapeHtml(codNome(d.codKey,d.nome))}</strong></td>
             <td>${fmtNum(d.osAtual)}</td>
             <td>${fmtNum(d.mediaDiaMesAtual,1)}</td>
             <td style="font-weight:700;">${fmtNum(d.projetadoRitmoAtual)}</td>
@@ -7870,7 +7891,7 @@ function renderTurnover(){
         <span class="panel-note" style="font-weight:700;color:#123a6b;">Ativo: ${periodoLabel}</span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-        ${renderAtalhos(TurnoverState.atalhoSel, 'atalhoTurnover', ['mes_atual','mes_ant','ultimos_3m','ano_atual','ano_ant','tudo'])}
+        ${renderAtalhos(TurnoverState.atalhoSel, 'atalhoTurnover', ATALHOS_PADRAO)}
       </div>
       <div class="toolbar" style="margin-bottom:0;">
         <div class="filter-group"><label>Data Inicial</label><input type="date" id="tv-filtro-ini" value="${TurnoverState.filtroIni?toInputDate(TurnoverState.filtroIni):''}"></div>
@@ -9593,7 +9614,7 @@ function renderOperadores() {
   processed.p8457.filter(r=>r.tipo61&&r.codKey&&r.nome&&!r.nome.includes('APOIO WMS')).forEach(r=>{
     if(!opMap.has(r.codKey)) opMap.set(r.codKey,registry.get(r.codKey)||r.nome||r.codKey);
   });
-  const opList = [...opMap.entries()].sort((a,b)=>a[1].localeCompare(b[1]));
+  const opList = [...opMap.entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([k,n])=>[k,codNome(k,n)]);
 
   const totalAtual   = rowsAtual.length;
   const totalAnt     = rowsAntP.length;
@@ -9675,7 +9696,7 @@ function renderOperadores() {
       <div class="panel-header">
         <h3>Produção Operadores — O.S. Tipo 61 (8457)</h3>
         <div class="panel-actions" style="gap:6px;flex-wrap:wrap;">
-          ${renderAtalhos(atalhoAtivoPorDatas(Op8457State.ini,Op8457State.fim,['mes_atual','mes_ant']),'op8457Atalho',['mes_atual','mes_ant','tudo'])}
+          ${renderAtalhos(atalhoAtivoPorDatas(Op8457State.ini,Op8457State.fim,ATALHOS_PADRAO),'op8457Atalho',ATALHOS_PADRAO)}
         </div>
       </div>
       <div class="toolbar">
@@ -9923,7 +9944,7 @@ function renderOperadores() {
             const dPct=antTot>0?((op.total-antTot)/antTot*100):null;
             const corV=dAbs>=0?'#1a9c62':'#d64545';
             return `<tr><td style="color:#7a8798;">${i+1}</td>
-              <td><strong>${escapeHtml(op.nome)}</strong></td>
+              <td><strong>${escapeHtml(codNome(op.codKey,op.nome))}</strong></td>
               <td style="font-weight:700;color:#0b2647;">${fmtNum(op.total)}</td>
               <td style="color:#1a4480;">${fmtNum(op.qtdTotal)}</td>
               <td>${fmtNum(op.dias)}</td>
@@ -10021,6 +10042,9 @@ function relAtalho(tipo){
   } else if(tipo==='mes_ant'){
     RelState.ini = new Date(y, m-1, 1);
     RelState.fim = new Date(y, m, 0);   // último dia do mês anterior
+  } else if(tipo==='ultimos_3m'){
+    RelState.ini = new Date(y, m-3, 1);
+    RelState.fim = new Date(y, m, 0);
   } else if(tipo==='ano_atual'){
     RelState.ini = new Date(y, 0, 1);
     RelState.fim = new Date(y, 11, 31);
@@ -10320,33 +10344,16 @@ function renderRelacoes(){
           <input type="text" id="rel-busca" value="${escapeHtml(RelState.busca)}" placeholder="Digite para filtrar..."></div>
         <div class="filter-group">
           <label>Apenas Reposição?</label>
-          <div style="display:flex;gap:4px;">
-            ${renderAtalhos(null,'',[])}
-            <button onclick="RelState.apenasRep=true;RelState.paginaTabela=0;renderRelacoes();"
-              style="padding:5px 14px;font-size:11px;font-weight:${RelState.apenasRep?'800':'600'};border-radius:6px;
-                     border:1.5px solid ${RelState.apenasRep?'#0b2647':'#b8c4d4'};
-                     background:${RelState.apenasRep?'#0b2647':'#fff'};
-                     color:${RelState.apenasRep?'#fff':'#1a4480'};cursor:pointer;">Sim</button>
-            <button onclick="RelState.apenasRep=false;RelState.paginaTabela=0;renderRelacoes();"
-              style="padding:5px 14px;font-size:11px;font-weight:${!RelState.apenasRep?'800':'600'};border-radius:6px;
-                     border:1.5px solid ${!RelState.apenasRep?'#0b2647':'#b8c4d4'};
-                     background:${!RelState.apenasRep?'#0b2647':'#fff'};
-                     color:${!RelState.apenasRep?'#fff':'#1a4480'};cursor:pointer;">Não</button>
+          <div class="toggle-group">
+            <button class="${RelState.apenasRep?'active':''}" onclick="RelState.apenasRep=true;RelState.paginaTabela=0;renderRelacoes();">Sim</button>
+            <button class="${!RelState.apenasRep?'active':''}" onclick="RelState.apenasRep=false;RelState.paginaTabela=0;renderRelacoes();">Não</button>
           </div>
         </div>
         <div class="filter-group">
           <label>Apenas REP.AVARIA?</label>
-          <div style="display:flex;gap:4px;">
-            <button onclick="RelState.apenasAvaria=true;RelState.paginaTabela=0;renderRelacoes();"
-              style="padding:5px 14px;font-size:11px;font-weight:${RelState.apenasAvaria?'800':'600'};border-radius:6px;
-                     border:1.5px solid ${RelState.apenasAvaria?'#1a4480':'#b8c4d4'};
-                     background:${RelState.apenasAvaria?'#1a4480':'#fff'};
-                     color:${RelState.apenasAvaria?'#fff':'#1a4480'};cursor:pointer;">Sim</button>
-            <button onclick="RelState.apenasAvaria=false;RelState.paginaTabela=0;renderRelacoes();"
-              style="padding:5px 14px;font-size:11px;font-weight:${!RelState.apenasAvaria?'800':'600'};border-radius:6px;
-                     border:1.5px solid ${!RelState.apenasAvaria?'#0b2647':'#b8c4d4'};
-                     background:${!RelState.apenasAvaria?'#0b2647':'#fff'};
-                     color:${!RelState.apenasAvaria?'#fff':'#1a4480'};cursor:pointer;">Não</button>
+          <div class="toggle-group">
+            <button class="${RelState.apenasAvaria?'active':''}" onclick="RelState.apenasAvaria=true;RelState.paginaTabela=0;renderRelacoes();">Sim</button>
+            <button class="${!RelState.apenasAvaria?'active':''}" onclick="RelState.apenasAvaria=false;RelState.paginaTabela=0;renderRelacoes();">Não</button>
           </div>
         </div>
       </div>
@@ -11206,6 +11213,9 @@ function capSetAtalho(key) {
     CapCDState.filtroFim = new Date(y, m+1, 0, 23, 59, 59);
   } else if (key === 'mesAnt') {
     CapCDState.filtroIni = new Date(y, m-1, 1, 0, 0, 0);
+    CapCDState.filtroFim = new Date(y, m, 0, 23, 59, 59);
+  } else if (key === 'ult3m') {
+    CapCDState.filtroIni = new Date(y, m-3, 1, 0, 0, 0);
     CapCDState.filtroFim = new Date(y, m, 0, 23, 59, 59);
   } else if (key === 'anoAtual') {
     CapCDState.filtroIni = new Date(y, 0, 1, 0, 0, 0);
@@ -12276,8 +12286,8 @@ function renderCapacidadeCD() {
   ).join('');
 
   // Atalhos — mesmo estilo de renderAtalhos()
-  const capAtalhoHTML = ['mesAtual','mesAnt','anoAtual','anoAnt','tudo'].map(key => {
-    const labels = {mesAtual:'Mês Atual',mesAnt:'Mês Anterior',anoAtual:'Ano Atual',anoAnt:'Ano Anterior',tudo:'Tudo'};
+  const capAtalhoHTML = ['mesAtual','mesAnt','ult3m','anoAtual','anoAnt','tudo'].map(key => {
+    const labels = {mesAtual:'Mês Atual',mesAnt:'Mês Anterior',ult3m:'Últimos 3 Meses',anoAtual:'Ano Atual',anoAnt:'Ano Anterior',tudo:'Tudo'};
     const ativo = CapCDState.filtroAtalho === key;
     return `<button onclick="capSetAtalho('${key}')"
       style="padding:5px 12px;font-size:11px;font-weight:${ativo?'800':'600'};border-radius:6px;

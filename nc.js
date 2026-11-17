@@ -224,7 +224,7 @@ const NC = {
         <div class="table-wrap"><table class="data-table nc-table">
           <thead><tr><th>Colaborador</th>${this.TIPOS.map(t=>`<th class="num" title="${t.label}">${t.curto}</th>`).join("")}<th class="num">Total</th><th>Última NC</th><th>Situação</th></tr></thead>
           <tbody>${colab.length ? colab.map(c=>`<tr class="clickable" onclick="NC.detalhe('${escapeHtml(c.codKey)}')">
-            <td><strong>${escapeHtml(c.nome)}</strong> <span class="small-muted">${escapeHtml(c.cod||"")}</span></td>
+            <td><strong>${escapeHtml(c.cod ? c.cod+" - " : "")}${escapeHtml(c.nome)}</strong></td>
             ${this.TIPOS.map(t=>`<td class="num">${cel(c.por[t.key]||0)}</td>`).join("")}
             <td class="num"><strong>${c.total}</strong></td><td>${c.ult?fmtDateBR(c.ult):"—"}</td><td>${badge(sit.get(c.codKey)||0)}</td></tr>`).join("")
             : `<tr><td colspan="${this.TIPOS.length+4}" class="small-muted">Nenhuma não conformidade no período/filtros selecionados.</td></tr>`}</tbody>
@@ -239,7 +239,7 @@ const NC = {
     if(!evs.length) return;
     const e0 = evs[0], por = {}; evs.forEach(e=>por[e.tipo]=(por[e.tipo]||0)+1);
     UI.openModal(`
-      <h3 style="margin-top:0">${escapeHtml(e0.nome)} <span class="small-muted" style="font-size:13px">${escapeHtml(e0.cod||"")}</span></h3>
+      <h3 style="margin-top:0">${escapeHtml(e0.cod ? e0.cod+" - " : "")}${escapeHtml(e0.nome)}</h3>
       <div class="nc-chips">${this.TIPOS.map(t=>`<span class="nc-chip ${por[t.key]?'on':''}">${t.curto}: <strong>${por[t.key]||0}</strong></span>`).join("")}<span class="nc-chip on">Total: <strong>${evs.length}</strong></span></div>
       <div class="table-wrap" style="max-height:55vh;overflow:auto"><table class="data-table">
         <thead><tr><th>Data</th><th>Tipo</th><th>Rua</th><th>Produto</th><th>Auditor</th></tr></thead>
@@ -258,9 +258,9 @@ const NC = {
     const evs = this.eventos();
     const hoje = new Date(), ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
     const mes = evs.filter(e=>dateOnly(e.data)>=ini).length;
-    const linhaFb = (x)=>`<tr><td><strong>${escapeHtml(x.nome)}</strong> <span class="small-muted">${escapeHtml(x.cod||"")}</span></td><td>${escapeHtml(x.label)}</td>
+    const linhaFb = (x)=>`<tr><td><strong>${escapeHtml(x.cod ? x.cod+" - " : "")}${escapeHtml(x.nome)}</strong></td><td>${escapeHtml(x.label)}</td>
       <td class="num"><strong class="cell-neg">${x.ncs}</strong></td><td class="num">${x.fb}</td><td>${fmtDateBR(x.desdeData)}</td><td class="nc-act">${this.botoesGerar(x,"fb")}</td></tr>`;
-    const linhaAd = (x)=>`<tr><td><strong>${escapeHtml(x.nome)}</strong> <span class="small-muted">${escapeHtml(x.cod||"")}</span></td><td>${escapeHtml(x.label)}</td>
+    const linhaAd = (x)=>`<tr><td><strong>${escapeHtml(x.cod ? x.cod+" - " : "")}${escapeHtml(x.nome)}</strong></td><td>${escapeHtml(x.label)}</td>
       <td class="num">${x.fb}</td><td class="num">${x.adv}</td><td class="num"><strong class="cell-neg">${x.pend}</strong></td><td class="nc-act">${this.botoesGerar(x,"adv")}</td></tr>`;
     return `<div class="panel nc-panel">${head}
       <div class="cards-grid nc-cards">
@@ -280,7 +280,7 @@ const NC = {
       </div>
       <div class="nc-sub" style="margin-top:16px">⛔ Pedem suspensão <span class="small-muted">(${su.length}) · ${FB_ADV_PARA_SUSP} advertências no mesmo motivo</span></div>
       <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">Advert.</th><th class="num">Suspensões</th><th class="num">A emitir</th><th></th></tr></thead>
-        <tbody>${su.length ? su.map(x=>`<tr><td><strong>${escapeHtml(x.nome)}</strong> <span class="small-muted">${escapeHtml(x.cod||"")}</span></td><td>${escapeHtml(x.motivo)}</td><td class="num">${x.adv}</td><td class="num">${x.susp}</td><td class="num"><strong class="cell-neg">${x.pend}</strong></td>
+        <tbody>${su.length ? su.map(x=>`<tr><td><strong>${escapeHtml(x.cod ? x.cod+" - " : "")}${escapeHtml(x.nome)}</strong></td><td>${escapeHtml(x.motivo)}</td><td class="num">${x.adv}</td><td class="num">${x.susp}</td><td class="num"><strong class="cell-neg">${x.pend}</strong></td>
           <td class="nc-act">${Auth.can("lancamentos","lsuspensao") ? `<button type="button" class="btn btn-danger btn-sm nc-btn" onclick="NC.gerarSusp('${escapeHtml(x.codKey)}','${escapeHtml(FeedbackAdv.mk(x.motivo))}')">Gerar suspensão</button>` : '<span class="small-muted">—</span>'}</td></tr>`).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${FB_ADV_PARA_SUSP} advertências sem suspensão no mesmo motivo.</td></tr>`}</tbody></table></div>
       <div class="small-muted" style="margin-top:8px">Os motivos usados são: ${this.TIPOS.map(t=>`<em>${escapeHtml(t.motivo)}</em>`).join(", ")}. O botão já abre o lançamento com colaborador, motivo e resumo preenchidos; o contador reinicia a cada feedback lançado nesse motivo.</div>
     </div>`;

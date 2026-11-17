@@ -180,7 +180,7 @@ const RuasUI = {
       const n = sel[0], rs = this.estado[n]||[];
       det = `<h4>Rua ${n}</h4>` + (rs.length ? rs.map(p=>{
         const m = met.get(this.ck(p.mat)) || {};
-        return `<div class="rs-rep"><strong>${this.esc(this.titulo(p.nome))}</strong> <span class="small-muted">${this.esc(p.mat)}</span>
+        return `<div class="rs-rep"><strong>${this.esc(p.mat)} - ${this.esc(this.titulo(p.nome))}</strong>
           <div class="small-muted">desde ${this.esc(p.desde||"—")}${p.por?" · por "+this.esc(p.por):""}</div>
           <div class="rs-cards">${card("Retornos", this.fq(m.ret), this.corQ(m.ret))}${card("Ruas", this.fq(m.rua), this.corQ(m.rua))}${card("Geral", this.fq(m.geral), this.corQ(m.geral))}${card("Prod. média", m.media!=null?fmtNum(m.media,0)+"/dia":"—")}</div>
           <div class="small-muted">${m.os!=null?fmtNum(m.os||0)+" O.S. 58 em "+(m.dias||0)+" dia(s)":""} · ${m.retN||0} retorno(s) auditado(s), ${m.retErros||0} erro(s) · ${m.ruaN||0} auditoria(s) de rua</div></div>`;
@@ -202,7 +202,7 @@ const RuasUI = {
       <div class="rs-det">${det}</div>
       <h4>Repositores e ruas</h4>
       <div class="table-wrap rs-tb"><table class="data-table"><thead><tr><th>Repositor</th><th>Ruas</th><th class="num">Geral</th><th class="num">Prod./dia</th></tr></thead><tbody>
-        ${lista.map(r=>{ const m = met.get(this.ck(r.mat)) || {}; return `<tr class="clickable" data-sel="${this.esc(r.ruas.join(","))}"><td>${this.esc(this.curto(r.nome))}</td><td>${r.ruas.join(", ")}</td><td class="num" style="color:${this.corQ(m.geral)}"><strong>${this.fq(m.geral)}</strong></td><td class="num">${m.media!=null?fmtNum(m.media,0):"—"}</td></tr>`; }).join("") || `<tr><td colspan="4" class="small-muted">Nenhuma rua atribuída ainda.</td></tr>`}
+        ${lista.map(r=>{ const m = met.get(this.ck(r.mat)) || {}; return `<tr class="clickable" data-sel="${this.esc(r.ruas.join(","))}"><td>${this.esc(r.mat)} - ${this.esc(this.curto(r.nome))}</td><td>${r.ruas.join(", ")}</td><td class="num" style="color:${this.corQ(m.geral)}"><strong>${this.fq(m.geral)}</strong></td><td class="num">${m.media!=null?fmtNum(m.media,0):"—"}</td></tr>`; }).join("") || `<tr><td colspan="4" class="small-muted">Nenhuma rua atribuída ainda.</td></tr>`}
       </tbody></table></div>
       ${livres.length ? `<p class="small-muted"><strong>Sem rua:</strong> ${livres.map(p=>this.esc(this.curto(p.nome))).join(", ")}</p>` : ""}
       <p class="small-muted rs-leg">Retornos / Ruas / Geral = % de qualidade do repositor no período (Geral = média dos dois). Prod. média = O.S. 58 por dia trabalhado.</p>`;
