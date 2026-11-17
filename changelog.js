@@ -4,9 +4,13 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.18.3";
+const APP_VERSAO = "2.18.4";
 
 const NOTAS_VERSAO = [
+  { v:"2.18.4", data:"2026-11-17", titulo:"Ordenação preservada e último tipo de feedback pré-selecionado", itens:[
+    "Todas as tabelas ordenáveis lembram a coluna e a direção escolhidas: ao clicar em outro funcionário (ou redesenhar a tela) a ordem não é perdida.",
+    "Download do Feedback (PDF): o tipo de documento e o período usados por último já vêm marcados na próxima geração."
+  ]},
   { v:"2.18.3", data:"2026-11-17", titulo:"Código - Nome nos documentos de feedback", itens:[
     "PDFs de feedback (NC e Produção/Qualidade): Identificação com Código antes do Colaborador e do Avaliador; linhas de assinatura mostram Código - Nome."
   ]},

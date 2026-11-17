@@ -15,17 +15,19 @@ const FeedbackFolha = {
   /* ------------------------------ seleção ------------------------------ */
   escolher(emps){
     if(!emps || !emps.length) return;
+    let ult = {}; try{ ult = JSON.parse(localStorage.getItem("nr_fbf_ultimo")||"{}"); }catch(e){}
     UI.openModal(`<h3 style="margin-top:0">Download do Feedback (PDF)</h3>
       <p class="small-muted" style="margin-top:0">${emps.length} funcionário(s) selecionado(s). Cada um sai em folha A4 vertical, pronta para imprimir e assinar.</p>
       <div class="adm-form" style="grid-template-columns:1fr">
-        <label style="flex-direction:row;gap:10px;align-items:flex-start;text-transform:none;letter-spacing:0;font-size:14px;font-weight:600"><input type="radio" name="fbf-tipo" value="nc" checked style="margin-top:3px"><span>Feedback por Não Conformidades<br><span class="small-muted" style="font-weight:400">NCs por motivo, regra de contagem, advertências e suspensões, presença, qualidade e avaliações.</span></span></label>
-        <label style="flex-direction:row;gap:10px;align-items:flex-start;text-transform:none;letter-spacing:0;font-size:14px;font-weight:600"><input type="radio" name="fbf-tipo" value="prod" style="margin-top:3px"><span>Feedback de Produção e Qualidade<br><span class="small-muted" style="font-weight:400">Histórico de O.S., gráficos de evolução e projeção, meta, presença, qualidade e avaliações.</span></span></label>
-        <label>Período dos dados<select id="fbf-per"><option value="3m">Últimos 3 meses</option><option value="mes">Mês atual</option><option value="tudo">Todo o histórico</option></select></label>
+        <label style="flex-direction:row;gap:10px;align-items:flex-start;text-transform:none;letter-spacing:0;font-size:14px;font-weight:600"><input type="radio" name="fbf-tipo" value="nc" ${ult.tipo!=="prod"?"checked":""} style="margin-top:3px"><span>Feedback por Não Conformidades<br><span class="small-muted" style="font-weight:400">NCs por motivo, regra de contagem, advertências e suspensões, presença, qualidade e avaliações.</span></span></label>
+        <label style="flex-direction:row;gap:10px;align-items:flex-start;text-transform:none;letter-spacing:0;font-size:14px;font-weight:600"><input type="radio" name="fbf-tipo" value="prod" ${ult.tipo==="prod"?"checked":""} style="margin-top:3px"><span>Feedback de Produção e Qualidade<br><span class="small-muted" style="font-weight:400">Histórico de O.S., gráficos de evolução e projeção, meta, presença, qualidade e avaliações.</span></span></label>
+        <label>Período dos dados<select id="fbf-per">${[["3m","Últimos 3 meses"],["mes","Mês atual"],["tudo","Todo o histórico"]].map(o=>`<option value="${o[0]}"${(ult.per||"3m")===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select></label>
       </div>
       <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="fbf-go">Gerar PDF</button></div>`);
     document.getElementById("fbf-go").addEventListener("click", ()=>{
       const tipo = (document.querySelector("input[name=fbf-tipo]:checked")||{}).value || "nc";
       const per = document.getElementById("fbf-per").value;
+      try{ localStorage.setItem("nr_fbf_ultimo", JSON.stringify({ tipo, per })); }catch(e){}
       UI.closeModal();
       if(tipo === "nc") this.gerarNC(emps, per); else FeedbackDoc.generateMultiple(emps, { periodo:per });
     });

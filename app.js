@@ -3989,15 +3989,19 @@ function makeSortable(table){
   const headers = Array.from(thead.querySelectorAll("th"));
   let lastCol = -1, lastDir = 0; // 0=none, 1=asc, -1=desc
 
-  headers.forEach((th, colIdx)=>{
-    th.addEventListener("click", ()=>{
-      // determina direção
-      if(lastCol === colIdx){
-        lastDir = lastDir === 1 ? -1 : 1;
-      } else {
-        lastDir = 1;
-        lastCol = colIdx;
-      }
+  // A ordenação escolhida é lembrada por tabela (painel + posição + cabeçalhos): ao selecionar uma linha ou
+  // redesenhar a tela, a tabela volta ordenada do mesmo jeito em vez de perder a ordem.
+  const pane = table.closest(".pane, [id^='pane-']");
+  const irmas = pane ? Array.from(pane.querySelectorAll("table.data-table")) : [];
+  const chave = (pane ? pane.id : "") + "#" + irmas.indexOf(table) + "#" + headers.map(h=>(h.textContent||"").trim()).join("|");
+  window.__sortMemoria = window.__sortMemoria || new Map();
+  const memoria = window.__sortMemoria;
+
+  const ordenar = (colIdx, dir)=>{
+    lastCol = colIdx; lastDir = dir;
+    memoria.set(chave, { col:colIdx, dir });
+    const th = headers[colIdx];
+    {
 
       // remove indicadores anteriores
       headers.forEach(h=>{ h.classList.remove("sort-asc","sort-desc"); });
@@ -4056,8 +4060,17 @@ function makeSortable(table){
       } else {
         tbody.append(...rows);
       }
+    }
+  };
+
+  headers.forEach((th, colIdx)=>{
+    th.addEventListener("click", ()=>{
+      ordenar(colIdx, lastCol === colIdx ? (lastDir === 1 ? -1 : 1) : 1);
     });
   });
+
+  const salvo = memoria.get(chave);
+  if(salvo && headers[salvo.col]) ordenar(salvo.col, salvo.dir);
 }
 
 // Activa automaticamente em todas as .data-table do documento (MutationObserver)
