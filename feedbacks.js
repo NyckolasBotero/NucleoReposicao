@@ -352,7 +352,7 @@ const FeedbackAdv = {
           <thead><tr><th>Funcionário</th><th>Data Ult. Feedback</th><th>Feedbacks</th><th>Advertências</th><th>Suspensões</th><th>Média Geral</th><th>Av. Pessoal</th><th>Av. Gestor</th><th>Classificação</th><th>Farol</th></tr></thead>
           <tbody>
             ${rows.length ? rows.map(x=>`<tr class="clickable" onclick="FeedbackAdv.abrirFuncionario('${escapeHtml(x.e.codKey)}')">
-              <td><strong>${escapeHtml(x.e.nome)}</strong></td>
+              <td><strong>${escapeHtml(this.rotulo(x.e))}</strong></td>
               <td>${x.e.ultFb ? fmtDateBR(x.e.ultFb) : '<span class="small-muted">sem feedback</span>'}</td>
               <td>${x.e.feedbacks.length}</td>
               <td class="${x.advF>0?'cell-neg':''}">${x.advF}</td>
@@ -390,6 +390,8 @@ const FeedbackAdv = {
   /* ------------------------------------------------------------------ */
   /* insights                                                             */
   /* ------------------------------------------------------------------ */
+  /** Código - Nome (padrão do site) */
+  rotulo(e){ const c = trimStr(e.cod) || (String(e.codKey||'').startsWith('NOME::') ? '' : trimStr(e.codKey)); return (c ? c+' - ' : '') + (e.nome||''); },
   insights(func){
     const lista = Array.from(func.values());
     const ct = window.APP_STATE.currentTeam, ativos = ct ? ct.codes : null;
@@ -403,13 +405,13 @@ const FeedbackAdv = {
     const semAdv = equipe.slice().sort((a,b)=>(b.diasSemAdv===null?1e9:b.diasSemAdv)-(a.diasSemAdv===null?1e9:a.diasSemAdv));
     const advertir = equipe.filter(e=>e.pendentes>0);
     const bullets = [];
-    if(advertir.length) bullets.push(`🔴 <strong>${advertir.length}</strong> funcionário(s) já atingiram ${FB_A_CADA} feedbacks no mesmo motivo sem advertência: ${advertir.slice(0,4).map(e=>escapeHtml(e.nome)).join(", ")}${advertir.length>4?"…":""}.`);
-    if(semFb.length) bullets.push(`📝 <strong>${semFb.length}</strong> funcionário(s) estão sem feedback há mais de ${FB_DIAS_SEM_FEEDBACK} dias (${semFb.filter(e=>e.diasSemFb===null).length} nunca receberam).`);
-    if(motivoTop) bullets.push(`📌 Motivo mais frequente nos feedbacks: <strong>${escapeHtml(motivoTop[0])}</strong> (${motivoTop[1]}).`);
+    if(advertir.length) bullets.push({ tom:'neg', ico:'🔴', h:`<strong>${advertir.length}</strong> funcionário(s) já atingiram ${FB_A_CADA} feedbacks no mesmo motivo sem advertência: ${advertir.slice(0,4).map(e=>escapeHtml(this.rotulo(e))).join(", ")}${advertir.length>4?"…":""}.` });
+    if(semFb.length) bullets.push({ tom:'warn', ico:'📝', h:`<strong>${semFb.length}</strong> funcionário(s) estão sem feedback há mais de ${FB_DIAS_SEM_FEEDBACK} dias (${semFb.filter(e=>e.diasSemFb===null).length} nunca receberam).` });
+    if(motivoTop) bullets.push({ tom:'info', ico:'📌', h:`Motivo mais frequente nos feedbacks: <strong>${escapeHtml(motivoTop[0])}</strong> (${motivoTop[1]}).` });
     const semMotivo = lista.reduce((n,e)=>n+e.feedbacks.filter(r=>!trimStr(r.motivo)).length, 0);
-    if(semMotivo) bullets.push(`ℹ️ ${semMotivo} feedback(s) antigos não têm motivo registrado — não entram na regra das ${FB_A_CADA} ocorrências.`);
+    if(semMotivo) bullets.push({ tom:'info', ico:'ℹ️', h:`${semMotivo} feedback(s) antigos não têm motivo registrado — não entram na regra das ${FB_A_CADA} ocorrências.` });
     const susp = top(equipe, e=>e.susp);
-    if(susp.length) bullets.push(`⛔ Mais suspensões na chamada: <strong>${escapeHtml(susp[0].nome)}</strong> (${susp[0].susp}).`);
+    if(susp.length) bullets.push({ tom:'neg', ico:'⛔', h:`Mais suspensões na chamada: <strong>${escapeHtml(this.rotulo(susp[0]))}</strong> (${susp[0].susp}).` });
     return {
       bullets,
       topAdv: top(lista, e=>e.adv.length), topFb: top(lista, e=>e.feedbacks.length), topSusp: top(lista, e=>e.susp),
@@ -417,19 +419,18 @@ const FeedbackAdv = {
     };
   },
   htmlInsights(ins){
-    const lista = (titulo, arr, fmt, vazio)=> `<div style="flex:1;min-width:230px"><div style="font-weight:800;color:var(--blue-dark);margin-bottom:6px">${titulo}</div>
-      ${arr.length ? `<ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.7">${arr.map(e=>`<li><a href="#" onclick="FeedbackAdv.abrirFuncionario('${escapeHtml(e.codKey)}');return false;">${escapeHtml(e.nome)}</a> — ${fmt(e)}</li>`).join("")}</ol>` : `<div class="small-muted">${vazio}</div>`}</div>`;
+    const h = escapeHtml;
+    const bloco = (ico, titulo, arr, fmt, vazio, tom)=> `<div class="fi-box ${tom||""}"><div class="fi-t"><span>${ico}</span>${titulo}</div>
+      ${arr.length ? `<ol class="fi-l">${arr.map(e=>`<li class="fi-i" onclick="FeedbackAdv.abrirFuncionario('${h(e.codKey)}')" title="Abrir o histórico"><span class="fi-n">${h(this.rotulo(e))}</span><span class="fi-v">${fmt(e)}</span></li>`).join("")}</ol>` : `<div class="fi-v0">${vazio}</div>`}</div>`;
     return `<div class="panel">
       <div class="panel-header"><h3>Insights</h3></div>
-      ${ins.bullets.length ? `<ul style="margin:0 0 14px;padding-left:20px;font-size:13.5px;line-height:1.7">${ins.bullets.map(b=>`<li>${b}</li>`).join("")}</ul>` : `<div class="small-muted" style="margin-bottom:12px">Sem destaques no momento.</div>`}
-      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">
-        ${lista("🏅 Mais advertências", ins.topAdv, e=>e.adv.length+" advertência(s)", "Nenhuma advertência registrada.")}
-        ${lista("🗣️ Mais feedbacks", ins.topFb, e=>e.feedbacks.length+" feedback(s)", "Nenhum feedback registrado.")}
-        ${lista("⛔ Mais suspensões (chamada)", ins.topSusp, e=>e.susp+" dia(s)", "Nenhuma suspensão na chamada.")}
-      </div>
-      <div style="display:flex;gap:18px;flex-wrap:wrap">
-        ${lista("📝 Quem não recebe feedback (há quantos dias)", ins.semFb, e=>e.diasSemFb===null?"nunca recebeu":e.diasSemFb+" dias", "Toda a equipe recebeu feedback recentemente.")}
-        ${lista("📄 Quem não tomou advertência (há quantos dias)", ins.semAdv, e=>e.diasSemAdv===null?"nunca tomou":e.diasSemAdv+" dias", "—")}
+      ${ins.bullets.length ? `<div class="fi-dest">${ins.bullets.map(b=>`<div class="fi-d ${b.tom}"><span class="fi-ico">${b.ico}</span><div>${b.h}</div></div>`).join("")}</div>` : `<div class="small-muted" style="margin-bottom:12px">Sem destaques no momento.</div>`}
+      <div class="fi-grid">
+        ${bloco("🏅","Mais advertências", ins.topAdv, e=>e.adv.length+" advertência(s)", "Nenhuma advertência registrada.")}
+        ${bloco("🗣️","Mais feedbacks", ins.topFb, e=>e.feedbacks.length+" feedback(s)", "Nenhum feedback registrado.")}
+        ${bloco("⛔","Mais suspensões (chamada)", ins.topSusp, e=>e.susp+" dia(s)", "Nenhuma suspensão na chamada.")}
+        ${bloco("📝","Sem feedback há mais tempo", ins.semFb, e=>e.diasSemFb===null?"nunca recebeu":e.diasSemFb+" dias", "Toda a equipe recebeu feedback recentemente.", "warn")}
+        ${bloco("📄","Sem advertência há mais tempo", ins.semAdv, e=>e.diasSemAdv===null?"nunca tomou":e.diasSemAdv+" dias", "—")}
       </div>
     </div>`;
   },
