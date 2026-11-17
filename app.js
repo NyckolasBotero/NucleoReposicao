@@ -3134,8 +3134,13 @@ const Commission = {
   },
   // Fator de ajuste por qualidade, aplicado SEMPRE em cima da comissão normal (por faixa/exceção): a qualidade
   // GERAL do repositor (ruas e retornos juntos) é o % da comissão que sobra (ex.: 85% de qualidade = 85% do valor).
-  qualityFactor(qualidade){
+  qualityFactor(qualidade, faixas){
     if(qualidade===null || qualidade===undefined) return null; // sem dado de auditoria — não penaliza, mantém valor cheio
+    if(faixas){   // regra por faixas (parâmetro "Usar faixas de qualidade?"): <50% zera · 50–69,99% metade · ≥70% proporcional
+      if(qualidade < 50) return 0;
+      if(qualidade < 70) return 0.5;
+      return qualidade/100;
+    }
     return Math.max(0, Math.min(100, qualidade))/100;   // a qualidade geral (ruas + retornos) é o que sobra da comissão
   },
   /** Regra de um repositor para uma pontuação: pontuação mínima (R$ fixo) → exceção/faixa → qualidade → ajuste de faturamento. */
@@ -3153,10 +3158,12 @@ const Commission = {
       else { band = this.findBand(pts, P.bands); valorPonto = band ? band.value : 0; regra = band ? "Regra Normal" : "Sem faixa aplicável"; regraTipo = band ? `Regra Normal (${fmtNum(band.min)}–${fmtNum(band.max)} pts · ${fmtBRL(band.value)}/pt)` : regra; }
       comissaoBase = pts * valorPonto;
     }
-    const fator = this.qualityFactor(qualidade);
+    const fator = this.qualityFactor(qualidade, P.faixasQualidade==="SIM");
     const comissaoComDesconto = fator===null ? comissaoBase : comissaoBase*fator;
     if(e.qualidadeEstimada) regra += " — sem auditoria: aplicada a média da equipe";
     if(fator===null) regra += " — sem auditoria no período (comissão integral)";
+    else if(P.faixasQualidade==="SIM" && fator===0) regra += ` — qualidade geral ${fmtNum(qualidade,1)}% (<50%): comissão zerada`;
+    else if(P.faixasQualidade==="SIM" && fator===0.5) regra += ` — qualidade geral ${fmtNum(qualidade,1)}% (50-69%): metade da comissão`;
     else regra += ` — qualidade geral ${fmtNum(qualidade,1)}%${e.qualRuas!=null && e.qualRet!=null ? ` (ruas ${fmtNum(e.qualRuas,1)}% · retornos ${fmtNum(e.qualRet,1)}%)` : ""}: fica ${fmtNum(fator*100,1)}% da comissão`;
     const posQualidade = aplicar ? comissaoComDesconto : comissaoBase;
     if(fatFat!==1) regra += ` — faturamento ×${fmtNum(fatFat,4)}`;
@@ -7028,7 +7035,7 @@ function exportComissaoToExcel(){
     ["Período:", periodoLabel],
     ["Considerar Missões:", calc.P.considerarMissoes==='SIM' ? 'Sim' : 'Não'],
     ["Apenas Repositor:", commissionOnlyRepositor ? 'Sim' : 'Não'],
-    ["Aplicar Desconto por Qualidade:", calc.P.aplicarDesconto==='SIM' ? 'Sim' : 'Não'],
+    ["Aplicar Desconto por Qualidade:", calc.P.aplicarDesconto==='SIM' ? (calc.P.faixasQualidade==='SIM' ? 'Sim (por faixas)' : 'Sim') : 'Não'],
     ["Total sem descontos:", +calc.tot.semDesc.toFixed(2)],
     ["Total a pagar:", +calc.tot.total.toFixed(2)],
     [],
