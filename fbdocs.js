@@ -61,7 +61,7 @@ const FeedbackFolha = {
     const ini = P.ini || new Date(2000,0,1);
     const ru = (window.AuditOnline && AuditOnline.rows) ? AuditOnline.qualidadePorRepositorNoIntervalo(ini, P.fim).get(codKey) : null;
     let audRet = 0;
-    if(window.RetornoQ && RetornoQ.dados && RetornoQ.dados.aud){ const i = dateOnly(ini), f = dateOnly(P.fim); RetornoQ.dados.aud.forEach(x=>{ if(x.codKey===codKey && x.data){ const d = dateOnly(x.data); if(d>=i && d<=f) audRet++; } }); }
+    if(window.RetornoQ && RetornoQ.dados){ const x = RetornoQ.calcular(dateOnly(ini), dateOnly(P.fim), { codKey }).reps.find(r=>r.codKey===codKey); if(x) audRet = x.auditados; }
     const audRua = ru ? ru.auditorias : 0;
     porTipo.forEach(x=>{ x.aud = x.tipo==="retorno" ? audRet : audRua; x.pctErro = x.aud ? x.erros/x.aud*100 : null; });
     return { all, lista, porTipo, totalNC: lista.length,
@@ -152,10 +152,9 @@ const FeedbackFolha = {
     const ru = (window.AuditOnline && AuditOnline.rows) ? AuditOnline.qualidadePorRepositorNoIntervalo(iniMes, fim).get(emp.codKey) : null;
     // Retornos: % sobre os retornos AUDITADOS do período (acuracidade = (auditados − erros) ÷ auditados)
     let ra = 0, rerr = 0, racur = null;
-    if(window.RetornoQ && RetornoQ.dados && RetornoQ.dados.aud){
-      const i = dateOnly(ini), f = dateOnly(fim);
-      RetornoQ.dados.aud.forEach(x=>{ if(x.codKey!==emp.codKey || !x.data) return; const d = dateOnly(x.data); if(d<i||d>f) return; ra++; if(x.nc) rerr++; });
-      racur = ra ? (ra-rerr)*100/ra : null;
+    if(window.RetornoQ && RetornoQ.dados){
+      const x = RetornoQ.calcular(dateOnly(ini), dateOnly(fim), { codKey:emp.codKey }).reps.find(r=>r.codKey===emp.codKey);
+      if(x){ ra = x.auditados; rerr = x.erros; racur = x.acuracidade; }
     }
     return { ruaQ: ru && ru.qualidadeMedia!==null ? ru.qualidadeMedia : null, ruaN: ru ? ru.auditorias : 0, ruaLabel: fmtDateBR(iniMes)+" a "+fmtDateBR(fim),
       retQ: racur, retN: ra, retErros: rerr, retAcur: racur };

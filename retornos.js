@@ -101,7 +101,10 @@ const RetornoQ = {
     const D = this.dados;
     let aud = this.filtrar(D.aud, ini, fim), rot = this.filtrar(D.rot, ini, fim);
     if(f.rua!=null){ aud = aud.filter(x=>x.rua===f.rua); rot = rot.filter(x=>x.rua===f.rua); }
-    if(f.codKey) aud = aud.filter(x=>x.codKey===f.codKey);
+    // linha com colaborador (NC) = dele; linha conforme (sem colaborador) = de quem respondia pela rua na data
+    const expand = x=> x.codKey ? [x] : this.responsaveisEm(x.rua, x.data).filter(r=>r.codKey).map(r=>({ ...x, codKey:r.codKey, nome:r.nome }));
+    if(f.codKey) aud = aud.filter(x=> expand(x).some(y=>y.codKey===f.codKey));
+    const audR = []; aud.forEach(x=> expand(x).forEach(y=>audR.push(y)));
     const reg = window.APP_STATE && window.APP_STATE.nameRegistry;
     const ruasMap = new Map();
     const rua = n=>{ if(!ruasMap.has(n)) ruasMap.set(n,{ rua:n, retornos:0, auditados:0, erros:0 }); return ruasMap.get(n); };
@@ -113,14 +116,14 @@ const RetornoQ = {
     const porRua = new Map(ruas.map(r=>[r.rua,r]));
     // repositores de cada rua = quem teve retorno auditado nela no período; sem auditoria, quem responde pela rua no Quadro_Repositores
     ruas.forEach(r=>{
-      const vistos = new Map(); aud.filter(x=>x.rua===r.rua && x.codKey).forEach(x=>vistos.set(x.codKey, (reg&&reg.get(x.codKey)) || x.nome || x.codKey));
+      const vistos = new Map(); audR.filter(x=>x.rua===r.rua && x.codKey).forEach(x=>vistos.set(x.codKey, (reg&&reg.get(x.codKey)) || x.nome || x.codKey));
       r.reps = vistos.size ? Array.from(vistos.values()) : D.reps.filter(p=>p.ruas.includes(r.rua)).map(p=>p.nome);
     });
     // por repositor: as linhas dele (igual ao PDF). Quem tem rua no Quadro_Repositores aparece mesmo sem auditoria.
     const porRep = new Map();
     const rep = (codKey, nome)=>{ if(!porRep.has(codKey)) porRep.set(codKey,{ codKey, nome:nome||codKey, mat:"", ruas:[], auditados:0, erros:0, perdidos:0, ruasAud:new Set(), retornos:0 }); return porRep.get(codKey); };
     D.reps.forEach(p=>{ if(!p.codKey) return; const e = rep(p.codKey, p.nome); e.mat = p.mat; e.ruas = p.ruas.slice(); p.ruas.forEach(n=>{ const r = porRua.get(n); if(r) e.retornos += r.retornos; }); });
-    aud.forEach(x=>{ if(!x.codKey) return; const e = rep(x.codKey, x.nome); e.auditados++; e.ruasAud.add(x.rua); if(x.nc){ e.erros++; e.perdidos += (porRua.get(x.rua)||{peso:1}).peso; } });
+    audR.forEach(x=>{ if(!x.codKey) return; if(f.codKey && x.codKey!==f.codKey) return; const e = rep(x.codKey, x.nome); e.auditados++; e.ruasAud.add(x.rua); if(x.nc){ e.erros++; e.perdidos += (porRua.get(x.rua)||{peso:1}).peso; } });
     let reps = Array.from(porRep.values()).map(e=>({ ...e, nome:(reg&&reg.get(e.codKey)) || e.nome, ruasAud:Array.from(e.ruasAud).sort((a,b)=>a-b),
       qualidade:this.qualidade(e.auditados, e.perdidos), acuracidade: e.auditados ? (e.auditados-e.erros)*100/e.auditados : null,
       cobertura: e.retornos ? e.auditados*100/e.retornos : null }));
