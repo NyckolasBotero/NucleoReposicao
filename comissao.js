@@ -281,7 +281,12 @@ const ComissaoResumo = {
       const rr = (window.RetornoOnline && RetornoOnline.rows ? RetornoOnline.rows : []).filter(r=>{ const d=dateOnly(r.data); return d>=i && d<=f && !r.soAuditor; });
       ret = { q: rr.length ? rr.filter(r=>!r.nc).length/rr.length*100 : null, n: rr.length };
     }
-    return { ruas, ret, geral:{ q: this.media(ret.q, ruas.q), n: ruas.n + ret.n } };
+    return { ruas, ret, geral:{ q: this.junta(ret, ruas), n: ruas.n + ret.n } };
+  },
+  /** qualidade geral = ruas e retornos juntos, ponderados pelo nº de auditorias de cada um (sem contagem, média simples) */
+  junta(a, b){
+    if(a.q!=null && b.q!=null && (a.n||0)+(b.n||0) > 0) return (a.q*(a.n||0) + b.q*(b.n||0))/((a.n||0)+(b.n||0));
+    return this.media(a.q, b.q);
   },
   media(a, b){ const v = [a,b].filter(x=>x!=null); return v.length ? v.reduce((s,x)=>s+x,0)/v.length : null; },
   /** período do mês atual (referência da tela) até a última data com dados */
@@ -307,7 +312,7 @@ const ComissaoResumo = {
       }
       out[k] = { q: qs.length ? qs.reduce((x,y)=>x+y,0)/qs.length : null, n:0, estimada:qs.length>0 };
     });
-    out.geral = { q: this.media(out.ruas.q, out.ret.q), n: out.ruas.n + out.ret.n, estimada: out.ruas.estimada || out.ret.estimada };
+    out.geral = { q: this.junta(out.ruas, out.ret), n: out.ruas.n + out.ret.n, estimada: out.ruas.estimada || out.ret.estimada };
     return out;
   },
   mesRef(){
@@ -343,7 +348,7 @@ const ComissaoResumo = {
     const estimados = c.rep.filter(e=>e.qualidadeEstimada).length;
     const fixa = Array.from(cont.entries()).map(([k,n])=>`${k}: ${n} repositor(es)`)
       .concat([`Abaixo de ${fmtNum(P.pontosMinimos)} pts no mês: R$ ${fmtNum(P.valorFixoAbaixo,2)} fixo`])
-      .concat([P.aplicarDesconto==="SIM" ? "Desconto por qualidade aplicado (<50% zera · 50–69% metade · ≥70% proporcional)" : "Desconto por qualidade NÃO aplicado"])
+      .concat([P.aplicarDesconto==="SIM" ? "Desconto por qualidade aplicado (a qualidade geral — ruas e retornos juntos — é o % da comissão que sobra)" : "Desconto por qualidade NÃO aplicado"])
       .concat(estimados ? [`${estimados} repositor(es) sem auditoria no mês: aplicada a média da equipe`] : [])
       .concat([c.fatFat!==1 ? `Ajuste de faturamento: ×${fmtNum(c.fatFat,4)} (${fmtBRL(c.M.faturado)} ÷ ${fmtBRL(P.metaFaturamento)})` : "Sem ajuste de faturamento (faturamento do mês não informado ou igual à meta)"]);
     const q = c.quadro;
@@ -561,7 +566,7 @@ const ComissaoParamsUI = {
           ${fld("Valor fixo abaixo da mínima", this.inp("valorFixoAbaixo", d.valorFixoAbaixo, {step:0.01, pre:"R$"}))}
           ${fld("Meta de faturamento", this.inp("metaFaturamento", d.metaFaturamento, {step:1000, pre:"R$"}))}
         </div>
-        <p class="cp-hint">Qualidade: &lt;50% zera · 50–69% paga metade · ≥70% paga o % da qualidade. Com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês o repositor recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo, com desconto de qualidade e ajuste de faturamento como os demais.</p>`)}
+        <p class="cp-hint">Qualidade geral (ruas e retornos juntos) = % da comissão que o repositor recebe (ex.: 85% de qualidade paga 85% do valor). Com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês o repositor recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo, com desconto de qualidade e ajuste de faturamento como os demais.</p>`)}
 
       ${sec("Faixas de Pontuação", "Valor pago por ponto em cada faixa", `
         <div class="cp-rows">

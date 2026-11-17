@@ -3132,15 +3132,11 @@ const Commission = {
   findException(codKey, cod, exceptions){
     return (exceptions||[]).find(e=> e.active!==false && e.codigo && normStr(e.codigo)===normStr(cod||"") );
   },
-  // Fator de ajuste por qualidade, aplicado SEMPRE em cima da comissão normal (por
-  // faixa/exceção) — não é um modelo alternativo, é um multiplicador sobre o valor já
-  // calculado: <50%=0 (zera) · 50-69,99%=0.5 (metade) · >=70%=qualidade/100 (proporcional,
-  // ex.: 71% de qualidade mantém 71% do valor da comissão).
+  // Fator de ajuste por qualidade, aplicado SEMPRE em cima da comissão normal (por faixa/exceção): a qualidade
+  // GERAL do repositor (ruas e retornos juntos) é o % da comissão que sobra (ex.: 85% de qualidade = 85% do valor).
   qualityFactor(qualidade){
     if(qualidade===null || qualidade===undefined) return null; // sem dado de auditoria — não penaliza, mantém valor cheio
-    if(qualidade < 50) return 0;
-    if(qualidade < 70) return 0.5;
-    return qualidade/100;
+    return Math.max(0, Math.min(100, qualidade))/100;   // a qualidade geral (ruas + retornos) é o que sobra da comissão
   },
   /** Regra de um repositor para uma pontuação: pontuação mínima (R$ fixo) → exceção/faixa → qualidade → ajuste de faturamento. */
   valorRep(e, pts, P, fatFat){
@@ -3161,9 +3157,7 @@ const Commission = {
     const comissaoComDesconto = fator===null ? comissaoBase : comissaoBase*fator;
     if(e.qualidadeEstimada) regra += " — sem auditoria: aplicada a média da equipe";
     if(fator===null) regra += " — sem auditoria no período (comissão integral)";
-    else if(fator===0) regra += ` — qualidade ${fmtNum(qualidade,1)}% (<50%): comissão zerada`;
-    else if(fator===0.5) regra += ` — qualidade ${fmtNum(qualidade,1)}% (50-69%): metade da comissão`;
-    else regra += ` — qualidade ${fmtNum(qualidade,1)}%: ${fmtNum(fator*100,1)}% da comissão`;
+    else regra += ` — qualidade geral ${fmtNum(qualidade,1)}%${e.qualRuas!=null && e.qualRet!=null ? ` (ruas ${fmtNum(e.qualRuas,1)}% · retornos ${fmtNum(e.qualRet,1)}%)` : ""}: fica ${fmtNum(fator*100,1)}% da comissão`;
     const posQualidade = aplicar ? comissaoComDesconto : comissaoBase;
     if(fatFat!==1) regra += ` — faturamento ×${fmtNum(fatFat,4)}`;
     return { valorPonto, regra, regraTipo, band, comissaoBase, comissaoComDesconto, posQualidade, comissaoTotal: posQualidade*fatFat };
@@ -3211,19 +3205,27 @@ const Commission = {
       qFim = dateOnly(maxDateProd);
     }
     const qualidadePorRep = (qIni && qFim) ? AuditOnline.qualidadePorRepositorNoIntervalo(qIni, qFim) : new Map();
-    const mediaEquipe = (qIni && qFim) ? ComissaoResumo.qualidadeComFallback(qIni, qFim).ruas.q : null;
+    const mediaEquipe = (qIni && qFim) ? ComissaoResumo.qualidadeComFallback(qIni, qFim).geral.q : null;
+    // retornos por repositor no mesmo período (acuracidade = (auditados − erros) ÷ auditados)
+    const retornoPorRep = new Map();
+    try{ if(qIni && qFim && window.RetornoQ && RetornoQ.dados) RetornoQ.calcular(qIni, qFim).reps.forEach(x=> retornoPorRep.set(x.codKey, x)); }catch(err){}
 
     return Array.from(map.values()).filter(e=> !excl.has(ComissaoCalc.digits(e.cod))).map(e=>{
       const missaoInfo = missoesPorFuncionario.get(e.codKey);
       const missoesOs = missaoInfo ? missaoInfo.totalOs : 0;
       const pontos = considerarMissoes ? (e.producao + missoesOs) : e.producao;
       const qInfo = qualidadePorRep.get(e.codKey);
-      let qualidade = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null;
+      // QUALIDADE GERAL do repositor = ruas e retornos juntos (ponderados pelo nº de auditorias); é o que sobra da comissão
+      const qRuas = qInfo && qInfo.qualidadeMedia!==null ? qInfo.qualidadeMedia : null, nRuas = qInfo ? (qInfo.auditorias||0) : 0;
+      const rx = retornoPorRep.get(e.codKey), qRet = rx && rx.acuracidade!=null ? rx.acuracidade : null, nRet = rx ? (rx.auditados||0) : 0;
+      let qualidade = null;
+      if(qRuas!==null && qRet!==null && (nRuas+nRet)>0) qualidade = (qRuas*nRuas + qRet*nRet)/(nRuas+nRet);
+      else if(qRuas!==null) qualidade = qRuas; else if(qRet!==null) qualidade = qRet;
       // sem auditoria do repositor no período: aplica a média da equipe (do período; se não houver, a média dos últimos meses)
       let qualidadeEstimada = false;
       if(qualidade===null && mediaEquipe!==null){ qualidade = mediaEquipe; qualidadeEstimada = true; }
 
-      const base = { ...e, missoesOs, pontos, qualidade, qualidadeEstimada };
+      const base = { ...e, missoesOs, pontos, qualidade, qualidadeEstimada, qualRuas:qRuas, qualRet:qRet };
       return { ...base, ...this.valorRep(base, pontos, P, fatFat) };
     }).sort((a,b)=>b.comissaoTotal-a.comissaoTotal);
   }
