@@ -86,15 +86,16 @@ const FeedbackFolha = {
       const ultFb = f.length ? dateOnly(f[0].data) : null;
       const ncDesde = ehNC ? nd.all.filter(g=>g.tipos[info.tipo] && (!ultFb || dateOnly(g.data) > ultFb)).length : 0;
       if(!ncPer && !f.length && !a.length && !s.length && !ncDesde) return;
-      const fbSobra = f.length - a.length * kfb, advSobra = a.length - s.length * FB_ADV_PARA_SUSP;
+      const ksp = Regras.advParaSusp(chave), ncK = Regras.ncPorFb(chave);
+      const fbSobra = f.length - a.length * kfb, advSobra = a.length - s.length * ksp;
       let sit, cor = "#4a5568";
-      if(advSobra >= FB_ADV_PARA_SUSP){ sit = "Solicitar suspensão"; cor = "#d64545"; }
-      else if(fbSobra >= kfb){ sit = "Gerar advertência"; cor = "#d64545"; }
-      else if(ehNC && ncDesde >= NC_POR_FB){ sit = "Gerar feedback"; cor = "#e08a1f"; }
-      else if(ehNC && ncDesde > 0){ sit = `Falta ${NC_POR_FB-ncDesde} NC p/ feedback`; }
+      if(advSobra >= ksp && Regras.alertaSusp(chave)){ sit = "Solicitar suspensão"; cor = "#d64545"; }
+      else if(fbSobra >= kfb && Regras.alertaAdv(chave)){ sit = "Gerar advertência"; cor = "#d64545"; }
+      else if(ehNC && ncDesde >= ncK && Regras.alertaFb(chave)){ sit = "Gerar feedback"; cor = "#e08a1f"; }
+      else if(ehNC && ncDesde > 0 && Regras.alertaFb(chave)){ sit = `Falta ${Math.max(0,ncK-ncDesde)} NC p/ feedback`; }
       else if(f.length || a.length){ sit = "Em acompanhamento"; }
       else sit = "—";
-      linhas.push({ motivo:info.motivo, ehNC, ncPer, ncDesde, fb:f.length, adv:a.length, susp:s.length, kfb, sit, cor });
+      linhas.push({ motivo:info.motivo, ehNC, ncPer, ncDesde, fb:f.length, adv:a.length, susp:s.length, kfb, ksp, ncK, sit, cor });
     });
     return { linhas, fb:fbs.length, adv:ads.length, susp:sps.length };
   },
@@ -195,17 +196,17 @@ const FeedbackFolha = {
   blocoRegra(){
     return `<div class="rule"><strong>Como contamos e como as penalizações acontecem</strong><ul style="margin:3px 0 0 14px;padding:0">
       <li><strong>Não conformidade (NC) de rua:</strong> 1 por colaborador, data e rua. Várias falhas na mesma rua no mesmo dia contam como 1 NC (ex.: 20 erros na rua 34 e 10 na rua 33 no mesmo dia = 2 NC). <strong>De retorno:</strong> cada retorno com erro é 1 NC.</li>
-      <li><strong>Feedback:</strong> ${NC_POR_FB} NC pelo mesmo motivo geram 1 feedback.</li>
-      <li><strong>Advertência:</strong> ${NC_FB_PARA_ADV} feedbacks pelo mesmo motivo de NC geram 1 advertência (demais motivos: ${FB_A_CADA} feedbacks).</li>
-      <li><strong>Suspensão:</strong> ${FB_ADV_PARA_SUSP} advertências pelo mesmo motivo geram solicitação de suspensão.</li></ul></div>`;
+      <li><strong>Feedback:</strong> ${Regras.g("ncPorFb")} NC pelo mesmo motivo geram 1 feedback.</li>
+      <li><strong>Advertência:</strong> ${Regras.g("fbParaAdvNC")} feedbacks pelo mesmo motivo de NC geram 1 advertência (demais motivos: ${Regras.g("fbParaAdvOutros")} feedbacks).</li>
+      <li><strong>Suspensão:</strong> ${Regras.g("advParaSusp")} advertências pelo mesmo motivo geram solicitação de suspensão.</li></ul></div>`;
   },
   blocoSituacao(sit){
     return `<div class="sec"><h2>Seu resumo: NC, feedbacks, advertências e suspensões</h2>
       <div class="cards" style="margin-bottom:6px">${this.card("Feedbacks", sit.fb, "no histórico")}${this.card("Advertências", sit.adv, "no histórico", sit.adv?"#e08a1f":"#2f6fce")}${this.card("Suspensões", sit.susp, "no histórico", sit.susp?"#d64545":"#2f6fce")}</div>
       <table><thead><tr><th>Motivo</th><th class="num">NC (período)</th><th class="num">NC desde o últ. feedback</th><th class="num">Feedbacks</th><th class="num">Advertências</th><th class="num">Suspensões</th><th>Situação</th></tr></thead><tbody>
-      ${sit.linhas.map(l=>`<tr><td>${escapeHtml(l.motivo)}</td><td class="num">${l.ehNC?l.ncPer:"—"}</td><td class="num">${l.ehNC?l.ncDesde+"/"+NC_POR_FB:"—"}</td><td class="num">${l.fb}/${l.kfb}</td><td class="num">${l.adv}/${FB_ADV_PARA_SUSP}</td><td class="num">${l.susp}</td><td style="color:${l.cor};font-weight:700">${l.sit}</td></tr>`).join("") || `<tr><td colspan="7" style="color:#7a8798">Sem NC, feedbacks, advertências ou suspensões registrados.</td></tr>`}
+      ${sit.linhas.map(l=>`<tr><td>${escapeHtml(l.motivo)}</td><td class="num">${l.ehNC?l.ncPer:"—"}</td><td class="num">${l.ehNC?l.ncDesde+"/"+l.ncK:"—"}</td><td class="num">${l.fb}/${l.kfb}</td><td class="num">${l.adv}/${l.ksp}</td><td class="num">${l.susp}</td><td style="color:${l.cor};font-weight:700">${l.sit}</td></tr>`).join("") || `<tr><td colspan="7" style="color:#7a8798">Sem NC, feedbacks, advertências ou suspensões registrados.</td></tr>`}
       </tbody></table>
-      <div style="font-size:8.5px;color:#7a8798;margin-top:3px">Feedbacks x/${NC_FB_PARA_ADV} (ou ${FB_A_CADA}) = andamento rumo à advertência · Advertências x/${FB_ADV_PARA_SUSP} = andamento rumo à suspensão.</div></div>`;
+      <div style="font-size:8.5px;color:#7a8798;margin-top:3px">Feedbacks x/${Regras.g("fbParaAdvNC")} (ou ${Regras.g("fbParaAdvOutros")}) = andamento rumo à advertência · Advertências x/${Regras.g("advParaSusp")} = andamento rumo à suspensão.</div></div>`;
   },
   escala(titulo, cor, texto){
     let c = ""; for(let i=0;i<=10;i++) c += `<td style="border-color:${cor}">${i}</td>`;

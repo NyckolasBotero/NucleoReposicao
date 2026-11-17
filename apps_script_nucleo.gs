@@ -105,6 +105,8 @@ function doPost(e) {
       if (d.acao === 'alertas_cfg_salvar') return resposta(alertasSalvarCfg(d, s));
       if (d.acao === 'alertas_prefs_salvar') return resposta(alertasSalvarPrefs(d, s));
       if (d.acao === 'alertas_concluir') return resposta(alertasConcluir(d, s));
+      if (d.acao === 'param_ler') return resposta(paramLer(d, s));
+      if (d.acao === 'param_salvar') return resposta(paramSalvar(d, s));
       if (d.acao === 'tv_cfg_ler') return resposta({ ok: true, config: alertasLerChave('tv_cfg') || {}, admin: ehAdminAlertas(s) });
       if (d.acao === 'tv_cfg_salvar') return resposta(tvCfgSalvar(d, s));
       if (d.acao === 'tv_fotos_ler') return resposta(tvFotosLer());
@@ -131,7 +133,7 @@ function doPost(e) {
 
 /** Ações que só leem: rodam sem a trava global (várias pessoas podem consultar enquanto alguém grava). */
 const LEITURAS_SEM_TRAVA = {
-  admin_listar: 1, admin_historico: 1, alertas_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
+  admin_listar: 1, admin_historico: 1, alertas_ler: 1, param_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1
 };
@@ -852,6 +854,25 @@ function alertasRegistrarChamada(iso, itens, s) {
 
 const ABA_FOTOS_TV = 'FOTOS_TV';
 function fotosSheet() { return abaComCabecalho(ABA_FOTOS_TV, ['Matrícula', 'Foto', 'Atualizado']); }
+
+/* ===================== Administração > Parâmetros (regras de NC/feedback, auditoria) ===================== */
+const PARAM_CHAVES = { regras_nc: 1, regras_aud: 1 };
+/** Qualquer usuário logado lê as regras (as telas precisam delas); só o administrador grava. */
+function paramLer(d, s) {
+  const chave = String(d.chave || '');
+  if (!PARAM_CHAVES[chave]) throw new Error('Parâmetro desconhecido.');
+  return { ok: true, config: alertasLerChave('param_' + chave) || {}, admin: ehAdminAlertas(s) };
+}
+function paramSalvar(d, s) {
+  if (!ehAdminAlertas(s)) throw new Error('Só o administrador pode alterar os parâmetros.');
+  const chave = String(d.chave || '');
+  if (!PARAM_CHAVES[chave]) throw new Error('Parâmetro desconhecido.');
+  const c = d.config;
+  if (!c || typeof c !== 'object') throw new Error('Configuração inválida.');
+  alertasGravarChave('param_' + chave, c);
+  registrarLog(s, 'Parâmetros (' + chave + ')', 'atualizados');
+  return { ok: true };
+}
 
 /** Só o administrador (Fabio) altera o que o painel mostra. Todos os usuários leem (o painel abre para qualquer um). */
 function tvCfgSalvar(d, s) {
