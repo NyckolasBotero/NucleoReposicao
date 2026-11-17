@@ -1028,3 +1028,20 @@ body.sb-collapsed #sb-versao{ display:none; }
 .vd-comp.c-inline, .vd-comp.c-prprio{ background:var(--orange-bg); color:var(--orange); }
 .vd-ach{ margin:0; padding-left:20px; line-height:1.6; font-size:13px; }
 @media (max-width:720px){ .vd{ flex-direction:column; } .vd-rail{ position:static; flex-direction:row; } .vd-tab{ writing-mode:horizontal-tb; transform:none; padding:9px 14px; } }
+
+/* ---------- Feedbacks > Insights em blocos ---------- */
+.fi-dest{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin-bottom:14px; }
+.fi-d{ display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--gray-200); border-left:4px solid var(--blue-med); border-radius:var(--radius); background:var(--white); font-size:13px; line-height:1.5; box-shadow:var(--shadow); }
+.fi-d.neg{ border-left-color:var(--red); } .fi-d.warn{ border-left-color:var(--orange); } .fi-d.info{ border-left-color:var(--gray-300); }
+.fi-ico{ font-size:16px; line-height:1.4; }
+.fi-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; }
+.fi-box{ border:1px solid var(--gray-200); border-radius:var(--radius); background:var(--white); padding:12px 14px; box-shadow:var(--shadow);
+  transition:transform var(--duration-base) var(--ease-standard), box-shadow var(--duration-base) var(--ease-standard); }
+.fi-box:hover{ transform:translateY(-2px); box-shadow:var(--shadow-lg); }
+.fi-t{ display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:var(--blue-dark); margin-bottom:8px; }
+.fi-l{ list-style:none; margin:0; padding:0; }
+.fi-i{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:6px 8px; margin:0 -8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background-color var(--duration-fast) var(--ease-standard); }
+.fi-i:hover{ background:var(--blue-light); }
+.fi-n{ font-weight:600; min-width:0; overflow-wrap:anywhere; }
+.fi-v{ color:var(--gray-700); white-space:nowrap; font-size:12px; }
+.fi-v0{ font-size:12.5px; color:var(--gray-700); }

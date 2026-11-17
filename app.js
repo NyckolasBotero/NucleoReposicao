@@ -4434,6 +4434,9 @@ document.addEventListener("libsError", (e) => {
 /* ---------------------------------------------------------------------- */
 /* RENDER: Produção                                                        */
 /* ---------------------------------------------------------------------- */
+/** Código - Nome (padrão do site para identificar colaborador) */
+function codNome(codKey, nome){ const c = String(codKey||""); const cod = c.startsWith("NOME::") ? "" : c; return (cod ? cod+" - " : "") + (nome||c); }
+
 function allEmployeesForProduction(){
   const processed = window.APP_STATE.processed;
   const registry = window.APP_STATE.nameRegistry;
@@ -4550,7 +4553,7 @@ function renderProducao(){
         <label>Funcionário</label>
         <select id="prod-employees">
           <option value="">Todos</option>
-          ${employees.map(e=>`<option value="${e.codKey}" ${st.employees[0]===e.codKey?'selected':''}>${escapeHtml(e.nome)}</option>`).join("")}
+          ${employees.map(e=>`<option value="${e.codKey}" ${st.employees[0]===e.codKey?'selected':''}>${escapeHtml(codNome(e.codKey,e.nome))}</option>`).join("")}
         </select>
       </div>
       <div class="filter-group">
@@ -5532,14 +5535,14 @@ function renderFeedbackRankingPanel(){
         <table class="data-table" id="feedback-ranking-table">
           <thead><tr>
             <th style="width:30px;"><input type="checkbox" id="feedback-select-all" ${allSelected?'checked':''}></th>
-            <th>Funcionário</th><th>Código</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
+            <th>Código</th><th>Funcionário</th><th>O.S. Últimos 3 Meses</th><th>O.S. Último Mês</th><th>O.S. Última Semana</th>
             <th>O.S. Último Dia</th><th>Auditorias (3m)</th>${(data[0]?data[0].qualMeses:[]).map(q=>`<th>Qualidade % ${q.rot}</th>`).join("")}<th>Qualidade % (média 3m)</th><th>Retornos % (3m)</th><th>Acurac. retornos (3m)</th>
           </tr></thead>
           <tbody>
             ${data.map(e=>`<tr class="clickable ${selectedFeedbackEmployees.has(e.codKey)?'row-selected':''}" data-codkey="${escapeHtml(e.codKey)}" onclick="toggleFeedbackEmployee('${escapeHtml(e.codKey)}')">
               <td><input type="checkbox" class="feedback-row-check" data-codkey="${escapeHtml(e.codKey)}" ${selectedFeedbackEmployees.has(e.codKey)?'checked':''} style="pointer-events:none;"></td>
+              <td>${escapeHtml(e.cod||'-')}</td>
               <td>${escapeHtml(e.nome)}</td>
-              <td>${e.cod||'-'}</td>
               <td>${fmtNum(e.os3m)}</td>
               <td>${fmtNum(e.osUltimoMes)}</td>
               <td>${fmtNum(e.osSemana)}</td>
@@ -6427,7 +6430,7 @@ function renderAuditoria(){
       <div class="filter-group"><label>Data Inicial</label><input type="date" id="aud-data-ini" value="${st.dataInicial?toInputDate(st.dataInicial):''}"></div>
       <div class="filter-group"><label>Data Final</label><input type="date" id="aud-data-fim" value="${st.dataFinal?toInputDate(st.dataFinal):''}"></div>
       <div class="filter-group"><label>Rua</label><select id="aud-rua"><option value="">Todas</option>${allRuas.map(r=>`<option value="${escapeHtml(r)}" ${String(st.rua)===String(r)?'selected':''}>Rua ${escapeHtml(r)}</option>`).join("")}</select></div>
-      <div class="filter-group"><label>Repositor</label><select id="aud-rep"><option value="">Todos</option>${allReps.map(r=>`<option value="${r.codKey}" ${st.repositor===r.codKey?'selected':''}>${escapeHtml(r.nome)}</option>`).join("")}</select></div>
+      <div class="filter-group"><label>Repositor</label><select id="aud-rep"><option value="">Todos</option>${allReps.map(r=>`<option value="${r.codKey}" ${st.repositor===r.codKey?'selected':''}>${escapeHtml(codNome(r.codKey,r.nome))}</option>`).join("")}</select></div>
       <div class="filter-group"><label>Auditor</label><select id="aud-auditor"><option value="">Todos</option>${allAuditores.map(a=>`<option value="${escapeHtml(a)}" ${st.auditor===a?'selected':''}>${escapeHtml(a)}</option>`).join("")}</select></div>
       <div class="spacer"></div>
       <button class="btn btn-outline btn-sm" id="aud-clear">Limpar filtros</button>
@@ -6545,7 +6548,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header"><h3>Qualidade por Repositor</h3></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr><th>Codigo</th><th>Repositor</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade %</th></tr></thead>
+        <thead><tr><th>Código</th><th>Repositor</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade %</th></tr></thead>
         <tbody>${byRep.map(e=>`<tr><td>${e.cod||'-'}</td><td>${escapeHtml(e.nome)}</td><td>${e.auditorias}</td><td>${e.pickErrado}</td><td>${e.avariado}</td><td>${e.proxVenc}</td><td>${e.semSaldo}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>
@@ -6556,8 +6559,8 @@ function renderAuditoria(){
         <span class="panel-note">Qualidade = (Itens da 8022 − penalidade) / Itens · penalidade = Avaria×4 + Prox.Venc×3 + Picking×6 + SemSaldo×2</span>
       </div>
       <div class="table-wrap" style="max-height:400px;overflow-y:auto;"><table class="data-table">
-        <thead><tr><th>Repositor</th><th>Codigo</th><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
-        <tbody>${byRepRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>${escapeHtml(e.nome)}</td><td>${e.cod||'-'}</td><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.itens8022>0?fmtNum(e.itens8022):'-'}</td><td>${e.auditorias}</td><td>${e.pickErrado}</td><td>${e.avariado}</td><td>${e.proxVenc}</td><td>${e.semSaldo}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
+        <thead><tr><th>Código</th><th>Repositor</th><th>Rua</th><th>Itens (8022)</th><th>Auditorias</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Problemas</th><th>Qualidade</th><th>Status</th></tr></thead>
+        <tbody>${byRepRua.map(e=>{ const s=auditoriaStatusQual(e.qualidadeMedia); return `<tr><td>${escapeHtml(e.cod||'-')}</td><td>${escapeHtml(e.nome)}</td><td>Rua ${escapeHtml(String(e.rua))}</td><td>${e.itens8022>0?fmtNum(e.itens8022):'-'}</td><td>${e.auditorias}</td><td>${e.pickErrado}</td><td>${e.avariado}</td><td>${e.proxVenc}</td><td>${e.semSaldo}</td><td class="cell-neg">${e.ocorrencias}</td><td class="${qualClass(e.qualidadeMedia)}">${fmtQual(e.qualidadeMedia)}</td><td><span style="color:${s.cor};font-weight:700;">${s.label}</span></td></tr>`; }).join("")}</tbody>
       </table></div>
     </div>
 
@@ -6576,7 +6579,7 @@ function renderAuditoria(){
     <div class="panel">
       <div class="panel-header"><h3>Detalhamento das Auditorias</h3></div>
       <div class="table-wrap" style="max-height:340px;overflow-y:auto;"><table class="data-table">
-        <thead><tr><th>Data</th><th>Rua</th><th>Codigo</th><th>Repositor</th><th>Auditor</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Status</th></tr></thead>
+        <thead><tr><th>Data</th><th>Rua</th><th>Código</th><th>Repositor</th><th>Auditor</th><th>Pick. Errado</th><th>Avariados</th><th>Prox. Venc.</th><th>Sem Saldo</th><th>Status</th></tr></thead>
         <tbody>${rows.map(r=>`<tr class="clickable" onclick='showAuditDetailOnline(${r._row})'><td>${fmtDateBR(r.data)}</td><td>${escapeHtml(String(r.rua))}</td><td>${r.cod||'-'}</td><td>${escapeHtml(r.nome||'-')}</td><td>${escapeHtml(r.auditor||'-')}</td>
           <td class="cell-neg">${r.pickErrado}</td><td class="cell-neg">${r.avariado}</td><td class="cell-neg">${r.proxVenc}</td><td class="cell-neg">${r.semSaldo}</td><td class="${r.impecavel?'cell-pos':'cell-neg'}">${r.impecavel?'Impecavel':'Com ocorrencia'}</td></tr>`).join("")}</tbody>
       </table></div>
@@ -7486,7 +7489,7 @@ function renderIndividual(){
           <label>Funcionário</label>
           <select id="ind-emp-select">
             <option value="">— selecione —</option>
-            ${all.map(e=>`<option value="${escapeHtml(e.codKey)}" ${individualState.codKey===e.codKey?'selected':''}>${escapeHtml(e.nome)}</option>`).join("")}
+            ${all.map(e=>`<option value="${escapeHtml(e.codKey)}" ${individualState.codKey===e.codKey?'selected':''}>${escapeHtml(codNome(e.codKey,e.nome))}</option>`).join("")}
           </select>
         </div>
         <div class="filter-group">

@@ -4,9 +4,16 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.18.0";
+const APP_VERSAO = "2.18.1";
 
 const NOTAS_VERSAO = [
+  { v:"2.18.1", data:"2026-11-17", titulo:"Insights em cards e padrão Código - Nome", itens:[
+    "Feedbacks > Insights reorganizado em blocos: destaques em cards coloridos e rankings em caixas com hover, sem links soltos; clicar na pessoa abre o histórico.",
+    "Ranking de Repositores: coluna Código antes de Funcionário.",
+    "Gestão > Auditoria: tabelas com Código antes do Repositor (Qualidade por Repositor, Qualidade por Rua/Repositor e detalhe).",
+    "Listas Funcionário (Produção e Acompanhamento Individual) e Repositor (Auditoria) agora mostram Código - Nome.",
+    "Tabela de Feedbacks e Advertências e os Insights identificam a pessoa como Código - Nome."
+  ]},
   { v:"2.18.0", data:"2026-11-17", titulo:"Documentação de filtros ao lado das notas de atualização", itens:[
     "Administração > Atualizações e Documentação: dois botões verticais no topo (Notas de atualização e Documentação) alternam o conteúdo.",
     "Documentação: levantamento de todos os filtros de cada página (tipo, componente usado e detalhe), com busca, filtro por menu e botão Copiar como texto.",

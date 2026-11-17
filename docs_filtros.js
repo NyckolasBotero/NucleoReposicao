@@ -26,7 +26,7 @@ const DOC_FILTROS = {
       ["Período dia / semana / mês","alternar","toggle-group","prod-mode-toggle (Dia, Semana, Mês)"],
       ["Data Inicial","data","filter-group","prod-data-ini"],
       ["Data Final","data","filter-group","prod-data-fim"],
-      ["Funcionário","lista","filter-group","prod-employees — mostra só o nome (sem código)"],
+      ["Funcionário","lista","filter-group","prod-employees — Código - Nome"],
       ["Quadro Atual?","alternar","toggle-group","Sim / Não"],
       ["Comparar semana com","alternar","toggle-group","só no modo Semana (Semana anterior / Mês anterior)"],
       ["Mesma periodicidade?","alternar","toggle-group","só no modo Mês"],
@@ -41,7 +41,7 @@ const DOC_FILTROS = {
       ["Data Final","data","filter-group","proj-data-fim"]
     ], obs:"Sem atalhos de período, sem filtro de funcionário e sem Quadro Atual — diferente de Produção." },
     { id:"individual", menu:"indicadores", nome:"Acompanhamento Individual", filtros:[
-      ["Funcionário","lista","filter-group","ind-emp-select — nome sem código"],
+      ["Funcionário","lista","filter-group","ind-emp-select — Código - Nome"],
       ["Meta Mensal (O.S.)","número","inline","ind-meta — largura fixa no estilo da tela"],
       ["Linha de Corte (O.S./mês)","número","inline","ind-corte — largura fixa no estilo da tela"]
     ], obs:"Sem filtro de período." },
@@ -97,7 +97,7 @@ const DOC_FILTROS = {
       ["Ordenação por coluna","alternar","próprio","clique no cabeçalho da tabela"],
       ["Seleção de funcionários","marcar","inline","checkbox por linha + marcar todos (para gerar PDF)"],
       ["Período dos dados (ao gerar documento)","lista","próprio","fbf-per — janela de geração do feedback"]
-    ], obs:"Sem atalhos de período. Pendência pedida: manter ordenação ao selecionar funcionário." },
+    ], obs:"Sem atalhos de período. Contém o bloco Insights (cards sem filtro próprio: usa o período da página). Pendência pedida: manter ordenação ao selecionar funcionário." },
     { id:"quadro", menu:"gestao", nome:"Quadro", filtros:[
       ["Data Inicial","data","filter-group","quadro-data-ini"],
       ["Data Final","data","filter-group","quadro-data-fim"],
@@ -112,7 +112,7 @@ const DOC_FILTROS = {
       ["Data Inicial","data","filter-group","aud-data-ini"],
       ["Data Final","data","filter-group","aud-data-fim"],
       ["Rua","lista","filter-group","aud-rua"],
-      ["Repositor","lista","filter-group","aud-rep — verificar ordem Código - Nome"],
+      ["Repositor","lista","filter-group","aud-rep — Código - Nome"],
       ["Auditor","lista","filter-group","aud-auditor"],
       ["Quadro Atual?","alternar","toggle-group","aud-quadro-toggle"]
     ]},
@@ -221,7 +221,7 @@ const DOC_FILTROS = {
   /* inconsistências já detectadas na leitura do código */
   achados: [
     { sev:"alta", t:"Atalhos de período diferentes por tela", d:"Produção, Quadro, Comissão e Operadores têm 3 atalhos (Mês Atual, Anterior, Tudo); Auditoria tem 8; Turnover 6; Capacidade 5 (versão copiada); Relações usa o padrão; Projeção, Chamada e Feedbacks não têm atalhos." },
-    { sev:"alta", t:"Rótulo do colaborador sem Código", d:"Listas Funcionário (Produção, Acompanhamento Individual) e Repositor (Auditoria) mostram o nome; padrão pedido é Código - Nome." },
+    { sev:"média", t:"Colaborador sem Código na frente", d:"Listas Funcionário (Produção, Individual) e Repositor (Auditoria), Ranking de Feedbacks, Insights e tabelas de Auditoria já seguem Código - Nome (v2.18.1). Falta varrer NC, Retornos, Comissão, Lançamentos, PDFs e demais telas." },
     { sev:"média", t:"Sim / Não montado de formas diferentes", d:"toggle-group (padrão), cap-toggle-group (Capacidade) e botões soltos com estilo inline (Relações → Apenas Reposição)." },
     { sev:"média", t:"Campos fora do filter-group", d:"Selects de comparação ano × ano e mês da produção diária (Produção), Meta/Linha de Corte (Individual), Período de análise (Turnover), buscas das telas de Lançamento e inputs da Capacidade usam estilo inline." },
     { sev:"média", t:"Filtro de Quadro Atual só em parte das telas", d:"Existe em Produção, Auditoria e Comissão; não existe em Projeção, Chamada, Quadro, Operadores e Relações." },
