@@ -81,9 +81,7 @@
 [data-theme="dark"] .cap-table td{ color:var(--ink); border-bottom-color:var(--gray-100); }
 [data-theme="dark"] .cap-table tbody tr:hover{ background:var(--blue-light); }
 [data-theme="dark"] .cap-table th[onclick]:hover, [data-theme="dark"] .cap-table th.cap-sort-active{ background:var(--blue-light); color:var(--blue-dark); }
-[data-theme="dark"] .cap-filtro-row input[type=date], [data-theme="dark"] .cap-pag button, [data-theme="dark"] .cap-toggle-group,
-[data-theme="dark"] .cap-toggle-btn{ background:var(--white); border-color:var(--gray-200); }
-[data-theme="dark"] .cap-toggle-btn.active{ background:var(--blue-med); color:#fff; }
+[data-theme="dark"] .cap-filtro-row input[type=date], [data-theme="dark"] .cap-pag button{ background:var(--white); border-color:var(--gray-200); }
 [data-theme="dark"] .cap-aviso, [data-theme="dark"] .cap-aviso-inline{ background:#3a2a12; border-color:#6b4d16; color:#f0cf8a; }
 [data-theme="dark"] .cap-card-sub, [data-theme="dark"] .cap-pag span{ color:var(--gray-500); }
 [data-theme="dark"] .abast-pontos, [data-theme="dark"] .abast-notas, [data-theme="dark"] .abast-pontos ul, [data-theme="dark"] .abast-notas ul{ color:var(--gray-700); }

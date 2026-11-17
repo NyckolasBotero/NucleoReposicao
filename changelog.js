@@ -4,9 +4,13 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.21.0";
+const APP_VERSAO = "2.21.1";
 
 const NOTAS_VERSAO = [
+  { v:"2.21.1", data:"2026-11-17", titulo:"Capacidade: alternadores Sim/Não no padrão do sistema", itens:[
+    "Revenda, Não Validado, Corretivo, Transferido, Rua por página, Últimas Validações e Mostrar detalhes agora usam o mesmo componente de alternar das demais telas (toggle-group), inclusive no modo escuro.",
+    "A documentação de filtros foi atualizada; em Capacidade ainda restam campos de data e seleção com estilo próprio."
+  ]},
   { v:"2.21.0", data:"2026-11-17", titulo:"Digitalização de documentos com frente e verso", itens:[
     "No scanner, a 1ª página agora é a Frente; ao usar o documento, o sistema pergunta se ele tem verso e já abre a digitalização do verso (botão \"Digitalizar o verso\"). Páginas extras seguem como Página 3, 4...",
     "Em \"Já tenho o arquivo\", dá para escolher várias imagens de uma vez (frente e depois verso): elas são juntadas num único PDF, na ordem escolhida.",

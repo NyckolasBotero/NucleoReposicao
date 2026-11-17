@@ -79,9 +79,9 @@ const DOC_FILTROS = {
       ["Intervalo de ruas (início / fim)","número","inline","Rua ini / Rua fim"],
       ["Qtd total de itens","número","inline","simulação"],
       ["Diferença (de / até)","número","inline","filtro da tabela"],
-      ["Mostrar Últimas Validações","alternar","próprio","cap-toggle-group"],
-      ["Mostrar detalhes","alternar","próprio","cap-toggle-group"]
-    ], obs:"É a tela com mais controles fora do padrão (cap-toggle-group e inputs com estilo solto)." },
+      ["Mostrar Últimas Validações","alternar","padrão","toggle-group"],
+      ["Mostrar detalhes","alternar","padrão","toggle-group"]
+    ], obs:"Os alternadores Sim/Não já usam o padrão toggle-group; ainda restam inputs de data e selects com estilo próprio." },
     { id:"abastecimento", menu:"indicadores", nome:"Nível Abastecimento", filtros:[
       ["Buscar código ou descrição","busca","inline","abast-busca"],
       ["Saldo baixo: até (caixas)","número","inline","abast-limite"],
@@ -231,7 +231,7 @@ const DOC_FILTROS = {
   achados: [
     { sev:"baixa", t:"Atalhos de período padronizados (v2.18.2)", d:"Todas as telas com período usam os mesmos 6 atalhos. Exceção: Avaria XML, que monta os atalhos a partir das datas dos arquivos carregados." },
     { sev:"média", t:"Colaborador sem Código na frente", d:"Listas Funcionário (Produção, Individual) e Repositor (Auditoria), Ranking de Feedbacks, Insights e tabelas de Auditoria já seguem Código - Nome (v2.18.1). NC, Retornos e Atribuição Ruas também (v2.18.2). Tabelas de Lançamentos e Acessos usam Matrícula antes de Nome; PDFs de feedback já seguem o padrão; Painel TV mantém só o nome curto, por ser uma tela de exibição." },
-    { sev:"média", t:"Sim / Não montado de formas diferentes", d:"toggle-group é o padrão; Capacidade ainda usa cap-toggle-group. Relações já foi convertida." },
+    { sev:"média", t:"Sim / Não montado de formas diferentes", d:"toggle-group é o padrão e agora vale também em Capacidade (Relações já havia sido convertida). Restam inputs/selects com estilo solto em Capacidade." },
     { sev:"média", t:"Campos fora do filter-group", d:"Selects de comparação ano × ano e mês da produção diária (Produção), Meta/Linha de Corte (Individual), Período de análise (Turnover), buscas das telas de Lançamento e inputs da Capacidade usam estilo inline." },
     { sev:"média", t:"Filtro de Quadro Atual só em parte das telas", d:"Existe em Produção, Auditoria e Comissão; não existe em Projeção, Chamada, Quadro, Operadores e Relações." },
     { sev:"baixa", t:"Telas de análise sem nenhum filtro", d:"NVL 3D, Férias e Cronograma." }

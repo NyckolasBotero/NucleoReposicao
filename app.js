@@ -12311,12 +12311,7 @@ function renderCapacidadeCD() {
   }).join('');
 
   // Toggle genérico — mesmo padrão de Relações Rep
-  const capToggleBtn = (label, ativo, onclick) =>
-    `<button onclick="${onclick}"
-      style="padding:5px 14px;font-size:11px;font-weight:${ativo?'800':'600'};border-radius:6px;
-             border:1.5px solid ${ativo?'#0b2647':'#b8c4d4'};
-             background:${ativo?'#0b2647':'#fff'};color:${ativo?'#fff':'#1a4480'};
-             cursor:pointer;">${label}</button>`;
+  const capToggleBtn = (label, ativo, onclick) => `<button type="button" onclick="${onclick}" class="${ativo?'active':''}">${label}</button>`;
 
   const filtroHTML = `
     <div style="background:#f7f9fc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:14px;">
@@ -12363,7 +12358,7 @@ function renderCapacidadeCD() {
 
         <div class="filter-group">
           <label>Revenda</label>
-          <div style="display:flex;gap:4px;">
+          <div class="toggle-group">
             ${capToggleBtn('Todos', CapCDState.filtroRevenda==='todos', "CapCDState.filtroRevenda='todos';renderCapacidadeCD();")}
             ${capToggleBtn('Sem Revenda', CapCDState.filtroRevenda==='nao', "CapCDState.filtroRevenda='nao';renderCapacidadeCD();")}
           </div>
@@ -12386,7 +12381,7 @@ function renderCapacidadeCD() {
 
           <div class="filter-group">
             <label>Não Validado</label>
-            <div style="display:flex;gap:4px;">
+            <div class="toggle-group">
               ${capToggleBtn('SIM', CapCDState.demandaNaoValidado, "CapCDState.demandaNaoValidado=true;renderCapacidadeCD();")}
               ${capToggleBtn('NÃO', !CapCDState.demandaNaoValidado, "CapCDState.demandaNaoValidado=false;renderCapacidadeCD();")}
             </div>
@@ -12394,7 +12389,7 @@ function renderCapacidadeCD() {
 
           <div class="filter-group">
             <label>Corretivo Ocorrência</label>
-            <div style="display:flex;gap:4px;">
+            <div class="toggle-group">
               ${capToggleBtn('SIM', CapCDState.demandaCorretivo, "CapCDState.demandaCorretivo=true;renderCapacidadeCD();")}
               ${capToggleBtn('NÃO', !CapCDState.demandaCorretivo, "CapCDState.demandaCorretivo=false;renderCapacidadeCD();")}
             </div>
@@ -12402,7 +12397,7 @@ function renderCapacidadeCD() {
 
           <div class="filter-group">
             <label>Transferido Preventivo</label>
-            <div style="display:flex;gap:4px;">
+            <div class="toggle-group">
               ${capToggleBtn('SIM', CapCDState.demandaTransferido, "CapCDState.demandaTransferido=true;renderCapacidadeCD();")}
               ${capToggleBtn('NÃO', !CapCDState.demandaTransferido, "CapCDState.demandaTransferido=false;renderCapacidadeCD();")}
             </div>
@@ -12410,7 +12405,7 @@ function renderCapacidadeCD() {
 
           <div class="filter-group">
             <label>Imprimir Rua por Página</label>
-            <div style="display:flex;gap:4px;">
+            <div class="toggle-group">
               ${capToggleBtn('SIM', CapCDState.demandaRuaPorPagina, "CapCDState.demandaRuaPorPagina=true;renderCapacidadeCD();")}
               ${capToggleBtn('NÃO', !CapCDState.demandaRuaPorPagina, "CapCDState.demandaRuaPorPagina=false;renderCapacidadeCD();")}
             </div>
@@ -12558,7 +12553,7 @@ function renderCapacidadeCD() {
     </div>
     <div class="cap-controls-row" style="margin-bottom:8px;">
       <label class="cap-toggle-label" style="font-weight:600;font-size:12px;">Mostrar Últimas Validações:</label>
-      <div class="cap-toggle-group">
+      <div class="toggle-group">
         ${capToggleBtn('SIM', CapCDState.ultValSoUltimoDia, "CapCDState.ultValSoUltimoDia=true;CapCDState.ultValPage=0;renderCapacidadeCD();")}
         ${capToggleBtn('NÃO', !CapCDState.ultValSoUltimoDia, "CapCDState.ultValSoUltimoDia=false;CapCDState.ultValPage=0;renderCapacidadeCD();")}
       </div>
@@ -12994,9 +12989,9 @@ function renderCapacidadeCD() {
     </div>
     <div class="cap-controls-row">
       <label class="cap-toggle-label">Mostrar detalhes:</label>
-      <div class="cap-toggle-group">
-        <button onclick="CapCDState.mostrarDetalhes=true;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${CapCDState.mostrarDetalhes?'active':''}">Sim</button>
-        <button onclick="CapCDState.mostrarDetalhes=false;CapCDState.tblPage=0;renderCapacidadeCD();" class="cap-toggle-btn ${!CapCDState.mostrarDetalhes?'active':''}">Não</button>
+      <div class="toggle-group">
+        <button onclick="CapCDState.mostrarDetalhes=true;CapCDState.tblPage=0;renderCapacidadeCD();" class="${CapCDState.mostrarDetalhes?'active':''}">Sim</button>
+        <button onclick="CapCDState.mostrarDetalhes=false;CapCDState.tblPage=0;renderCapacidadeCD();" class="${!CapCDState.mostrarDetalhes?'active':''}">Não</button>
       </div>
       <button class="cap-btn-pdf" onclick="capExportPDF()">Extrair PDF (8022)</button>
     </div>
