@@ -4,9 +4,14 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.20.0";
+const APP_VERSAO = "2.21.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.21.0", data:"2026-11-17", titulo:"Digitalização de documentos com frente e verso", itens:[
+    "No scanner, a 1ª página agora é a Frente; ao usar o documento, o sistema pergunta se ele tem verso e já abre a digitalização do verso (botão \"Digitalizar o verso\"). Páginas extras seguem como Página 3, 4...",
+    "Em \"Já tenho o arquivo\", dá para escolher várias imagens de uma vez (frente e depois verso): elas são juntadas num único PDF, na ordem escolhida.",
+    "Vale para todos os anexos digitalizados: feedback, advertência, suspensão, termo de coletor e documentos escaneados depois."
+  ]},
   { v:"2.20.0", data:"2026-11-17", titulo:"Certificado com verso de desempenho, medalha arrastável e layouts salvos", itens:[
     "Certificado agora tem frente e verso. O verso traz produção média por mês, média por dia no último ano, produção do mês atual e, mês a mês e no geral (12 meses): produção, média/dia, qualidade de ruas, qualidade de retorno, qualidade geral e % de presença do colaborador.",
     "O PDF sai com 2 páginas (frente e verso) quando a opção \"Incluir o verso\" está marcada; o PNG baixa o lado que está na tela.",
