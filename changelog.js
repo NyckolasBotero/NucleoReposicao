@@ -4,9 +4,15 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.21.1";
+const APP_VERSAO = "2.22.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.22.0", data:"2026-11-17", titulo:"Comissão: a qualidade geral (ruas + retornos) é o que sobra da comissão", itens:[
+    "A qualidade do repositor na comissão passa a ser a QUALIDADE GERAL: ruas e retornos juntos, ponderados pelo número de auditorias de cada um (retornos pela acuracidade). Antes entrava só a qualidade das ruas.",
+    "O valor da qualidade é direto o % da comissão que o repositor recebe (ex.: 85% de qualidade paga 85% do valor). As antigas faixas (abaixo de 50% zera, 50 a 69% metade) deixam de existir.",
+    "Repositor sem nenhuma auditoria no período continua usando a qualidade geral da equipe; a qualidade geral da equipe também passa a juntar ruas e retornos pelo nº de auditorias.",
+    "A regra aplicada de cada repositor mostra a qualidade geral e, quando há, os valores de ruas e retornos."
+  ]},
   { v:"2.21.1", data:"2026-11-17", titulo:"Capacidade: alternadores Sim/Não no padrão do sistema", itens:[
     "Revenda, Não Validado, Corretivo, Transferido, Rua por página, Últimas Validações e Mostrar detalhes agora usam o mesmo componente de alternar das demais telas (toggle-group), inclusive no modo escuro.",
     "A documentação de filtros foi atualizada; em Capacidade ainda restam campos de data e seleção com estilo próprio."
