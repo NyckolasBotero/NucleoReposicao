@@ -4,9 +4,12 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.18.2";
+const APP_VERSAO = "2.18.3";
 
 const NOTAS_VERSAO = [
+  { v:"2.18.3", data:"2026-11-17", titulo:"Código - Nome nos documentos de feedback", itens:[
+    "PDFs de feedback (NC e Produção/Qualidade): Identificação com Código antes do Colaborador e do Avaliador; linhas de assinatura mostram Código - Nome."
+  ]},
   { v:"2.18.2", data:"2026-11-17", titulo:"Padronização de atalhos de período e Código - Nome", itens:[
     "Atalhos de período iguais em todas as telas: Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior e Tudo (Produção, Projeção, Operadores, Relações, Capacidade, Quadro, Chamada, Feedbacks, Auditoria, Comissão e Turnover).",
     "Projeção, Chamada e Feedbacks ganharam os atalhos de período.",

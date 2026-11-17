@@ -136,8 +136,8 @@ const FeedbackFolha = {
   },
   ident(emp, P){
     return `<div class="sec"><h2>Identificação</h2><table>
-      <tr><td class="l">Colaborador</td><td><strong>${escapeHtml(emp.nome||"-")}</strong></td><td class="l">Matrícula</td><td>${escapeHtml(emp.cod||"-")}</td></tr>
-      <tr><td class="l">Avaliador</td><td>${escapeHtml(AVALIADOR_FIXO.nome)}</td><td class="l">Matrícula</td><td>${escapeHtml(AVALIADOR_FIXO.codigo)}</td></tr>
+      <tr><td class="l">Código</td><td>${escapeHtml(emp.cod||"-")}</td><td class="l">Colaborador</td><td><strong>${escapeHtml(emp.nome||"-")}</strong></td></tr>
+      <tr><td class="l">Código</td><td>${escapeHtml(AVALIADOR_FIXO.codigo)}</td><td class="l">Avaliador</td><td>${escapeHtml(AVALIADOR_FIXO.nome)}</td></tr>
       <tr><td class="l">Período analisado</td><td colspan="3">${escapeHtml(P.label)}</td></tr></table></div>`;
   },
   corQ(v){ return v===null||v===undefined ? "#7a8798" : v>=90 ? "#1a9c62" : v>=70 ? "#e08a1f" : "#d64545"; },
@@ -213,7 +213,7 @@ const FeedbackFolha = {
   caixa(rot, alt){ return `<table style="margin-bottom:7px"><tr><td class="l" style="width:auto">${rot}</td></tr><tr><td style="height:${alt||34}px"></td></tr></table>`; },
   assinaturas(emp){
     const bl = (nome, papel, mat)=>`<div style="flex:1"><div style="border-bottom:1px solid #333;height:26px"></div><div style="font-size:10px;font-weight:700;margin-top:3px">${papel}</div><div style="font-size:9.5px">${escapeHtml(nome)}</div><div style="font-size:8.5px;color:#7a8798">${mat?"Matrícula "+escapeHtml(mat)+" · ":""}Data: ___/___/______</div></div>`;
-    return `<div style="display:flex;gap:30px;margin-top:6px">${bl(emp.nome||"Colaborador","Colaborador",emp.cod)}${bl(AVALIADOR_FIXO.nome,"Avaliador / Encarregado",AVALIADOR_FIXO.codigo)}</div>`;
+    return `<div style="display:flex;gap:30px;margin-top:6px">${bl((emp.cod?emp.cod+" - ":"")+(emp.nome||"Colaborador"),"Colaborador",emp.cod)}${bl((AVALIADOR_FIXO.codigo?AVALIADOR_FIXO.codigo+" - ":"")+AVALIADOR_FIXO.nome,"Avaliador / Encarregado",AVALIADOR_FIXO.codigo)}</div>`;
   },
   termo(emp, P, extra){
     return `<div style="background:#fff7ec;border:1px solid #f0d3a8;border-radius:5px;padding:7px 10px;font-size:10px;margin-bottom:8px"><strong>Termo de ciência.</strong> ${extra||""} Declaro ter recebido este feedback, com o resumo das minhas presenças, auditorias e não conformidades do período ${escapeHtml(P.label)}, e estar ciente das regras de contagem e das etapas de feedback, advertência e suspensão descritas nesta folha. Este documento tem finalidade de orientação, correção do processo e prevenção de reincidência.</div>`;
