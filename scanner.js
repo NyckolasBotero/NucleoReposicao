@@ -445,9 +445,10 @@ const DocScanner = {
       const btn = (txt, cls, fn)=>{ const b = document.createElement("button"); b.type = "button"; b.className = "btn " + cls; b.textContent = txt; b.onclick = fn; foot.appendChild(b); return b; };
       const carregando = (msg)=>{ const d = document.createElement("div"); d.className = "sc-load"; d.textContent = msg; stage.appendChild(d); };
 
+      const nomePag = (i)=> i === 0 ? "Frente" : (i === 1 ? "Verso" : "Página " + (i+1));
       /* --- passo 1: ajustar as pontas --- */
       const ajustar = ()=>{
-        titulo.textContent = "Ajuste as pontas da folha" + (paginas.length ? ` · página ${paginas.length+1}` : "");
+        titulo.textContent = "Ajuste as pontas da folha · " + nomePag(paginas.length);
         dica.textContent = "Arraste as 4 bolinhas até os cantos do papel (a lupa mostra o canto). Depois toque em Recortar.";
         modos.style.display = "none"; foot.innerHTML = ""; stage.innerHTML = "";
         const wrap = document.createElement("div"); wrap.className = "sc-wrap";
@@ -511,13 +512,13 @@ const DocScanner = {
 
       /* --- passo 2: resultado --- */
       const resultado = ()=>{
-        titulo.textContent = "Documento digitalizado" + (paginas.length ? ` · ${paginas.length} página(s) salva(s)` : "");
+        titulo.textContent = "Documento digitalizado · " + (saida ? nomePag(paginas.length) : `${paginas.length} página(s) salva(s)`);
         dica.textContent = saida ? "Confira a leitura. Se precisar, gire ou refaça os cortes." : "";
         foot.innerHTML = ""; stage.innerHTML = "";
         if(!saida){ // só páginas já salvas (cancelou uma nova página)
           dica.textContent = ""; modos.style.display = "none";
           const t = document.createElement("div"); t.className = "sc-load"; t.style.position = "static"; t.textContent = `${paginas.length} página(s) pronta(s).`; stage.appendChild(t);
-          btn("＋ Outra página", "btn-ghost", ()=> ov.querySelector("#sc-nova").click());
+          btn("＋ Outra página (" + nomePag(paginas.length) + ")", "btn-ghost", ()=> ov.querySelector("#sc-nova").click());
           btn("✓ Usar documento", "btn-primary", concluir);
           return;
         }
@@ -533,8 +534,12 @@ const DocScanner = {
         });
         btn("⟳ Girar", "btn-ghost", ()=>{ base = S.girar(base); saida = S.girar(saida); resultado(); });
         btn("✂️ Refazer cortes", "btn-ghost", ()=>{ saida = null; ajustar(); });
-        btn("＋ Outra página", "btn-ghost", ()=>{ paginas.push(saida); saida = null; ov.querySelector("#sc-nova").click(); });
-        btn("✓ Usar documento", "btn-primary", ()=>{ paginas.push(saida); saida = null; concluir(); });
+        btn(paginas.length === 0 ? "＋ Digitalizar o verso" : "＋ Outra página", "btn-ghost", ()=>{ paginas.push(saida); saida = null; ov.querySelector("#sc-nova").click(); });
+        btn("✓ Usar documento", "btn-primary", ()=>{
+          paginas.push(saida); saida = null;
+          if(paginas.length === 1 && confirm("O documento tem verso?\n\nOK = digitalizar o verso agora.\nCancelar = usar só a frente.")){ ov.querySelector("#sc-nova").click(); return; }
+          concluir();
+        });
       };
 
       const concluir = async ()=>{

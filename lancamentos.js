@@ -111,10 +111,11 @@ const LancUI = {
     return `<fieldset class="adm-fs"><legend>${titulo}</legend>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button type="button" class="btn btn-primary" id="${p}-foto">Tirar foto (digitalizar como scanner)</button>
-        <button type="button" class="btn btn-outline" id="${p}-arq">Já tenho o arquivo (PDF ou imagem)</button>
+        <button type="button" class="btn btn-outline" id="${p}-arq">Já tenho o arquivo (PDF ou imagens)</button>
         <input type="file" id="${p}-foto-in" accept="image/*" capture="environment" style="display:none">
-        <input type="file" id="${p}-arq-in" accept="application/pdf,image/*" style="display:none">
+        <input type="file" id="${p}-arq-in" accept="application/pdf,image/*" multiple style="display:none">
       </div>
+      <div class="small-muted" style="margin-top:8px">Documento com frente e verso: ao digitalizar, use “Digitalizar o verso”; ou escolha as 2 imagens de uma vez em “Já tenho o arquivo” (frente primeiro).</div>
       <div id="${p}-anexo" class="small-muted" style="margin-top:10px">Nenhum documento anexado.</div>
     </fieldset>`;
   },
@@ -145,7 +146,18 @@ const LancUI = {
     });
     $$(p + "-arq").addEventListener("click", ()=> $$(p + "-arq-in").click());
     $$(p + "-arq-in").addEventListener("change", async (e)=>{
-      const f = e.target.files[0]; e.target.value = ""; if(!f) return;
+      const fs = Array.from(e.target.files || []); e.target.value = ""; if(!fs.length) return;
+      const imgs = fs.filter(x=> x.type.startsWith("image/"));
+      if(fs.length > 1){
+        // várias imagens (frente e verso): juntas num único PDF, na ordem escolhida
+        if(imgs.length !== fs.length){ toast("Para juntar frente e verso, escolha só imagens (ou um único PDF).", "error"); return; }
+        try{
+          const pgs = []; for(const x of fs){ pgs.push(DocScanner.paraCanvas(await DocScanner.carregarImagem(x), DocScanner.MAX_ORIGEM)); }
+          this.anexos[p] = await DocScanner.montarAnexo(pgs); mostrar();
+        }catch(err){ toast("Não foi possível juntar as imagens: " + err.message, "error"); }
+        return;
+      }
+      const f = fs[0];
       if(f.size > 12*1024*1024){ toast("Arquivo muito grande (máximo 12 MB).", "error"); return; }
       const b64 = await new Promise((res, rej)=>{ const r = new FileReader(); r.onload = ()=> res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(f); });
       this.anexos[p] = { nome:f.name, mime:f.type || "application/octet-stream", base64:b64, paginas:0, preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : "",
