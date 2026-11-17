@@ -225,7 +225,7 @@ const DOC_FILTROS = {
   /* inconsistências já detectadas na leitura do código */
   achados: [
     { sev:"baixa", t:"Atalhos de período padronizados (v2.18.2)", d:"Todas as telas com período usam os mesmos 6 atalhos. Exceção: Avaria XML, que monta os atalhos a partir das datas dos arquivos carregados." },
-    { sev:"média", t:"Colaborador sem Código na frente", d:"Listas Funcionário (Produção, Individual) e Repositor (Auditoria), Ranking de Feedbacks, Insights e tabelas de Auditoria já seguem Código - Nome (v2.18.1). NC, Retornos e Atribuição Ruas também (v2.18.2). Tabelas de Lançamentos e Acessos usam Matrícula antes de Nome; PDFs e Painel TV ainda não foram revisados." },
+    { sev:"média", t:"Colaborador sem Código na frente", d:"Listas Funcionário (Produção, Individual) e Repositor (Auditoria), Ranking de Feedbacks, Insights e tabelas de Auditoria já seguem Código - Nome (v2.18.1). NC, Retornos e Atribuição Ruas também (v2.18.2). Tabelas de Lançamentos e Acessos usam Matrícula antes de Nome; PDFs de feedback já seguem o padrão; Painel TV mantém só o nome curto, por ser uma tela de exibição." },
     { sev:"média", t:"Sim / Não montado de formas diferentes", d:"toggle-group é o padrão; Capacidade ainda usa cap-toggle-group. Relações já foi convertida." },
     { sev:"média", t:"Campos fora do filter-group", d:"Selects de comparação ano × ano e mês da produção diária (Produção), Meta/Linha de Corte (Individual), Período de análise (Turnover), buscas das telas de Lançamento e inputs da Capacidade usam estilo inline." },
     { sev:"média", t:"Filtro de Quadro Atual só em parte das telas", d:"Existe em Produção, Auditoria e Comissão; não existe em Projeção, Chamada, Quadro, Operadores e Relações." },
