@@ -20,7 +20,7 @@ const ComissaoParams = {
     const d = (typeof DEFAULT_COMMISSION_CONFIG !== "undefined") ? DEFAULT_COMMISSION_CONFIG : { bands:[], exceptions:[] };
     return {
       bands: this.clone(d.bands||[]), exceptions: this.clone(d.exceptions||[]),
-      aplicarDesconto: "SIM", considerarMissoes: "SIM",
+      aplicarDesconto: "SIM", faixasQualidade: "NAO", considerarMissoes: "SIM",
       teto: 15000, metaFaturamento: 100000000, pontosMinimos: 660, valorFixoAbaixo: 300,
       auditor:    { cod:"", valorAudit:0.5, bonusNC:0, metaAuditorias:0, pctSeNaoBater:30, faixas:[{ min:0, max:49.99, value:0 }, { min:50, max:100, value:0 }] },
       recuperacao:{ cod:"", valorItem:0, metaItens:0, pctSeNaoBater:30, motivo:"RECUPERADO (REP) STO", extras:[] },
@@ -348,7 +348,7 @@ const ComissaoResumo = {
     const estimados = c.rep.filter(e=>e.qualidadeEstimada).length;
     const fixa = Array.from(cont.entries()).map(([k,n])=>`${k}: ${n} repositor(es)`)
       .concat([`Abaixo de ${fmtNum(P.pontosMinimos)} pts no mês: R$ ${fmtNum(P.valorFixoAbaixo,2)} fixo`])
-      .concat([P.aplicarDesconto==="SIM" ? "Desconto por qualidade aplicado (a qualidade geral — ruas e retornos juntos — é o % da comissão que sobra)" : "Desconto por qualidade NÃO aplicado"])
+      .concat([P.aplicarDesconto==="SIM" ? (P.faixasQualidade==="SIM" ? "Desconto por qualidade aplicado, por faixas (<50% zera · 50–69% metade · ≥70% proporcional)" : "Desconto por qualidade aplicado (a qualidade geral — ruas e retornos juntos — é o % da comissão que sobra)") : "Desconto por qualidade NÃO aplicado"])
       .concat(estimados ? [`${estimados} repositor(es) sem auditoria no mês: aplicada a média da equipe`] : [])
       .concat([c.fatFat!==1 ? `Ajuste de faturamento: ×${fmtNum(c.fatFat,4)} (${fmtBRL(c.M.faturado)} ÷ ${fmtBRL(P.metaFaturamento)})` : "Sem ajuste de faturamento (faturamento do mês não informado ou igual à meta)"]);
     const q = c.quadro;
@@ -560,13 +560,14 @@ const ComissaoParamsUI = {
       ${sec("Parâmetros gerais", "Valem para o cálculo de todos os repositores", `
         <div class="cp-grid">
           ${fld("Desconto por qualidade?", this.toggle("aplicarDesconto", d.aplicarDesconto))}
+          ${fld("Usar faixas de qualidade?", this.toggle("faixasQualidade", d.faixasQualidade))}
           ${fld("Considerar Missões?", this.toggle("considerarMissoes", d.considerarMissoes))}
           ${fld("Teto de comissão", this.inp("teto", d.teto, {step:100, pre:"R$"}))}
           ${fld("Pontuação mínima no mês", this.inp("pontosMinimos", d.pontosMinimos, {suf:"O.S."}))}
           ${fld("Valor fixo abaixo da mínima", this.inp("valorFixoAbaixo", d.valorFixoAbaixo, {step:0.01, pre:"R$"}))}
           ${fld("Meta de faturamento", this.inp("metaFaturamento", d.metaFaturamento, {step:1000, pre:"R$"}))}
         </div>
-        <p class="cp-hint">Qualidade geral (ruas e retornos juntos) = % da comissão que o repositor recebe (ex.: 85% de qualidade paga 85% do valor). Com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês o repositor recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo, com desconto de qualidade e ajuste de faturamento como os demais.</p>`)}
+        <p class="cp-hint">Qualidade geral (ruas e retornos juntos): com “Usar faixas de qualidade?” em Não, ela é o % da comissão que o repositor recebe (ex.: 85% paga 85% do valor); em Sim, vale a regra por faixas: abaixo de 50% zera · 50–69% paga metade · 70% ou mais paga o % da qualidade. Com menos de ${fmtNum(d.pontosMinimos)} O.S. no mês o repositor recebe R$ ${fmtNum(d.valorFixoAbaixo,2)} fixo, com desconto de qualidade e ajuste de faturamento como os demais.</p>`)}
 
       ${sec("Faixas de Pontuação", "Valor pago por ponto em cada faixa", `
         <div class="cp-rows">
