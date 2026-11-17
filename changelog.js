@@ -4,9 +4,16 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.18.1";
+const APP_VERSAO = "2.18.2";
 
 const NOTAS_VERSAO = [
+  { v:"2.18.2", data:"2026-11-17", titulo:"Padronização de atalhos de período e Código - Nome", itens:[
+    "Atalhos de período iguais em todas as telas: Mês Atual, Mês Anterior, Últimos 3 Meses, Ano Atual, Ano Anterior e Tudo (Produção, Projeção, Operadores, Relações, Capacidade, Quadro, Chamada, Feedbacks, Auditoria, Comissão e Turnover).",
+    "Projeção, Chamada e Feedbacks ganharam os atalhos de período.",
+    "Relações: Apenas Reposição e Apenas REP.AVARIA passam a usar o Sim/Não padrão do site.",
+    "Código - Nome também em Projeção por funcionário, Acompanhamento Individual, Operadores, Retornos, NC (colaborador, feedbacks, advertências e suspensões) e Atribuição Ruas.",
+    "Documentação de filtros atualizada com as mudanças."
+  ]},
   { v:"2.18.1", data:"2026-11-17", titulo:"Insights em cards e padrão Código - Nome", itens:[
     "Feedbacks > Insights reorganizado em blocos: destaques em cards coloridos e rankings em caixas com hover, sem links soltos; clicar na pessoa abre o histórico.",
     "Ranking de Repositores: coluna Código antes de Funcionário.",
