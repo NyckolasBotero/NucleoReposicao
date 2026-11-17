@@ -4,9 +4,15 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.17.2";
+const APP_VERSAO = "2.18.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.18.0", data:"2026-11-17", titulo:"Documentação de filtros ao lado das notas de atualização", itens:[
+    "Administração > Atualizações e Documentação: dois botões verticais no topo (Notas de atualização e Documentação) alternam o conteúdo.",
+    "Documentação: levantamento de todos os filtros de cada página (tipo, componente usado e detalhe), com busca, filtro por menu e botão Copiar como texto.",
+    "Em cada página dá para marcar se ela precisa de filtros (A revisar / Sim / Não); a escolha fica salva no navegador.",
+    "Achados da revisão: atalhos de período diferentes por tela, nome sem código nas listas de funcionário, Sim/Não e campos fora do padrão, telas sem filtro."
+  ]},
   { v:"2.17.2", data:"2026-11-17", titulo:"Qualidade de retornos por repositor", itens:[
     "Na planilha, só as linhas com erro trazem o colaborador. Agora as auditorias conformes são atribuídas a quem respondia pela rua na data, e os erros ficam com o colaborador apontado.",
     "Corrige a qualidade/acuracidade de retornos zerada no feedback, no ranking e em Gestão > Auditoria (ex.: 47 auditados, 5 erros, 89,4%)."

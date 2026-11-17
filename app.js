@@ -4118,7 +4118,7 @@ const UI = {
       { id:"bases", label:"Bases" },
       { id:"acessos", label:"Acessos" },
       { id:"links", label:"Links de acesso" },
-      { id:"versoes", label:"Atualizações" },
+      { id:"versoes", label:"Atualizações e Documentação" },
       { id:"alertas", label:"Alertas" },
       { id:"tv", label:"Parâmetros Painel TV" }
     ]
