@@ -724,6 +724,64 @@ const AdminUI = {
   /* ATUALIZAÇÕES (versão e notas)                                       */
   /* ================================================================== */
   versoesState: { ultima:null, novas:0, checando:false, erro:null },
+  versaoAba: (()=>{ try{ return localStorage.getItem("nr_versao_aba")==="docs" ? "docs" : "notas"; }catch(e){ return "notas"; } })(),
+  docEstado: { busca:"", menu:"", decisao:"", aberto:{} },
+
+  /* ---------- Documentação de filtros por página ---------- */
+  docDecisoes(){ try{ return JSON.parse(localStorage.getItem("nr_doc_decisoes")||"{}"); }catch(e){ return {}; } },
+  docSalvarDecisao(id, v){ const d = this.docDecisoes(); if(v) d[id] = v; else delete d[id]; try{ localStorage.setItem("nr_doc_decisoes", JSON.stringify(d)); }catch(e){} },
+  docFiltrosHtml(){
+    if(typeof DOC_FILTROS === "undefined") return `<div class="panel"><p class="small-muted">Documentação não carregada.</p></div>`;
+    const D = DOC_FILTROS, st = this.docEstado, dec = this.docDecisoes(), h = escapeHtml;
+    const q = normStr(st.busca||"");
+    const paginas = D.paginas.filter(p=>{
+      if(st.menu && p.menu!==st.menu) return false;
+      if(st.decisao && (dec[p.id]||"revisar")!==st.decisao) return false;
+      if(!q) return true;
+      return normStr(p.nome+" "+(p.obs||"")+" "+p.filtros.map(f=>f.join(" ")).join(" ")).includes(q);
+    });
+    const total = D.paginas.reduce((n,p)=>n+p.filtros.length,0);
+    const sem = D.paginas.filter(p=>!p.filtros.length).length;
+    const opt = (v,t,sel)=>`<option value="${v}" ${sel===v?"selected":""}>${t}</option>`;
+    const grupos = Object.keys(D.menus).map(m=>{
+      const ps = paginas.filter(p=>p.menu===m); if(!ps.length) return "";
+      return `<h3 class="vd-menu">${h(D.menus[m])}</h3>` + ps.map(p=>{
+        const d = dec[p.id]||"revisar";
+        return `<div class="panel vd-pag" data-id="${p.id}">
+          <div class="adm-head"><h3 class="adm-h2" style="margin:0;">${h(p.nome)} <span class="vd-n">${p.filtros.length} filtro(s)</span></h3>
+            <label class="vd-dec">Precisa de filtros?<select data-dec="${p.id}">${opt("revisar","A revisar",d)}${opt("sim","Sim, manter/ampliar",d)}${opt("nao","Não precisa",d)}</select></label></div>
+          ${p.obs ? `<p class="small-muted" style="margin:6px 0 0;">${h(p.obs)}</p>` : ""}
+          ${p.filtros.length ? `<div class="vd-tbl"><table><thead><tr><th>Filtro</th><th>Tipo</th><th>Componente</th><th>Detalhe</th></tr></thead><tbody>
+            ${p.filtros.map(f=>`<tr><td><strong>${h(f[0])}</strong></td><td>${h(f[1])}</td><td><span class="vd-comp c-${normStr(f[2]).replace(/[^a-z]/g,"")}">${h(f[2])}</span></td><td class="small-muted">${h(f[3]||"")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="vd-vazio">Esta página não tem nenhum filtro hoje.</p>`}
+        </div>`;
+      }).join("");
+    }).join("");
+    return `<div class="panel">
+        <div class="adm-head"><h2 class="adm-h">Documentação — filtros por página</h2><button class="btn btn-outline btn-sm" id="dc-copiar">Copiar como texto</button></div>
+        <p class="small-muted" style="margin:6px 0 0;">Levantamento feito na leitura do código em ${h(D.geradoEm.split("-").reverse().join("/"))}: ${D.paginas.length} páginas, ${total} filtros, ${sem} páginas sem filtro. Marque em cada página se ela precisa de filtros — a escolha fica salva neste navegador.</p>
+        <div class="vd-bar">
+          <div class="filter-group"><label>Buscar</label><input type="search" id="dc-busca" placeholder="Página, filtro ou componente…" value="${h(st.busca||"")}"></div>
+          <div class="filter-group"><label>Menu</label><select id="dc-menu"><option value="">Todos</option>${Object.keys(D.menus).map(m=>opt(m,h(D.menus[m]),st.menu)).join("")}</select></div>
+          <div class="filter-group"><label>Decisão</label><select id="dc-decisao"><option value="">Todas</option>${opt("revisar","A revisar",st.decisao)}${opt("sim","Precisa",st.decisao)}${opt("nao","Não precisa",st.decisao)}</select></div>
+        </div></div>
+      <div class="panel"><h3 class="adm-h2" style="margin:0 0 8px;">Achados da revisão</h3><ul class="vd-ach">
+        ${D.achados.map(a=>`<li><span class="adm-tag ${a.sev==="alta"?"rep":"acc"}">${h(a.sev)}</span> <strong>${h(a.t)}.</strong> ${h(a.d)}</li>`).join("")}</ul></div>
+      <div class="panel"><h3 class="adm-h2" style="margin:0 0 8px;">Padrões do site</h3><ul class="vd-ach">${D.padroes.map(a=>`<li><strong>${h(a.nome)}.</strong> ${h(a.desc)}</li>`).join("")}</ul></div>
+      ${grupos || `<div class="panel"><p class="small-muted">Nenhuma página com esse filtro.</p></div>`}`;
+  },
+  docFiltrosLigar(){
+    const pane = document.getElementById("pane-versoes"), st = this.docEstado; if(!pane) return;
+    const redesenhar = (foco)=>{ this.desenharVersoes(); if(foco){ const e = document.getElementById(foco); if(e){ e.focus(); try{ const n=e.value.length; e.setSelectionRange(n,n); }catch(x){} } } };
+    const b = document.getElementById("dc-busca"); if(b) b.addEventListener("input", e=>{ st.busca = e.target.value; redesenhar("dc-busca"); });
+    const m = document.getElementById("dc-menu"); if(m) m.addEventListener("change", e=>{ st.menu = e.target.value; redesenhar(); });
+    const d = document.getElementById("dc-decisao"); if(d) d.addEventListener("change", e=>{ st.decisao = e.target.value; redesenhar(); });
+    pane.querySelectorAll("[data-dec]").forEach(s=> s.addEventListener("change", e=>{ this.docSalvarDecisao(s.dataset.dec, e.target.value==="revisar" ? "" : e.target.value); if(st.decisao) redesenhar(); }));
+    const c = document.getElementById("dc-copiar"); if(c) c.addEventListener("click", ()=>{
+      const D = DOC_FILTROS, dec = this.docDecisoes(), nomes = { sim:"precisa", nao:"não precisa", revisar:"a revisar" };
+      const txt = D.paginas.map(p=> `## ${D.menus[p.menu]} > ${p.nome} (${nomes[dec[p.id]||"revisar"]})\n` + (p.filtros.length ? p.filtros.map(f=>`- ${f[0]} [${f[1]} · ${f[2]}] ${f[3]||""}`).join("\n") : "- sem filtros") + (p.obs?`\n> ${p.obs}`:"")).join("\n\n");
+      (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(()=>toast("Documentação copiada."), ()=>toast("Não consegui copiar neste navegador.", "error"));
+    });
+  },
 
   cmpVersao(a, b){
     const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
@@ -775,9 +833,10 @@ const AdminUI = {
     if(dr){
       dr.innerHTML = `<div class="drv"><div class="drv-l"><strong>Versão ${escapeHtml(APP_VERSAO)}</strong>
         ${nova ? `<span class="drv-new">Nova: ${escapeHtml(st.ultima)}</span>` : `<span class="drv-ok">Atualizado</span>`}</div>
-        <div class="drv-b"><button type="button" class="drv-bt" id="drv-notas">Notas de atualização</button>
+        <div class="drv-b"><button type="button" class="drv-bt" id="drv-notas">Notas de atualização</button><button type="button" class="drv-bt" id="drv-docs">Documentação</button>
         ${nova ? `<button type="button" class="drv-bt up" id="drv-atualizar">Atualizar agora</button>` : ""}</div></div>`;
-      const n = document.getElementById("drv-notas"); if(n) n.onclick = ()=>{ UI.fecharDrawer && UI.fecharDrawer(); UI.goTo("admin","versoes"); };
+      const n = document.getElementById("drv-notas"); if(n) n.onclick = ()=>{ this.versaoAba = "notas"; UI.fecharDrawer && UI.fecharDrawer(); UI.goTo("admin","versoes"); };
+      const dd = document.getElementById("drv-docs"); if(dd) dd.onclick = ()=>{ this.versaoAba = "docs"; UI.fecharDrawer && UI.fecharDrawer(); UI.goTo("admin","versoes"); };
       const a = document.getElementById("drv-atualizar"); if(a) a.onclick = ()=> this.atualizarApp();
     }
   },
@@ -798,7 +857,7 @@ const AdminUI = {
     else if(st.ultima && st.novas > 0) situ = `<span class="adm-tag rep">Atualização disponível</span> a versão publicada é a <strong>${escapeHtml(st.ultima)}</strong> — você está ${st.novas} versão(ões) atrás. <button class="btn btn-primary btn-sm" id="ver-atualizar" style="margin-left:8px;">Atualizar agora</button>`;
     else if(st.ultima) situ = `<span class="adm-tag acc">Atualizado</span> você está na última versão publicada.`;
     else situ = "";
-    pane.innerHTML = `<div class="panel">
+    const notasHtml = `<div class="panel">
       <div class="adm-head"><h2 class="adm-h">Atualizações</h2><button class="btn btn-outline btn-sm" id="ver-checar" ${st.checando?"disabled":""}>Verificar versão</button></div>
       <div class="adm-grid">
         <div><span class="small-muted">Versão instalada</span><br><strong style="font-size:26px;">v${escapeHtml(typeof APP_VERSAO!=="undefined"?APP_VERSAO:"—")}</strong></div>
@@ -812,6 +871,15 @@ const AdminUI = {
       <div class="adm-head"><h3 class="adm-h2" style="margin:0;">v${escapeHtml(n.v)} · ${escapeHtml(n.titulo)} ${i===0?`<span class="adm-tag acc" style="margin-left:6px;">atual</span>`:""}</h3><span class="small-muted">${fmt(n.data)}</span></div>
       <ul style="margin:10px 0 0;padding-left:20px;line-height:1.55;">${n.itens.map(t=>`<li>${escapeHtml(t)}</li>`).join("")}</ul>
     </div>`).join("")}`;
+    const aba = this.versaoAba === "docs" ? "docs" : "notas";
+    pane.innerHTML = `<div class="vd">
+      <div class="vd-rail" role="tablist" aria-label="Notas e documentação">
+        <button type="button" role="tab" class="vd-tab ${aba==="notas"?"on":""}" data-vd="notas" aria-selected="${aba==="notas"}"><span>Notas de atualização</span></button>
+        <button type="button" role="tab" class="vd-tab ${aba==="docs"?"on":""}" data-vd="docs" aria-selected="${aba==="docs"}"><span>Documentação</span></button>
+      </div>
+      <div class="vd-main">${aba==="docs" ? this.docFiltrosHtml() : notasHtml}</div></div>`;
+    pane.querySelectorAll(".vd-tab").forEach(b=> b.addEventListener("click", ()=>{ this.versaoAba = b.dataset.vd; try{ localStorage.setItem("nr_versao_aba", this.versaoAba); }catch(e){} this.desenharVersoes(); }));
+    if(aba==="docs") this.docFiltrosLigar();
     this.desenharVersaoMenu();
     const c = document.getElementById("ver-checar"); if(c) c.addEventListener("click", ()=> this.verificarVersao());
     const a = document.getElementById("ver-atualizar"); if(a) a.addEventListener("click", ()=> this.atualizarApp());
