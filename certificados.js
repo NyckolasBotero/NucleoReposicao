@@ -63,7 +63,8 @@ const CertUI = {
     fonteTitulo:"georgia", fonteNome:"georgia", fonteTexto:"inter", tamDest:100, tamNome:68, tamTexto:20, espLetras:6,
     alinhar:"center", borda:"dupla",
     logoPos:"marca", logoTam:55, logoOp:9, logoImg:"padrao", logoData:"",
-    selo:{ tipo:"ano", periodo:"", texto:"", estilo:"circulo", icone:"estrela", c1:"#2150a8", c2:"#9db8e8" },
+    selo:{ tipo:"ano", periodo:"", texto:"", estilo:"circulo", icone:"estrela", c1:"#2150a8", c2:"#9db8e8", dx:0, dy:0 },
+    comVerso:true,
     ordem:"dsa",
     laterais:{ estilo:"nenhum", icone:"medalha", qtd:2, cor:"#2150a8" },
     assinante:"Fábio Nyckolas Figueiredo Botero", cargoAssin:"ENCARREGADO DE LOGÍSTICA", local:"Ceilândia – DF", data:"", dataBranco:true
@@ -164,11 +165,21 @@ const CertUI = {
 .ctx-as{ width:100%; display:flex; flex-direction:column; align-items:center; } .ctx-as hr{ width:100%; border:0; border-top:2px solid var(--c1); margin:0 0 10px; } .ctx-as b{ font-size:19px; color:var(--cn); font-family:var(--fx); font-weight:800; }
 .ctx-sw{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); pointer-events:none; }
 .ctx-sw img{ display:block; }
+.ctx-sel[data-selo]{ cursor:grab; touch-action:none; } .ctx-sel.arr{ cursor:grabbing; outline:2px dashed var(--c2); outline-offset:4px; }
+.ctx-vt{ margin-top:14px; font-size:30px; font-weight:700; color:var(--c1); letter-spacing:.02em; font-family:var(--ft); }
+.ctx-vn{ font-size:19px; color:var(--cn); font-family:var(--fx); margin:2px 0 10px; } .ctx-vn small{ opacity:.7; font-size:14px; letter-spacing:.06em; }
+.ctx-vc{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; width:100%; margin-bottom:10px; }
+.ctx-vc div{ border:1.5px solid var(--c3); border-radius:8px; padding:7px 8px; text-align:center; background:rgba(255,255,255,.55); }
+.ctx-vc b{ display:block; font-size:24px; color:var(--c1); font-family:var(--fx); } .ctx-vc span{ font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--tx); opacity:.75; font-family:var(--fx); }
+.ctx-vtb{ width:100%; border-collapse:collapse; font-family:var(--fx); font-size:14px; color:var(--tx); }
+.ctx-vtb th{ background:var(--c1); color:#fff; font-size:12px; letter-spacing:.04em; padding:5px 6px; text-transform:uppercase; } .ctx-vtb td{ padding:3px 6px; text-align:center; border-bottom:1px solid var(--c3); height:24px; }
+.ctx-vtb td:first-child, .ctx-vtb th:first-child{ text-align:left; } .ctx-vtb tr.g td{ font-weight:800; color:var(--c1); border-top:2px solid var(--c1); background:rgba(0,0,0,.035); }
+.ctx-vobs{ margin-top:auto; font-size:11px; opacity:.6; font-family:var(--fx); text-align:center; padding-top:4px; }
 `;
     document.head.appendChild(s);
   },
   logoSrc(c, escuro){ return c.logoImg === "custom" && c.logoData ? c.logoData : (escuro ? "logo-branco.png" : "logo.png"); },
-  stage(c){
+  stage(c, verso){
     const F = this.FONTES, cs = c.cores, painel = c.borda === "painel", faixas = c.borda === "faixas";
     const lat = c.laterais, temLat = lat.estilo !== "nenhum";
     const px = painel ? 60 : (temLat ? 150 : 100), larg = painel ? 700 : 840;
@@ -180,7 +191,7 @@ const CertUI = {
     else if(c.borda === "ornamental") deco = `<div class="ctx-abs" style="inset:26px;border:3px solid ${cs.ac}"></div><div class="ctx-abs" style="inset:38px;border:1px solid ${cs.ac}"></div><div class="ctx-abs" style="left:20px;top:20px">${this.canto(cs.ac,0)}</div><div class="ctx-abs" style="right:20px;top:20px">${this.canto(cs.ac,90)}</div><div class="ctx-abs" style="right:20px;bottom:20px">${this.canto(cs.ac,180)}</div><div class="ctx-abs" style="left:20px;bottom:20px">${this.canto(cs.ac,270)}</div>`;
     // laterais (medalhas, louros, faixa)
     let lados = "";
-    if(temLat){
+    if(temLat && !verso){
       const x1 = faixas ? 14 : (c.borda === "dupla" ? 70 : 54), cor = lat.cor;
       const lado = (esq)=>{
         const pos = esq ? `left:${x1}px` : `right:${x1}px`;
@@ -203,7 +214,7 @@ const CertUI = {
     const dt = c.dataBranco || !c.data ? `${this.h(c.local)}, ___ de _______ de ${new Date().getFullYear()}` : `${this.h(c.local)}, ${this.h(this.dataExtenso(c.data))}`;
     const blocos = {
       d:`<div><div class="ctx-dt">${dt}</div><div class="ctx-lb">Local e data</div></div>`,
-      s:`<div class="ctx-sel">${this.selo(c.selo, cs, "sl")}</div>`,
+      s:`<div class="ctx-sel" data-selo="1" style="transform:translate(${Number(c.selo.dx)||0}px,${Number(c.selo.dy)||0}px)">${this.selo(c.selo, cs, "sl")}</div>`,
       a:`<div class="ctx-as"><hr><b>${this.h(c.assinante)}</b><div class="ctx-lb" style="margin-top:2px">${this.h(c.cargoAssin)}</div></div>`
     };
     const ord = String(c.ordem||"dsa").split("");
@@ -212,6 +223,7 @@ const CertUI = {
     const paddingTop = painel ? 56 : (c.borda === "dupla" ? 78 : (c.borda === "simples" || c.borda === "ornamental" ? 64 : 50));
     const style = `--bg:${cs.bg};--tx:${cs.tx};--c1:${cs.c1};--c2:${cs.c2};--c3:${cs.c3};--cn:${cs.nome};--ac:${cs.ac};--ft:${F[c.fonteTitulo].f};--fn:${F[c.fonteNome].f};--fx:${F[c.fonteTexto].f};--tt:${c.tamTexto}px;--esp:${c.espLetras*0.07}em;--al:${c.alinhar};--pt:${paddingTop}px;--pb:${painel ? 56 : (c.borda === "dupla" ? 82 : (c.borda === "simples" || c.borda === "ornamental" ? 66 : 46))}px;--px:${px}px;--mw:${larg}px;${painel ? "padding-left:0;" : ""}`;
     const corpoStyle = painel ? `left:340px;right:50px;padding-left:20px;padding-right:20px;` : "";
+    if(verso) return `<div class="ctx" data-al="center" data-lp="${c.logoPos}" data-verso="1" style="${style}">${deco}${logo}<div class="ctx-corpo" style="${corpoStyle}">${emp}${this.versoHtml(c, verso)}</div></div>`;
     return `<div class="ctx" data-al="${c.alinhar}" data-lp="${c.logoPos}" data-mw="${painel ? 650 : 1123 - 2*px - 30}" style="${style}">${deco}${lados}${logo}
       <div class="ctx-corpo" style="${corpoStyle}">${logoTopoC}${emp}<div class="ctx-topo">${this.h(c.topo)}</div>
         <div class="ctx-dest" style="font-size:${c.tamDest}px">${this.h(c.destaque)}</div>
@@ -220,9 +232,58 @@ const CertUI = {
         <div class="ctx-nome" style="font-size:${c.tamNome}px">${this.h(c.nome)}</div>
         <div class="ctx-txt">${this.rich(c.texto)}</div>${rod}</div></div>`;
   },
+
+  /* ------------------------------ verso: desempenho do colaborador ------------------------------ */
+  dadosVerso(p){
+    if(!p) return null;
+    const A = window.APP_STATE, pr = A && A.processed; if(!pr || !pr.p8460 || typeof Production === "undefined") return null;
+    const codKey = normStr(String(p.mat)), maxD = Production.maxDataDate(); if(!maxD) return null;
+    const chave = codKey + "|" + maxD.getTime(); if(this._dv && this._dv.chave === chave) return this._dv;
+    const fim = dateOnly(maxD), rows = pr.p8460.filter(r=>r.tipoos === 58 && r.codKey === codKey);
+    const wd = (d)=>{ const x = d.getDay(); return x !== 0 && x !== 6; };
+    const meses = [];
+    for(let i = 11; i >= 0; i--){
+      const ini = new Date(fim.getFullYear(), fim.getMonth() - i, 1), ult = new Date(ini.getFullYear(), ini.getMonth() + 1, 0), f = ult > fim ? fim : ult;
+      meses.push({ ini, fim:f, label:fmtMonthYear(ini.getFullYear(), ini.getMonth()), atual:i === 0 });
+    }
+    const quali = (ini, f)=>{
+      let ruaQ = null, ruaN = 0, retQ = null, retN = 0;
+      try{ if(window.AuditOnline && AuditOnline.rows){ const ru = AuditOnline.qualidadePorRepositorNoIntervalo(ini, f).get(codKey); if(ru){ ruaQ = ru.qualidadeMedia; ruaN = ru.auditorias || 0; } } }catch(e){}
+      try{ if(window.RetornoQ && RetornoQ.dados){ const x = RetornoQ.calcular(dateOnly(ini), dateOnly(f), { codKey }).reps.find(r=>r.codKey === codKey); if(x){ retQ = x.acuracidade; retN = x.auditados || 0; } } }catch(e){}
+      let ger = null; if(ruaQ != null && retQ != null && (ruaN + retN) > 0) ger = (ruaQ*ruaN + retQ*retN)/(ruaN + retN); else if(ruaQ != null) ger = ruaQ; else if(retQ != null) ger = retQ;
+      return { ruaQ, ruaN, retQ, retN, ger };
+    };
+    const pres = (ini, f)=>{
+      let b = 0, fl = 0; (pr.quadro || []).forEach(r=>{ if(r.codKey !== codKey) return; const d = dateOnly(r.data); if(d < ini || d > f) return; if(r.bucket === "PRESENTE" || r.bucket === "SEGUNDO_TURNO") b++; else if(r.bucket === "FALTA") fl++; });
+      return (b + fl) > 0 ? b/(b + fl)*100 : null;
+    };
+    meses.forEach(m=>{
+      const rm = rows.filter(r=>{ const d = dateOnly(r.dtinicio); return d >= m.ini && d <= m.fim; });
+      const du = rm.filter(r=>wd(dateOnly(r.dtinicio)));
+      m.os = rm.length; m.dias = new Set(du.map(r=>ymdKey(r.dtinicio))).size; m.media = m.dias ? du.length/m.dias : null;
+      Object.assign(m, quali(m.ini, m.fim)); m.pres = pres(m.ini, m.fim);
+    });
+    const ini12 = meses[0].ini, r12 = rows.filter(r=>{ const d = dateOnly(r.dtinicio); return d >= ini12 && d <= fim; }), d12 = r12.filter(r=>wd(dateOnly(r.dtinicio)));
+    const diasAno = new Set(d12.map(r=>ymdKey(r.dtinicio))).size, comProd = meses.filter(m=>m.os > 0).length;
+    const geral = Object.assign({ os:r12.length, dias:diasAno, media: diasAno ? d12.length/diasAno : null, pres:pres(ini12, fim) }, quali(ini12, fim));
+    this._dv = { chave, meses, geral, mediaMes: comProd ? r12.length/comProd : null, mediaDiaAno: geral.media, osMes: meses[11].os, fim };
+    return this._dv;
+  },
+  versoHtml(c, d){
+    const N = (v, c1)=> v == null ? "—" : (c1 ? v.toFixed(1).replace(".", ",") + "%" : Math.round(v).toLocaleString("pt-BR")), D = (v)=> v == null ? "—" : v.toFixed(1).replace(".", ",");
+    const nome = this.h(c.nome || ""), mat = this.pessoa ? this.h(this.pessoa.mat) + " · " : "";
+    if(!d) return `<div class="ctx-vt">Desempenho do colaborador</div><div class="ctx-vn">${mat}${nome}</div><div class="ctx-vobs" style="margin-top:80px;font-size:16px">Selecione o colaborador do quadro para preencher o verso.</div>`;
+    const lin = (m)=>`<tr><td>${this.h(m.label)}${m.atual ? " *" : ""}</td><td>${N(m.os)}</td><td>${D(m.media)}</td><td>${N(m.ruaQ,1)}</td><td>${N(m.retQ,1)}</td><td>${N(m.ger,1)}</td><td>${N(m.pres,1)}</td></tr>`;
+    const g = d.geral;
+    return `<div class="ctx-vt">Desempenho do colaborador</div><div class="ctx-vn">${mat}${nome} <small>· últimos 12 meses até ${this.h(fmtDateBR(d.fim))}</small></div>
+      <div class="ctx-vc"><div><b>${N(d.mediaMes)}</b><span>Produção média / mês</span></div><div><b>${D(d.mediaDiaAno)}</b><span>Média por dia (último ano)</span></div><div><b>${N(d.osMes)}</b><span>Produção no mês atual</span></div></div>
+      <table class="ctx-vtb"><thead><tr><th>Mês</th><th>Produção</th><th>Média/dia</th><th>Qual. ruas</th><th>Qual. retorno</th><th>Qual. geral</th><th>% Presença</th></tr></thead><tbody>${d.meses.map(lin).join("")}
+      <tr class="g"><td>Geral (12 meses)</td><td>${N(g.os)}</td><td>${D(g.media)}</td><td>${N(g.ruaQ,1)}</td><td>${N(g.retQ,1)}</td><td>${N(g.ger,1)}</td><td>${N(g.pres,1)}</td></tr></tbody></table>
+      <div class="ctx-vobs">* mês em andamento · Produção = O.S. de reposição · Qual. retorno = acuracidade dos retornos auditados · Qual. geral = ruas e retornos ponderados pelas auditorias</div>`;
+  },
   /** nome/destaque longos e texto grande demais: reduz sozinho até tudo caber no certificado */
   ajustar(){
-    const st = this.box && this.box.querySelector(".ctx"); if(!st) return;
+    const st = this.box && this.box.querySelector(".ctx"); if(!st || st.dataset.verso) return;
     const n = st.querySelector(".ctx-nome"), d = st.querySelector(".ctx-dest"), t = st.querySelector(".ctx-txt"), corpo = st.querySelector(".ctx-corpo");
     const maxW = Number(st.dataset.mw) || 860;
     let tn = this.cfg.tamNome, td = this.cfg.tamDest, tt = this.cfg.tamTexto;
@@ -252,11 +313,12 @@ const CertUI = {
     if(!this.cfg){ this.cfg = this.clone(this.PADRAO); this.cfg.selo.periodo = this.periodoAuto(this.cfg.selo.tipo); this.cfg.texto = this.textoDe("auxiliar", "a-ret"); this.cfg.nome = "Nome do colaborador"; this.pessoa = null; this.grupo_ = "auxiliar"; this.modeloId = "a-ret"; }
     pane.innerHTML = `<div class="panel"><div class="adm-head"><h3 class="adm-h2" style="margin:0">Certificados</h3><div class="adm-head-r"><span class="small-muted" id="ct-aviso"></span></div></div>
       <p class="small-muted">Escolha o colaborador, o modelo de texto e ajuste o visual. O que você vê abaixo é exatamente o que será baixado.</p>
-      <div class="ct-wrap"><div class="ct-ed" id="ct-ed"></div><div class="ct-pv"><div class="ct-pvbox" id="ct-box"><div class="ct-esc" id="ct-esc"></div></div>
+      <div class="ct-wrap"><div class="ct-ed" id="ct-ed"></div><div class="ct-pv"><div class="ct-lays" id="ct-lados"><button type="button" data-lado="frente" class="on">Frente</button><button type="button" data-lado="verso">Verso (desempenho)</button></div><div class="ct-pvbox" id="ct-box"><div class="ct-esc" id="ct-esc"></div></div>
         <div class="ct-acoes"><button type="button" class="btn btn-outline" id="ct-png">${Icons.svg("image",16)} Baixar PNG</button><button type="button" class="btn btn-outline" id="ct-pdf">${Icons.svg("download",16)} Baixar PDF</button><button type="button" class="btn btn-primary" id="ct-lancar">${Icons.svg("check",16)} Lançar certificado</button></div>
         <div id="ct-msg"></div></div></div>
       <h4 class="adm-h" style="margin:22px 0 6px">Certificados já lançados</h4><div id="ct-hist" class="table-wrap"><p class="small-muted">Carregando...</p></div></div>`;
-    this.box = document.getElementById("ct-esc");
+    this.box = document.getElementById("ct-esc"); this.lado = "frente";
+    pane.querySelectorAll("[data-lado]").forEach(b=> b.addEventListener("click", ()=>{ this.lado = b.dataset.lado; pane.querySelectorAll("[data-lado]").forEach(x=> x.classList.toggle("on", x === b)); this.pintar(); }));
     this.desenharEditor(); this.pintar();
     const ro = window.ResizeObserver ? new ResizeObserver(()=> this.escala()) : null; if(ro) ro.observe(document.getElementById("ct-box")); window.addEventListener("resize", ()=> this.escala());
     document.getElementById("ct-png").addEventListener("click", ()=> this.baixar("png"));
@@ -293,7 +355,13 @@ const CertUI = {
     const g6 = C("select","logoPos","Posição da logo",{opts:{marca:"Marca d'água (centro)","topo-centro":"Topo, centralizada","topo-esq":"Topo, à esquerda","topo-dir":"Topo, à direita",rodape:"Rodapé",painel:"No painel lateral (layout moderno)",nenhum:"Sem logo"}}) + C("range","logoTam","Tamanho da logo",{min:20,max:100}) + C("range","logoOp","Intensidade da marca d'água",{min:3,max:30,un:"%"})
       + `<label class="ct-f"><span>Outra logo (PNG/JPG)</span><input type="file" id="ct-logofile" accept="image/*"></label><button type="button" class="btn btn-outline btn-sm" id="ct-logopadrao">Voltar para a logo Santa Therezinha</button>` + C("select","ordem","Ordem no rodapé",{opts:this.ORDENS});
     const g7 = C("select","laterais.estilo","Destaques laterais",{opts:{nenhum:"Nenhum",medalhas:"Medalhas",louros:"Ramos de louro",faixa:"Faixa com ícones"}}) + C("icons","laterais.icone","Ícone das medalhas / faixa") + C("range","laterais.qtd","Quantidade de medalhas",{min:1,max:3}) + C("color","laterais.cor","Cor dos destaques laterais");
-    document.getElementById("ct-ed").innerHTML = this.grupo("1. Colaborador e modelo", g1, true) + this.grupo("2. Textos do certificado", g2, true) + this.grupo("3. Selo (mês, trimestre, semestre, ano)", g3) + this.grupo("4. Layout, cores e moldura", g4) + this.grupo("5. Fontes e tamanhos", g5) + this.grupo("6. Logo e posições", g6) + this.grupo("7. Medalhas e destaques laterais", g7);
+    const g8 = C("check","comVerso","Incluir o verso (desempenho) no PDF") + `<div class="small-muted">O verso traz produção média/mês, média por dia no último ano, produção do mês, qualidade (ruas, retorno e geral) por mês e geral, e % de presença.</div><div class="small-muted" style="margin-top:8px">Medalha (selo): arraste no preview da frente. Posição atual: <b>${Number(c.selo.dx)||0}, ${Number(c.selo.dy)||0}</b></div><button type="button" class="btn btn-outline btn-sm" id="ct-selo-reset">Voltar a medalha para a posição original</button>`;
+    const sv = this.layoutsSalvos();
+    const g9 = `<label class="ct-f"><span>Nome do layout</span><input type="text" id="ct-lay-nome" placeholder="Ex.: Funcionário do mês – azul"></label><button type="button" class="btn btn-primary btn-sm" id="ct-lay-salvar">Salvar layout atual</button>
+      <label class="ct-f" style="margin-top:10px"><span>Layouts salvos</span><select id="ct-lay-lista"><option value="">${sv.length ? "Escolha..." : "Nenhum salvo ainda"}</option>${sv.map(x=>`<option value="${this.h(x.id)}">${this.h(x.nome)}</option>`).join("")}</select></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn btn-outline btn-sm" id="ct-lay-aplicar">Aplicar</button><button type="button" class="btn btn-outline btn-sm" id="ct-lay-excluir">Excluir</button></div>
+      <div class="small-muted">Guarda cores, moldura, fontes, tamanhos, logo, rodapé, medalha (e a posição dela). Não guarda nome nem texto do elogio. Ficam salvos neste navegador.</div>`;
+    document.getElementById("ct-ed").innerHTML = this.grupo("1. Colaborador e modelo", g1, true) + this.grupo("2. Textos do certificado", g2, true) + this.grupo("3. Selo (mês, trimestre, semestre, ano)", g3) + this.grupo("4. Layout, cores e moldura", g4) + this.grupo("5. Fontes e tamanhos", g5) + this.grupo("6. Logo e posições", g6) + this.grupo("7. Medalhas e destaques laterais", g7) + this.grupo("8. Verso e posição da medalha", g8) + this.grupo("9. Layouts salvos", g9);
     this.ligarEditor();
   },
   ligarEditor(){
@@ -323,6 +391,15 @@ const CertUI = {
       this.cfg.cores = { c1:T.c1, c2:T.c2, c3:T.c3, tx:T.tx, nome:T.nome, bg:T.bg, ac:T.ac };
       this.cfg.selo.c1 = T.c1; this.cfg.selo.c2 = T.c3; this.cfg.laterais.cor = T.c1; this.desenharEditor(); this.pintar();
     }));
+    const q = id=> document.getElementById(id);
+    if(q("ct-selo-reset")) q("ct-selo-reset").addEventListener("click", ()=>{ this.cfg.selo.dx = 0; this.cfg.selo.dy = 0; this.desenharEditor(); this.pintar(); });
+    if(q("ct-lay-salvar")) q("ct-lay-salvar").addEventListener("click", ()=>{
+      const n = String(q("ct-lay-nome").value || "").trim(); if(!n) return this.aviso("Dê um nome ao layout para salvar.", "erro");
+      const id = this.salvarLayout(n); if(!id) return this.aviso("Não foi possível salvar neste navegador.", "erro");
+      this.desenharEditor(); this.aviso("Layout “" + this.h(n) + "” salvo.", "ok");
+    });
+    if(q("ct-lay-aplicar")) q("ct-lay-aplicar").addEventListener("click", ()=>{ const id = q("ct-lay-lista").value; if(!id) return this.aviso("Escolha um layout salvo.", "erro"); if(this.aplicarLayout(id)){ this.desenharEditor(); this.pintar(); this.aviso("Layout aplicado.", "ok"); } });
+    if(q("ct-lay-excluir")) q("ct-lay-excluir").addEventListener("click", ()=>{ const id = q("ct-lay-lista").value; if(!id) return; this.gravarLayouts(this.layoutsSalvos().filter(x=> x.id !== id)); this.desenharEditor(); this.aviso("Layout excluído.", "ok"); });
     const pe = document.getElementById("ct-pessoa");
     pe.addEventListener("change", ()=>{
       const mat = String(pe.value).split("—")[0].trim().replace(/\D/g,"");
@@ -338,7 +415,35 @@ const CertUI = {
   },
   pintar(){
     if(!this.box) return;
-    this.box.innerHTML = this.stage(this.cfg); this.ajustar(); this.escala();
+    const ver = this.lado === "verso";
+    this.box.innerHTML = this.stage(this.cfg, ver ? (this.dadosVerso(this.pessoa) || false) : null); this.ajustar(); this.escala();
+    const dica = document.getElementById("ct-aviso"); if(dica) dica.textContent = ver ? "" : "Dica: arraste a medalha (selo) para reposicioná-la.";
+    if(!ver) this.ligarArraste();
+  },
+  /** medalha (selo) arrastável: a posição fica em cfg.selo.dx/dy, vai para o layout salvo e para o PNG/PDF */
+  ligarArraste(){
+    const el = this.box.querySelector(".ctx-sel[data-selo]"); if(!el) return;
+    el.addEventListener("pointerdown", ev=>{
+      ev.preventDefault(); const esc = this.box.getBoundingClientRect(), k = esc.width / this.W || 1, x0 = ev.clientX, y0 = ev.clientY, dx0 = Number(this.cfg.selo.dx)||0, dy0 = Number(this.cfg.selo.dy)||0;
+      el.classList.add("arr"); try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+      const mv = e=>{ const dx = Math.round(dx0 + (e.clientX - x0)/k), dy = Math.round(dy0 + (e.clientY - y0)/k); this.cfg.selo.dx = Math.max(-500, Math.min(500, dx)); this.cfg.selo.dy = Math.max(-500, Math.min(500, dy)); el.style.transform = `translate(${this.cfg.selo.dx}px,${this.cfg.selo.dy}px)`; };
+      const up = ()=>{ el.classList.remove("arr"); el.removeEventListener("pointermove", mv); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up); };
+      el.addEventListener("pointermove", mv); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+    });
+  },
+  /* ------------------------------ layouts salvos (por navegador) ------------------------------ */
+  LAYOUT_CAMPOS:["layout","tema","cores","fonteTitulo","fonteNome","fonteTexto","tamDest","tamNome","tamTexto","espLetras","alinhar","borda","logoPos","logoTam","logoOp","ordem","laterais","comVerso","empresa1","empresa2","assinante","cargoAssin","local"],
+  layoutsSalvos(){ try{ const a = JSON.parse(localStorage.getItem("nr_cert_layouts") || "[]"); return Array.isArray(a) ? a : []; }catch(e){ return []; } },
+  gravarLayouts(a){ try{ localStorage.setItem("nr_cert_layouts", JSON.stringify(a)); return true; }catch(e){ return false; } },
+  salvarLayout(nome){
+    const c = this.cfg, o = {}; this.LAYOUT_CAMPOS.forEach(k=> o[k] = this.clone(c[k]));
+    o.selo = { estilo:c.selo.estilo, c1:c.selo.c1, c2:c.selo.c2, dx:c.selo.dx||0, dy:c.selo.dy||0 };
+    const a = this.layoutsSalvos(), i = a.findIndex(x=> x.nome.toLowerCase() === nome.toLowerCase()), it = { id:(i >= 0 ? a[i].id : "l" + Date.now()), nome, quando:new Date().toISOString(), cfg:o };
+    if(i >= 0) a[i] = it; else a.push(it); return this.gravarLayouts(a) ? it.id : null;
+  },
+  aplicarLayout(id){
+    const it = this.layoutsSalvos().find(x=> x.id === id); if(!it) return false;
+    const o = this.clone(it.cfg), sel = o.selo; delete o.selo; this.mesclar(this.cfg, o); this.mesclar(this.cfg.selo, sel); this.cfg.logoImg = "padrao"; this.cfg.logoData = ""; return true;
   },
   escala(){
     const bx = document.getElementById("ct-box"), esc = document.getElementById("ct-esc"); if(!bx || !esc) return;
@@ -347,10 +452,10 @@ const CertUI = {
   aviso(t, tipo){ const m = document.getElementById("ct-msg"); if(m) m.innerHTML = t ? `<div class="${tipo === "erro" ? "error-box" : "ok-box"}">${t}</div>` : ""; },
 
   /* ------------------------------ exportar / lançar ------------------------------ */
-  async renderizar(){
+  async renderizar(lado){
     if(typeof html2canvas === "undefined") throw new Error("A biblioteca de imagem ainda não carregou. Aguarde alguns segundos e tente de novo.");
     const wrap = document.createElement("div"); wrap.style.cssText = `position:fixed;left:0;top:0;z-index:-1;pointer-events:none;width:${this.W}px;height:${this.H}px`;
-    wrap.innerHTML = this.stage(this.cfg); document.body.appendChild(wrap);
+    wrap.innerHTML = this.stage(this.cfg, lado === "verso" ? (this.dadosVerso(this.pessoa) || false) : null); document.body.appendChild(wrap);
     const st = wrap.querySelector(".ctx"), box = this.box; this.box = wrap; this.ajustar(); this.box = box;
     try{ await new Promise(r=> setTimeout(r, 60)); return await html2canvas(st, { scale:2, backgroundColor:null, useCORS:true, width:this.W, height:this.H }); }
     finally{ wrap.remove(); }
@@ -359,12 +464,14 @@ const CertUI = {
   async baixar(tipo){
     this.aviso("");
     try{
-      const cv = await this.renderizar(), a = document.createElement("a");
-      if(tipo === "png"){ a.href = cv.toDataURL("image/png"); a.download = this.nomeArq("png"); document.body.appendChild(a); a.click(); a.remove(); }
+      const ver = this.lado === "verso", cv = await this.renderizar(ver && tipo === "png" ? "verso" : "frente"), a = document.createElement("a");
+      if(tipo === "png"){ a.href = cv.toDataURL("image/png"); a.download = this.nomeArq("png").replace(".png", ver ? "-verso.png" : ".png"); document.body.appendChild(a); a.click(); a.remove(); }
       else{
         if(!window.jspdf) throw new Error("A biblioteca de PDF ainda não carregou. Aguarde e tente de novo.");
         const pdf = new window.jspdf.jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
-        pdf.addImage(cv.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, 297, 210); pdf.save(this.nomeArq("pdf"));
+        pdf.addImage(cv.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, 297, 210);
+        if(this.cfg.comVerso){ const cv2 = await this.renderizar("verso"); pdf.addPage("a4", "landscape"); pdf.addImage(cv2.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, 297, 210); }
+        pdf.save(this.nomeArq("pdf"));
       }
     }catch(e){ this.aviso(this.h(e.message || "Não foi possível gerar o arquivo."), "erro"); }
   },
