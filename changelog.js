@@ -4,9 +4,13 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.17.1";
+const APP_VERSAO = "2.17.2";
 
 const NOTAS_VERSAO = [
+  { v:"2.17.2", data:"2026-11-17", titulo:"Qualidade de retornos por repositor", itens:[
+    "Na planilha, só as linhas com erro trazem o colaborador. Agora as auditorias conformes são atribuídas a quem respondia pela rua na data, e os erros ficam com o colaborador apontado.",
+    "Corrige a qualidade/acuracidade de retornos zerada no feedback, no ranking e em Gestão > Auditoria (ex.: 47 auditados, 5 erros, 89,4%)."
+  ]},
   { v:"2.17.1", data:"2026-11-16", titulo:"Correções no Feedback de Produção e Qualidade", itens:[
     "O.S. dia anterior = último dia em que o colaborador produziu antes da data base (sem produção no dia anterior, mostra o último dia produzido).",
     "O.S. última semana = soma de segunda a sexta da última semana fechada (a semana em andamento não entra); o card mostra o período.",
