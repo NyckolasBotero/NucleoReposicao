@@ -4,9 +4,15 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.19.0";
+const APP_VERSAO = "2.20.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.20.0", data:"2026-11-17", titulo:"Certificado com verso de desempenho, medalha arrastável e layouts salvos", itens:[
+    "Certificado agora tem frente e verso. O verso traz produção média por mês, média por dia no último ano, produção do mês atual e, mês a mês e no geral (12 meses): produção, média/dia, qualidade de ruas, qualidade de retorno, qualidade geral e % de presença do colaborador.",
+    "O PDF sai com 2 páginas (frente e verso) quando a opção \"Incluir o verso\" está marcada; o PNG baixa o lado que está na tela.",
+    "A medalha (selo) pode ser arrastada no preview; a posição é guardada no layout e respeitada no PNG e no PDF, com botão para voltar à posição original.",
+    "Novo grupo \"Layouts salvos\": salve o visual atual com um nome (cores, moldura, fontes, logo, rodapé, medalha e posição) e reaplique em outros certificados. Ficam salvos neste navegador."
+  ]},
   { v:"2.19.0", data:"2026-11-17", titulo:"Administração > Parâmetros (regras de NC, auditoria, comissão e Painel TV)", itens:[
     "Nova página Administração > Parâmetros, em abas: Não Conformidades e Feedbacks, Auditoria, Comissão e Painel TV (a antiga página Parâmetros Painel TV foi incorporada; o bloco de parâmetros saiu da tela Comissão).",
     "Não Conformidades e Feedbacks: regras gerais (NC por feedback, feedbacks por advertência, advertências por suspensão) e regras por motivo, com números próprios e alertas de feedback, advertência e suspensão que podem ser desligados (ex.: feedback de gestão 1 vez ao mês sem alerta de advertência).",
