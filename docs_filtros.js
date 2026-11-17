@@ -215,11 +215,16 @@ const DOC_FILTROS = {
       ["Destinatários","marcar","próprio","todos / admin / pessoas específicas"],
       ["Repetição","lista","próprio","cf-tipo (alerta personalizado)"]
     ]},
-    { id:"tv", menu:"admin", nome:"Parâmetros Painel TV", filtros:[
+    { id:"parametros", menu:"admin", nome:"Parâmetros", filtros:[
+      ["Abas: NC e Feedbacks / Auditoria / Comissão / Painel TV","alternar","próprio","pm-tab"],
+      ["Regras gerais da escalada (4 números)","número","filter-group","pm-g-*"],
+      ["Regras por motivo (números e alertas)","marcar","próprio","tabela pm-tbl"],
+      ["Pesos e ruas fora da auditoria","número","filter-group","pm-p-*, pm-fora"],
+      ["Transmitir em tela cheia na 2ª tela","marcar","próprio","tvp-transmitir (desligado por padrão)"],
       ["Mostrar os funcionários de","lista","próprio","tvp-destaque (Mês passado / ...)"],
       ["Critério do ranking","lista","próprio","tvp-criterio"],
       ["Opções de exibição","marcar","próprio","checkboxes tvp-*"]
-    ]}
+    ], obs:"Substitui a antiga página Parâmetros Painel TV; o bloco de comissão saiu da tela Comissão." }
   ],
 
   /* inconsistências já detectadas na leitura do código */

@@ -6,13 +6,12 @@
                             Erro_Produto · Prox_Vencimento · Sem_Saldo · Avaria
    Retorno: cada linha com erro (Possui_NC ou divergência) é 1 NC — não agrupa por dia.
    Regras de alerta (por colaborador e por motivo):
-     · NC_POR_FB (4) NCs do mesmo motivo desde o último feedback desse motivo → gerar FEEDBACK (4 NC = 1 feedback)
-     · NC_FB_PARA_ADV (3) feedbacks do mesmo motivo → gerar ADVERTÊNCIA (3 feedbacks = 1 advertência)
+     · NCs do mesmo motivo desde o último feedback desse motivo → gerar FEEDBACK (padrão 4 NC = 1 feedback)
+     · feedbacks do mesmo motivo → gerar ADVERTÊNCIA (padrão 3 feedbacks = 1 advertência)
+     · os números e se cada alerta está ligado vêm de Regras (Administração > Parâmetros), por motivo
      · cada alerta carrega as ocorrências (NCs) que o motivaram, mostradas em Lançar Feedback / Lançar Advertência
    Depende de app.js (AuditOnline, helpers) e feedbacks.js (RetornoOnline, FeedbackAdv).
    ========================================================================= */
-const NC_POR_FB = 4;         // NCs do mesmo motivo (desde o último feedback desse motivo) que geram 1 alerta de feedback
-const NC_FB_PARA_ADV = 3;    // feedbacks do mesmo motivo que geram alerta de advertência
 
 const NC = {
   /** motivo = texto usado no lançamento do feedback/advertência (e para casar com os já lançados) */
@@ -120,7 +119,7 @@ const NC = {
       const f = fbs.filter(r=>r.codKey===codKey && FeedbackAdv.mk(r.motivo)===mk).sort((a,b)=>b.data-a.data);
       const a = ads.filter(r=>r.codKey===codKey && FeedbackAdv.mk(r.motivo)===mk);
       const base = { codKey, cod:lista[0].cod, nome:lista[0].nome, tipo:tipoKey, label:t.label, motivo:t.motivo, fb:f.length, adv:a.length, totalNc:lista.length };
-      const advPend = Math.floor(f.length / NC_FB_PARA_ADV) - a.length;
+      const advPend = Regras.alertaAdv(mk) ? Math.floor(f.length / Regras.fbParaAdv(mk)) - a.length : 0;
       if(advPend > 0){
         // ocorrências por trás da advertência: NCs até o último feedback e depois da última advertência desse motivo
         const lastFb = dateOnly(f[0].data), lastAd = a.length ? dateOnly(a.map(r=>r.data).sort((x,y)=>y-x)[0]) : null;
@@ -129,7 +128,7 @@ const NC = {
       }
       const corte = f.length ? dateOnly(f[0].data) : null;
       const desde = lista.filter(e=> !corte || dateOnly(e.data) > corte);
-      if(desde.length >= NC_POR_FB){
+      if(Regras.alertaFb(mk) && desde.length >= Regras.ncPorFb(mk)){
         const prim = desde.reduce((m,e)=> e.data<m ? e.data : m, desde[0].data);
         res.feedback.push({ ...base, ncs:desde.length, desdeData:prim, proxFb:f.length+1, ocorr:desde.sort((x,y)=>x.data-y.data) });
       }
@@ -216,8 +215,8 @@ const NC = {
         <div class="card"><div class="card-label">Erro de Retorno</div><div class="card-value">${fmtNum(tot.retorno)}</div></div>
         <div class="card"><div class="card-label">Erros de Rua</div><div class="card-value">${fmtNum(ruas)}</div><div class="small-muted">soma dos 4 tipos</div></div>
         ${this.TIPOS.filter(t=>t.key!=="retorno").map(t=>`<div class="card"><div class="card-label">${t.label}</div><div class="card-value">${fmtNum(tot[t.key])}</div></div>`).join("")}
-        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Alerta de feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">${NC_POR_FB} NCs no motivo</div></div>
-        <div class="card ${al.advertencia.length?'neg':''}"><div class="card-label">Alerta de advertência</div><div class="card-value ${al.advertencia.length?'neg':''}">${al.advertencia.length}</div><div class="small-muted">${NC_FB_PARA_ADV} feedbacks no mesmo motivo</div></div>
+        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Alerta de feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">${Regras.g("ncPorFb")} NCs no motivo</div></div>
+        <div class="card ${al.advertencia.length?'neg':''}"><div class="card-label">Alerta de advertência</div><div class="card-value ${al.advertencia.length?'neg':''}">${al.advertencia.length}</div><div class="small-muted">${Regras.g("fbParaAdvNC")} feedbacks no mesmo motivo</div></div>
       </div>
       <div class="panel">
         <div class="panel-header"><h3>Contabilização por colaborador</h3><span class="panel-note">Clique no colaborador para ver cada ocorrência · respeita os filtros acima</span></div>
@@ -252,7 +251,7 @@ const NC = {
   /* Gestão > Feedbacks e Advertências: resumo + botões                   */
   /* ------------------------------------------------------------------ */
   htmlResumoFeedbacks(){
-    const head = `<div class="panel-header"><h3>⚠️ Não conformidades recorrentes</h3><span class="panel-note">${NC_POR_FB} NCs no mesmo motivo → 1 feedback · ${NC_FB_PARA_ADV} feedbacks no mesmo motivo → advertência</span></div>`;
+    const head = `<div class="panel-header"><h3>⚠️ Não conformidades recorrentes</h3><span class="panel-note">${Regras.g("ncPorFb")} NCs no mesmo motivo → 1 feedback · ${Regras.g("fbParaAdvNC")} feedbacks no mesmo motivo → advertência</span></div>`;
     if(!this.carregado()){ this.garantir(()=>{ if(document.getElementById("fb-content")) FeedbackAdv.render(); }); return `<div class="panel">${head}<div class="hint-box">Carregando as não conformidades da planilha de auditoria…</div></div>`; }
     const al = this.alertas(), su = FeedbackAdv.alertas().suspender;
     const evs = this.eventos();
@@ -264,24 +263,24 @@ const NC = {
       <td class="num">${x.fb}</td><td class="num">${x.adv}</td><td class="num"><strong class="cell-neg">${x.pend}</strong></td><td class="nc-act">${this.botoesGerar(x,"adv")}</td></tr>`;
     return `<div class="panel nc-panel">${head}
       <div class="cards-grid nc-cards">
-        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Gerar feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">${NC_POR_FB} NCs no motivo</div></div>
-        <div class="card ${al.advertencia.length?'neg':''}"><div class="card-label">Gerar advertência</div><div class="card-value ${al.advertencia.length?'neg':''}">${al.advertencia.length}</div><div class="small-muted">${NC_FB_PARA_ADV} feedbacks no motivo</div></div>
-        <div class="card ${su.length?'neg':''}"><div class="card-label">Solicitar suspensão</div><div class="card-value ${su.length?'neg':''}">${su.length}</div><div class="small-muted">${FB_ADV_PARA_SUSP} advertências no motivo</div></div>
+        <div class="card ${al.feedback.length?'warn':''}"><div class="card-label">Gerar feedback</div><div class="card-value">${al.feedback.length}</div><div class="small-muted">${Regras.g("ncPorFb")} NCs no motivo</div></div>
+        <div class="card ${al.advertencia.length?'neg':''}"><div class="card-label">Gerar advertência</div><div class="card-value ${al.advertencia.length?'neg':''}">${al.advertencia.length}</div><div class="small-muted">${Regras.g("fbParaAdvNC")} feedbacks no motivo</div></div>
+        <div class="card ${su.length?'neg':''}"><div class="card-label">Solicitar suspensão</div><div class="card-value ${su.length?'neg':''}">${su.length}</div><div class="small-muted">${Regras.g("advParaSusp")} advertências no motivo</div></div>
         <div class="card"><div class="card-label">NCs no mês</div><div class="card-value">${fmtNum(mes)}</div></div>
         <div class="card"><div class="card-label">NCs no total</div><div class="card-value">${fmtNum(evs.length)}</div></div>
       </div>
       <div class="nc-duo">
         <div><div class="nc-sub">📝 Pedem feedback <span class="small-muted">(${al.feedback.length})</span></div>
           <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">NCs</th><th class="num">Feedb.</th><th>Desde</th><th></th></tr></thead>
-          <tbody>${al.feedback.length ? al.feedback.map(linhaFb).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${NC_POR_FB} NCs no mesmo motivo desde o último feedback.</td></tr>`}</tbody></table></div></div>
+          <tbody>${al.feedback.length ? al.feedback.map(linhaFb).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${Regras.g("ncPorFb")} NCs no mesmo motivo desde o último feedback.</td></tr>`}</tbody></table></div></div>
         <div><div class="nc-sub">🔴 Pedem advertência <span class="small-muted">(${al.advertencia.length})</span></div>
           <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">Feedb.</th><th class="num">Advert.</th><th class="num">A emitir</th><th></th></tr></thead>
-          <tbody>${al.advertencia.length ? al.advertencia.map(linhaAd).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${NC_FB_PARA_ADV} feedbacks sem advertência no mesmo motivo.</td></tr>`}</tbody></table></div></div>
+          <tbody>${al.advertencia.length ? al.advertencia.map(linhaAd).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${Regras.g("fbParaAdvNC")} feedbacks sem advertência no mesmo motivo.</td></tr>`}</tbody></table></div></div>
       </div>
-      <div class="nc-sub" style="margin-top:16px">⛔ Pedem suspensão <span class="small-muted">(${su.length}) · ${FB_ADV_PARA_SUSP} advertências no mesmo motivo</span></div>
+      <div class="nc-sub" style="margin-top:16px">⛔ Pedem suspensão <span class="small-muted">(${su.length}) · ${Regras.g("advParaSusp")} advertências no mesmo motivo</span></div>
       <div class="table-wrap"><table class="data-table nc-table"><thead><tr><th>Colaborador</th><th>Motivo</th><th class="num">Advert.</th><th class="num">Suspensões</th><th class="num">A emitir</th><th></th></tr></thead>
         <tbody>${su.length ? su.map(x=>`<tr><td><strong>${escapeHtml(x.cod ? x.cod+" - " : "")}${escapeHtml(x.nome)}</strong></td><td>${escapeHtml(x.motivo)}</td><td class="num">${x.adv}</td><td class="num">${x.susp}</td><td class="num"><strong class="cell-neg">${x.pend}</strong></td>
-          <td class="nc-act">${Auth.can("lancamentos","lsuspensao") ? `<button type="button" class="btn btn-danger btn-sm nc-btn" onclick="NC.gerarSusp('${escapeHtml(x.codKey)}','${escapeHtml(FeedbackAdv.mk(x.motivo))}')">Gerar suspensão</button>` : '<span class="small-muted">—</span>'}</td></tr>`).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${FB_ADV_PARA_SUSP} advertências sem suspensão no mesmo motivo.</td></tr>`}</tbody></table></div>
+          <td class="nc-act">${Auth.can("lancamentos","lsuspensao") ? `<button type="button" class="btn btn-danger btn-sm nc-btn" onclick="NC.gerarSusp('${escapeHtml(x.codKey)}','${escapeHtml(FeedbackAdv.mk(x.motivo))}')">Gerar suspensão</button>` : '<span class="small-muted">—</span>'}</td></tr>`).join("") : `<tr><td colspan="6" class="small-muted">Ninguém com ${Regras.g("advParaSusp")} advertências sem suspensão no mesmo motivo.</td></tr>`}</tbody></table></div>
       <div class="small-muted" style="margin-top:8px">Os motivos usados são: ${this.TIPOS.map(t=>`<em>${escapeHtml(t.motivo)}</em>`).join(", ")}. O botão já abre o lançamento com colaborador, motivo e resumo preenchidos; o contador reinicia a cada feedback lançado nesse motivo.</div>
     </div>`;
   }

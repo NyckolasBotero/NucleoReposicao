@@ -38,7 +38,7 @@ const Auth = {
   can(view, paneId){
     if(!this.user) return false;
     if(this.user.legacy) return (view!=="admin" && view!=="lancamentos") || paneId==="links"; // sem servidor: tudo, exceto o que grava (Bases/Acessos)
-    if(view==="admin" && (paneId==="alertas" || paneId==="tv")) return !!this.user && normStr(this.user.nome||"").replace(/\s/g,"").startsWith("FABIONYCKOLAS");   // só o administrador dos alertas
+    if(view==="admin" && (paneId==="alertas" || paneId==="tv" || paneId==="parametros")) return !!this.user && normStr(this.user.nome||"").replace(/\s/g,"").startsWith("FABIONYCKOLAS");   // só o administrador dos alertas
     if(view==="admin" && paneId==="versoes") return this.can("admin","bases") || this.can("admin","acessos");   // quem administra vê as notas de atualização
     const v = NAV_VIEWS.find(x=>x.id===view);
     const it = ((typeof UI!=="undefined" && UI.subnavConfig[view])||[]).find(i=>i.id===paneId);
@@ -2610,7 +2610,7 @@ const AUDITORIA_ONLINE_SHEET_ID = "1Srs2JdL1WEGsaa-SaLec2TaYQYX_eUmNsU2zE1M4CAA"
 // Peso de cada critério na qualidade "por critério" (usada quando a rua da auditoria
 // não tem itens cadastrados na 8022 — nesse caso não dá pra calcular por volume, então
 // cai nessa fórmula ponderada). Critério OK (valor 0) soma o peso; senão soma 0.
-const AUDITORIA_PESOS_CRITERIOS = { avariado:4, pickErrado:6, proxVenc:3, semSaldo:2 };
+const AUDITORIA_PESOS_CRITERIOS = { avariado:4, pickErrado:6, proxVenc:3, semSaldo:2, outra:1 };   // Administração > Parâmetros > Auditoria pode alterar (Regras.aplicarAud)
 const AUDITORIA_ONLINE_GID = "0";
 // status de qualidade por faixa (usado em toda a Auditoria): Excelente/Boa/Atenção/Crítica
 function auditoriaStatusQual(v){
@@ -2763,7 +2763,7 @@ const AuditOnline = {
       const ncMarcada = iPossuiNC!==-1 && isTrue(cols[iPossuiNC]);
       const outra = ncMarcada && !(pe||av||pv||ss);
       if(outra) g.outra++;
-      const pts = (pe?pesosAud.pickErrado:0) + (av?pesosAud.avariado:0) + (pv?pesosAud.proxVenc:0) + (ss?pesosAud.semSaldo:0) + (outra?1:0);
+      const pts = (pe?pesosAud.pickErrado:0) + (av?pesosAud.avariado:0) + (pv?pesosAud.proxVenc:0) + (ss?pesosAud.semSaldo:0) + (outra?pesosAud.outra:0);
       const ek = cell(cols,iEndereco) || cell(cols,iProduto) || ("L"+li);
       g.ends.set(ek, Math.max(g.ends.get(ek)||0, pts));
       if(iPossuiNC!==-1 && isTrue(cols[iPossuiNC])){
@@ -4133,7 +4133,7 @@ const UI = {
       { id:"links", label:"Links de acesso" },
       { id:"versoes", label:"Atualizações e Documentação" },
       { id:"alertas", label:"Alertas" },
-      { id:"tv", label:"Parâmetros Painel TV" }
+      { id:"parametros", label:"Parâmetros", aliases:["Parâmetros Painel TV"] }
     ]
   },
 
@@ -4249,6 +4249,7 @@ const UI = {
       window.APP_STATE.commissionConfig = JSON.parse(JSON.stringify(DEFAULT_COMMISSION_CONFIG));
       window.APP_STATE.ready = true;
       try{ if(window.ComissaoParams) ComissaoParams.carregarRemoto(); }catch(e){}
+      try{ if(window.Regras) Regras.carregar().then(ok=>{ if(ok){ try{ FeedbackAdv.atualizarAlertas(); }catch(e){} } }); }catch(e){}
       if(window.FeedbackAdv) FeedbackAdv.atualizarAlertas();
       try{ if(window.Alertas && !(window.PainelTV && PainelTV.modoJanela)) Alertas.aoEntrar(); }catch(e){}
       try{ if(window.PainelTV) PainelTV.atualizar(); }catch(e){}
@@ -4398,7 +4399,7 @@ const UI = {
 
   renderPane(pane){
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
-    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','lfeedback','ladvertencia','lsuspensao','lcoletores','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias','lcertificado'].includes(pane)){
+    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','parametros','lfeedback','ladvertencia','lsuspensao','lcoletores','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias','lcertificado'].includes(pane)){
       const el = $("#pane-"+pane);
       if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">Buscar dados online</button></div>`;
       return;
@@ -4407,7 +4408,7 @@ const UI = {
       producao: renderProducao, projecao: renderProjecao, feedbacks: renderFeedbacks,
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
-      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(), alertas: ()=>window.Alertas && Alertas.renderPane(), tv: ()=>window.PainelTV && PainelTV.renderPane(),
+      bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(), alertas: ()=>window.Alertas && Alertas.renderPane(), tv: ()=>window.PainelTV && PainelTV.renderPane(), parametros: ()=>window.ParametrosUI && ParametrosUI.renderPane(),
       lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lcertificado: ()=>window.CertUI && CertUI.renderPane(), ruas: ()=>window.RuasUI && RuasUI.renderPane(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
@@ -6526,7 +6527,7 @@ function renderAuditoria(){
     </div>
 
     <div class="panel-header" style="margin:14px 0 8px;"><h3>Periodo Selecionado</h3></div>
-    <div class="hint-box">Qualidade da rua = 1 − (pontos das ocorrências ÷ endereços da rua). Pesos: Picking errado 6, Avaria 4, Próximo do vencimento 3, Sem saldo 2, outra não conformidade 1; no mesmo lançamento os pesos somam, e o mesmo endereço lançado mais de uma vez vale o maior peso. Endereços da rua = endereços de picking na 8022 (se a auditoria tiver mais, vale a quantidade auditada). No fechamento cada rua usa a última auditoria do período e a qualidade média é a média dessas ruas. Ruas fora da auditoria: 14, 15, 21, 31 e 50 a 54.</div>
+    <div class="hint-box">Qualidade da rua = 1 − (pontos das ocorrências ÷ endereços da rua). Pesos: Picking errado ${AUDITORIA_PESOS_CRITERIOS.pickErrado}, Avaria ${AUDITORIA_PESOS_CRITERIOS.avariado}, Próximo do vencimento ${AUDITORIA_PESOS_CRITERIOS.proxVenc}, Sem saldo ${AUDITORIA_PESOS_CRITERIOS.semSaldo}, outra não conformidade ${AUDITORIA_PESOS_CRITERIOS.outra} (ajustáveis em Administração > Parâmetros); no mesmo lançamento os pesos somam, e o mesmo endereço lançado mais de uma vez vale o maior peso. Endereços da rua = endereços de picking na 8022 (se a auditoria tiver mais, vale a quantidade auditada). No fechamento cada rua usa a última auditoria do período e a qualidade média é a média dessas ruas. Ruas fora da auditoria: ${[...AuditOnline.RUAS_FORA].sort((a,b)=>a-b).join(', ')}.</div>
     <div class="cards-grid">
       <div class="card"><div class="card-label">Auditorias no Periodo</div><div class="card-value">${fmtNum(cards.auditoriasRealizadas)}</div></div>
       <div class="card ${qualClass(cards.qualidadeMedia)}"><div class="card-label">Qualidade Geral</div><div class="card-value ${qualClass(cards.qualidadeMedia)}">${fmtQual(cards.qualidadeMedia)}</div></div>
@@ -6764,7 +6765,7 @@ function renderComissao(){
     </div>
     ${commissionOnlyRepositor && !currentTeam.cargoDisponivel ? `<div class="warn-box">A coluna CARGO não foi encontrada na aba QUADRO REP — o filtro "Apenas Repositor" não tem efeito até essa coluna existir no arquivo.</div>` : ``}
 
-    <div class="panel" id="comissao-params" style="border:1.5px solid #2f6fce;"></div>
+    ${Auth.can("admin","parametros") ? `<div class="panel hint-box" style="margin:0 0 12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">Os parâmetros da comissão ficam em <strong>Administração &gt; Parâmetros &gt; Comissão</strong>. <button class="btn btn-outline btn-sm" onclick="try{localStorage.setItem('nr_param_aba','com')}catch(e){};UI.goTo('admin','parametros')">Abrir parâmetros</button></div>` : `<div class="panel" id="comissao-params" style="border:1.5px solid #2f6fce;"></div>`}
 
     <div class="panel" id="comissao-hist-panel">
       <div class="panel-header"><h3>Histórico do Valor de Comissão</h3><span class="small-muted">mês a mês · os meses do período filtrado ficam destacados</span></div>

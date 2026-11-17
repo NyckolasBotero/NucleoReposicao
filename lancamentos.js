@@ -501,8 +501,8 @@ const LancUI = {
       const linhas = (e.motivos||[]).map(m=>`<tr${motivo && m.chave === FeedbackAdv.mk(motivo) ? ' style="background:#fff8e1"' : ""}><td>${this.h(m.motivo)}</td><td>${m.fb}</td><td>${m.adv}</td><td>${m.pend ? `<strong style="color:#d64545">${m.pend} a emitir</strong>` : "—"}</td><td>${m.suspPend ? `<strong style="color:#8e1b1b">⛔ ${m.suspPend} suspensão a emitir</strong>` : `<span class="small-muted">${m.susp} · faltam ${m.faltamSusp} advert.</span>`}</td></tr>`).join("");
       let rec = "";
       if(motivo){
-        rec = fab && fab.pend > 0 ? `<div class="warn-box" style="margin:8px 0 0">🔴 Indicada: ${fab.fb} feedback(s) em "${this.h(motivo)}" e ${fab.adv} advertência(s) — faltam ${fab.pend} advertência(s) pela regra (a cada ${fab ? fab.porAdv : FB_A_CADA} feedbacks).</div>`
-          : `<div class="hint-box" style="margin:8px 0 0">Em "${this.h(motivo)}": ${fab ? fab.fb : 0} feedback(s) e ${fab ? fab.adv : 0} advertência(s). Pela regra de ${fab ? fab.porAdv : FB_A_CADA} feedbacks, ainda <strong>não</strong> há advertência pendente neste motivo.</div>`;
+        rec = fab && fab.pend > 0 ? `<div class="warn-box" style="margin:8px 0 0">🔴 Indicada: ${fab.fb} feedback(s) em "${this.h(motivo)}" e ${fab.adv} advertência(s) — faltam ${fab.pend} advertência(s) pela regra (a cada ${fab ? fab.porAdv : Regras.g("fbParaAdvOutros")} feedbacks).</div>`
+          : `<div class="hint-box" style="margin:8px 0 0">Em "${this.h(motivo)}": ${fab ? fab.fb : 0} feedback(s) e ${fab ? fab.adv : 0} advertência(s). Pela regra de ${fab ? fab.porAdv : Regras.g("fbParaAdvOutros")} feedbacks, ainda <strong>não</strong> há advertência pendente neste motivo.</div>`;
       }
       box.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
           <div class="card" style="min-width:120px"><div class="card-label">Feedbacks</div><div class="card-value">${e.feedbacks.length}</div></div>

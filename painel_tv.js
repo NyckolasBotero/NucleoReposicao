@@ -4,7 +4,7 @@
    Abre na 2ª tela quando existir (Window Management API); senão, na tela atual.
    ========================================================================= */
 const PainelTV = {
-  aberto:false, previaOn:false, modoJanela:(location.hash === "#painel-tv"), _win:null, root:null, _t:[], _dados:null, _id:0, _ver:0, _cacheMes:{}, fotos:{}, cfg:null,
+  aberto:false, previaOn:false, modoJanela:(location.hash === "#painel-tv"), modoIframe:(window.self !== window.top), _win:null, root:null, _t:[], _dados:null, _id:0, _ver:0, _cacheMes:{}, fotos:{}, cfg:null,
   /* parâmetros padrão (o administrador muda em Administração > Parâmetros Painel TV) */
   DEF: {
     destaque:"anterior",            // "anterior" = mês passado | "atual" = mês atual
@@ -304,14 +304,26 @@ const PainelTV = {
 
   /* ------------------------------ abrir / fechar ------------------------------ */
   /** botão Play do topo: abre o painel em uma janela própria (o PC continua livre); com a janela aberta, vira "Encerrar painel" */
-  tocar(){
+  /** liga/desliga a transmissão em tela cheia na 2ª tela (por computador; começa desligado) */
+  transmitir(){ try{ return localStorage.getItem("nr_tv_transmitir") === "1"; }catch(e){ return false; } },
+  definirTransmitir(v){ try{ localStorage.setItem("nr_tv_transmitir", v ? "1" : "0"); }catch(e){} },
+  async tocar(){
     if(this.modoJanela) return;
     if(this._win && !this._win.closed){ this.encerrarJanela(); return; }
-    const w = window.open(location.href.split("#")[0] + "#painel-tv", "nucleo_painel_tv", "popup=yes,width=1280,height=720");
+    // com a transmissão ligada e uma 2ª tela disponível, a janela já abre cobrindo a 2ª tela (sem pedir clique de tela cheia);
+    // sem 2ª tela, abre uma janela menor na tela principal
+    let feat = "popup=yes,width=1280,height=720";
+    if(this.transmitir() && window.getScreenDetails){
+      try{
+        const det = await getScreenDetails(), o = det.screens.find(x=>x !== det.currentScreen && !x.isPrimary) || det.screens.find(x=>x !== det.currentScreen);
+        if(o) feat = `popup=yes,left=${o.availLeft},top=${o.availTop},width=${o.availWidth},height=${o.availHeight}`;
+      }catch(e){}
+    }
+    const w = window.open(location.href.split("#")[0] + "#painel-tv", "nucleo_painel_tv", feat);
     if(!w){ toast("O navegador bloqueou a nova janela. Permita pop-ups deste site e clique de novo.", "error"); return; }
     this._win = w; this.botao(true);
     this._vig = setInterval(()=>{ if(!this._win || this._win.closed){ clearInterval(this._vig); this._win = null; this.botao(false); } }, 1500);
-    this.moverJanela(w);
+    if(this.transmitir()) this.moverJanela(w);
   },
   /** se houver 2ª tela, leva a janela para lá (precisa de permissão do navegador; se negar, fica onde abriu) */
   async moverJanela(w){
@@ -329,6 +341,15 @@ const PainelTV = {
     const b = document.getElementById("btn-tv"); if(!b) return;
     const t = b.querySelector(".btn-tx"); if(t) t.textContent = on ? "Encerrar painel" : "Painel TV";
     b.classList.toggle("tv-on", !!on); b.title = on ? "Fechar a janela do Painel TV" : "Abre o Painel TV em uma nova janela";
+  },
+  /** miniatura ao vivo do painel (uma cópia do painel carregada em quadro pequeno, atualizando sozinha) na tela de parâmetros */
+  pip(){
+    const ant = document.getElementById("tv-pip");
+    if(ant){ ant.remove(); return; }
+    const box = document.createElement("div"); box.id = "tv-pip";
+    box.innerHTML = `<div class="tvpip-h"><span>Painel TV — ao vivo</span><button type="button" aria-label="Fechar" title="Fechar">&times;</button></div><div class="tvpip-f"><iframe src="${location.href.split("#")[0]}#painel-tv" title="Painel TV ao vivo" allow="autoplay"></iframe></div>`;
+    box.querySelector("button").onclick = ()=> box.remove();
+    document.body.appendChild(box);
   },
   /** pré-visualização na própria tela, com os parâmetros do formulário (sem gravar) */
   async previa(cfgForm){
@@ -353,27 +374,24 @@ const PainelTV = {
     this._t.push(setInterval(()=> this.relogio(), 20000));
     this._t.push(setInterval(async ()=>{ if(!this.aberto) return; await this.cfgCarregar(); await this.fotosCarregar(); this.desenhar(); }, 5*60*1000));   // pega mudanças de parâmetros e fotos
     this._t.push(setInterval(()=>{ const b = document.getElementById("btn-refresh-online"); if(b && this.aberto) b.click(); }, 15*60*1000));   // recarrega os dados sozinho
-    try{ this._wl = navigator.wakeLock && await navigator.wakeLock.request("screen"); }catch(e){}
+    try{ if(!this.modoIframe) this._wl = navigator.wakeLock && await navigator.wakeLock.request("screen"); }catch(e){}
     await this.telaCheia();
   },
   /** tela cheia na 2ª tela, se existir; senão, na tela atual */
   async telaCheia(){
+    if(this.modoIframe || !this.transmitir()) return;   // prévia ao vivo e transmissão desligada: sem tela cheia
     this._entrando = true; let alvo = null;
     try{
-      if(window.getScreenDetails && !this.modoJanela){
+      if(window.getScreenDetails){
         const det = await getScreenDetails();
-        const outra = det.screens.find(s=>s !== det.currentScreen && !s.isPrimary) || det.screens.find(s=>s !== det.currentScreen);
-        if(outra) alvo = outra;
+        // na janela do painel, a "tela atual" é a 2ª tela quando o painel foi enviado para lá; se estiver na principal, não há 2ª tela
+        if(this.modoJanela) alvo = (det.currentScreen && !det.currentScreen.isPrimary && det.screens.length > 1) ? det.currentScreen : null;
+        else alvo = det.screens.find(s=>s !== det.currentScreen && !s.isPrimary) || det.screens.find(s=>s !== det.currentScreen) || null;
       }
     }catch(e){}
-    try{ await this.root.requestFullscreen(alvo ? { screen:alvo, navigationUI:"hide" } : { navigationUI:"hide" }); this._seg = alvo ? "2ª tela" : "tela atual"; }
-    catch(e){
-      // o navegador pediu um clique novo para entrar em tela cheia
-      const b = document.createElement("button"); b.type = "button"; b.className = "tv-go";
-      b.innerHTML = `${Icons.svg("play",26)} Clique para abrir em tela cheia${alvo ? " na 2ª tela" : ""}`;
-      b.onclick = async ()=>{ try{ await this.root.requestFullscreen(alvo ? { screen:alvo, navigationUI:"hide" } : { navigationUI:"hide" }); }catch(x){} b.remove(); };
-      this.root.appendChild(b);
-    }
+    if(!alvo){ this._entrando = false; return; }   // sem 2ª tela: fica na janela menor
+    try{ await this.root.requestFullscreen({ screen:alvo, navigationUI:"hide" }); this._seg = "2ª tela"; }
+    catch(e){ /* o navegador não deixou entrar em tela cheia sem clique: a janela já cobre a 2ª tela */ }
     setTimeout(()=>{ this._entrando = false; }, 800);
   },
   fechar(){
@@ -398,6 +416,10 @@ const PainelTV = {
       <div class="adm-head"><h3 class="adm-h2" style="margin:0">Parâmetros do Painel TV</h3>
         <div class="adm-head-r"><button type="button" class="btn btn-outline" id="tvp-previa">${Icons.svg("eye",16)} Prévia</button><button type="button" class="btn btn-outline" id="tvp-abrir">${Icons.svg("play",16)} Abrir em nova janela</button></div></div>
       <p class="small-muted">O painel da TV lê estes parâmetros sozinho (confere a cada 5 minutos, sem precisar fechar).</p>
+      <div class="tvp-tx">
+        <label class="tvp-chk"><input type="checkbox" id="tvp-transmitir"${this.transmitir() ? " checked" : ""}><span><b>Transmitir em tela cheia na 2ª tela</b><small>Desligado por padrão e vale só neste computador. Ao ligar, o painel abre já cobrindo a 2ª tela (sem clique de confirmação); sem 2ª tela, abre numa janela menor. Na primeira vez o navegador pede permissão para ver as telas.</small></span></label>
+        <button type="button" class="btn btn-outline btn-sm" id="tvp-pip">${Icons.svg("eye",16)} Ver ao vivo (PIP)</button>
+      </div>
 
       <fieldset class="tvp-fs"><legend>Funcionários do Mês</legend>
         <div class="adm-form">
@@ -467,6 +489,12 @@ const PainelTV = {
     $("padrao").addEventListener("click", ()=>{ this.cfg = this.mesclar(this.DEF, {}); this.renderPaneLocal(); });
     $("previa").addEventListener("click", ()=> this.previa(coletar()));
     $("abrir").addEventListener("click", async ()=>{ if(await salvar()) this.tocar(); });
+    $("transmitir").addEventListener("change", e=>{
+      this.definirTransmitir(e.target.checked);
+      if(e.target.checked){ if(!(this._win && !this._win.closed)) this.tocar(); }
+      else if(this._win && !this._win.closed) this.encerrarJanela();
+    });
+    $("pip").addEventListener("click", ()=> this.pip());
   },
   renderPaneLocal(){ // restaura o padrão apenas no formulário (não grava até clicar em Salvar)
     const guardado = this.cfg; this.cfg = guardado;

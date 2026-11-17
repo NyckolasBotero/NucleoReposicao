@@ -4,9 +4,17 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.18.4";
+const APP_VERSAO = "2.19.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.19.0", data:"2026-11-17", titulo:"Administração > Parâmetros (regras de NC, auditoria, comissão e Painel TV)", itens:[
+    "Nova página Administração > Parâmetros, em abas: Não Conformidades e Feedbacks, Auditoria, Comissão e Painel TV (a antiga página Parâmetros Painel TV foi incorporada; o bloco de parâmetros saiu da tela Comissão).",
+    "Não Conformidades e Feedbacks: regras gerais (NC por feedback, feedbacks por advertência, advertências por suspensão) e regras por motivo, com números próprios e alertas de feedback, advertência e suspensão que podem ser desligados (ex.: feedback de gestão 1 vez ao mês sem alerta de advertência).",
+    "As regras valem na hora nos alertas, no Insights, nas telas de NC e no documento de feedback (que passa a mostrar os números de cada motivo).",
+    "Auditoria: pesos dos critérios (picking, avaria, vencimento, sem saldo, outra) e ruas fora da auditoria passam a ser ajustáveis.",
+    "Painel TV: transmissão em tela cheia por toggle (desligado por padrão): ligado, abre já na 2ª tela sem clique de confirmação; sem 2ª tela, abre numa janela menor. Novo botão Ver ao vivo (PIP) mostra o painel em miniatura na tela de parâmetros.",
+    "Só o administrador grava os parâmetros; os demais usuários só recebem as regras. Requer atualizar o Apps Script (rotas param_ler e param_salvar)."
+  ]},
   { v:"2.18.4", data:"2026-11-17", titulo:"Ordenação preservada e último tipo de feedback pré-selecionado", itens:[
     "Todas as tabelas ordenáveis lembram a coluna e a direção escolhidas: ao clicar em outro funcionário (ou redesenhar a tela) a ordem não é perdida.",
     "Download do Feedback (PDF): o tipo de documento e o período usados por último já vêm marcados na próxima geração."

@@ -1045,3 +1045,27 @@ body.sb-collapsed #sb-versao{ display:none; }
 .fi-n{ font-weight:600; min-width:0; overflow-wrap:anywhere; }
 .fi-v{ color:var(--gray-700); white-space:nowrap; font-size:12px; }
 .fi-v0{ font-size:12.5px; color:var(--gray-700); }
+
+/* ---------- Administração > Parâmetros ---------- */
+.pm-tabs{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+.pm-tab{ padding:8px 16px; border:1px solid var(--gray-200); border-radius:var(--radius); background:var(--white); color:var(--blue-dark); font:inherit; font-size:13px; font-weight:700; cursor:pointer; box-shadow:var(--shadow);
+  transition:background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast), box-shadow var(--duration-fast); }
+.pm-tab:hover:not(.on){ background:var(--blue-light); }
+.pm-tab:focus-visible{ outline:none; box-shadow:var(--focus); }
+.pm-tab.on{ background:var(--blue-med); border-color:var(--blue-med); color:#fff; }
+.pm-tbl th.c, .pm-tbl td.c{ text-align:center; }
+.pm-n{ width:84px; padding:6px 8px; border:1px solid var(--gray-200); border-radius:9px; background:var(--white); color:var(--ink); font:inherit; font-size:13px; }
+.pm-n:focus{ outline:none; box-shadow:var(--focus); border-color:var(--blue-med); }
+.pm-n:disabled{ background:var(--gray-50); color:var(--gray-700); }
+.pm-chk{ display:inline-flex; cursor:pointer; }
+.pm-chk input{ width:17px; height:17px; accent-color:var(--blue-med); cursor:pointer; }
+.pm-chk input:disabled{ cursor:not-allowed; }
+
+/* ---------- Painel TV: transmissão e miniatura ao vivo ---------- */
+.tvp-tx{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:10px 12px; margin:8px 0; border:1px solid var(--gray-200); border-radius:var(--radius); background:var(--gray-50); }
+#tv-pip{ position:fixed; right:16px; bottom:16px; z-index:90; width:480px; max-width:calc(100vw - 32px); border-radius:var(--radius); overflow:hidden; background:var(--white); border:1px solid var(--gray-200); box-shadow:var(--shadow-lg); }
+.tvpip-h{ display:flex; align-items:center; justify-content:space-between; padding:6px 10px; font-size:12px; font-weight:700; color:var(--blue-dark); background:var(--gray-50); }
+.tvpip-h button{ border:0; background:transparent; font-size:18px; line-height:1; cursor:pointer; color:var(--gray-700); }
+.tvpip-f{ position:relative; width:100%; aspect-ratio:16/9; background:#000; overflow:hidden; }
+.tvpip-f iframe{ position:absolute; left:0; top:0; width:1280px; height:720px; border:0; transform-origin:0 0; transform:scale(.375); pointer-events:none; }
+@media (max-width:540px){ .tvpip-f iframe{ transform:scale(.25); } }

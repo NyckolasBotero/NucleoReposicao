@@ -2,13 +2,11 @@
    Núcleo Reposição — Feedbacks e Advertências (Gestão) + Alertas
    Depende de app.js (processed, currentTeam, Charts, Api, UI, helpers de formatação).
    ========================================================================= */
-const FB_A_CADA = 3;               // a cada 3 feedbacks por motivo → 1 advertência
 const FB_DIAS_SEM_FEEDBACK = 30;   // "sem feedback há mais de N dias"
 const FB_DIAS_DESISTENTE = 7;     // faltas seguidas (da 1ª à última) que classificam como desistente
 const FB_PROBATORIO_DIAS = 90;     // período probatório
 const FB_PROBATORIO_AVISO = 15;    // avisa quando faltam até N dias para acabar o probatório
 const FB_SEM_MOTIVO = "SEM MOTIVO";
-const FB_ADV_PARA_SUSP = 3;        // 3 advertências no mesmo motivo → solicitar suspensão
 
 const FeedbackAdv = {
   sel: null,            // codKey do funcionário aberto no detalhe (null = lista)
@@ -39,7 +37,7 @@ const FeedbackAdv = {
   /** suspensões disciplinares lançadas em Lançar Suspensão (aba SUSPENSÕES) */
   suspensoesDisc(){ const p = this.proc(); return p ? (p.suspensoesDisc||[]).filter(r=>r.data && r.codKey) : []; },
   /** feedbacks necessários para 1 advertência: 2 nos motivos de NC, 3 nos demais */
-  fbPorAdv(chave){ return (typeof NC!=="undefined" && NC.ehMotivo(chave)) ? NC_FB_PARA_ADV : FB_A_CADA; },
+  fbPorAdv(chave){ return Regras.fbParaAdv(chave); },
 
   suspensoes(){
     const p = this.proc(); const m = new Map(); if(!p) return m;
@@ -81,12 +79,12 @@ const FeedbackAdv = {
     e.adv.forEach(r=>{ get(this.mk(r.motivo), this.motivoTxt(r.motivo)).adv++; });
     (e.suspD||[]).forEach(r=>{ get(this.mk(r.motivo), this.motivoTxt(r.motivo)).susp++; });
     return Array.from(m.values()).map(x=>{
-      const sem = x.chave===FB_SEM_MOTIVO, k = this.fbPorAdv(x.chave);
-      return { ...x, porAdv:k,
-        pend: sem ? 0 : Math.max(0, Math.floor(x.fb/k) - x.adv),
+      const sem = x.chave===FB_SEM_MOTIVO, k = this.fbPorAdv(x.chave), ks = Regras.advParaSusp(x.chave);
+      return { ...x, porAdv:k, porSusp:ks,
+        pend: (sem || !Regras.alertaAdv(x.chave)) ? 0 : Math.max(0, Math.floor(x.fb/k) - x.adv),
         faltam: sem ? null : (k - ((x.fb - k*x.adv) % k)),            // feedbacks até a próxima advertência
-        suspPend: sem ? 0 : Math.max(0, Math.floor(x.adv/FB_ADV_PARA_SUSP) - x.susp),
-        faltamSusp: sem ? null : (FB_ADV_PARA_SUSP - ((x.adv - FB_ADV_PARA_SUSP*x.susp) % FB_ADV_PARA_SUSP)) };   // advertências até a próxima suspensão
+        suspPend: (sem || !Regras.alertaSusp(x.chave)) ? 0 : Math.max(0, Math.floor(x.adv/ks) - x.susp),
+        faltamSusp: sem ? null : (ks - ((x.adv - ks*x.susp) % ks)) };   // advertências até a próxima suspensão
     }).sort((a,b)=> (b.suspPend-a.suspPend) || b.pend-a.pend || b.fb-a.fb);
   },
   farolHtml(f){
@@ -189,9 +187,9 @@ const FeedbackAdv = {
     const lin = (html, codKey)=> `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:8px 10px;font-size:13px;${codKey?"cursor:pointer;":""}" ${codKey?`onclick="UI.closeModal();FeedbackAdv.abrirFuncionario('${escapeHtml(codKey)}')"`:""}>${html}</div>`;
     UI.openModal(`
       <h3 style="margin-top:0">Alertas</h3>
-      ${sec("⛔ Solicitar suspensão ("+FB_ADV_PARA_SUSP+" advertências no mesmo motivo)", "#8e1b1b", (a.suspender||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.motivo)}: ${x.adv} advertência(s), ${x.susp} suspensão(ões) → <strong>${x.pend} a emitir</strong>`, x.codKey)), "Ninguém com "+FB_ADV_PARA_SUSP+" advertências sem suspensão no mesmo motivo.")}
-      ${sec("⚠️ NC recorrente — gerar advertência ("+NC_FB_PARA_ADV+" feedbacks no mesmo motivo)", "#d64545", (a.ncAdv||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.label)}: ${x.fb} feedback(s), ${x.adv} advertência(s) → <strong>${x.pend} a emitir</strong>`, x.codKey)), "Nenhuma NC recorrente pedindo advertência.")}
-      ${sec("⚠️ NC recorrente — gerar feedback ("+NC_POR_FB+" NCs no mesmo motivo)", "#e08a1f", (a.ncFb||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.label)}: <strong>${x.ncs} NCs</strong> desde ${fmtDateBR(x.desdeData)}`, x.codKey)), "Ninguém com "+NC_POR_FB+" NCs no mesmo motivo.")}
+      ${sec("⛔ Solicitar suspensão ("+Regras.g("advParaSusp")+" advertências no mesmo motivo)", "#8e1b1b", (a.suspender||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.motivo)}: ${x.adv} advertência(s), ${x.susp} suspensão(ões) → <strong>${x.pend} a emitir</strong>`, x.codKey)), "Ninguém com "+Regras.g("advParaSusp")+" advertências sem suspensão no mesmo motivo.")}
+      ${sec("⚠️ NC recorrente — gerar advertência ("+Regras.g("fbParaAdvNC")+" feedbacks no mesmo motivo)", "#d64545", (a.ncAdv||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.label)}: ${x.fb} feedback(s), ${x.adv} advertência(s) → <strong>${x.pend} a emitir</strong>`, x.codKey)), "Nenhuma NC recorrente pedindo advertência.")}
+      ${sec("⚠️ NC recorrente — gerar feedback ("+Regras.g("ncPorFb")+" NCs no mesmo motivo)", "#e08a1f", (a.ncFb||[]).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.label)}: <strong>${x.ncs} NCs</strong> desde ${fmtDateBR(x.desdeData)}`, x.codKey)), "Ninguém com "+Regras.g("ncPorFb")+" NCs no mesmo motivo.")}
       ${sec("🔴 Precisam de advertência (3 feedbacks no mesmo motivo)", "#d64545", a.advertir.map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${escapeHtml(x.motivo)}: ${x.fb} feedback(s), ${x.adv} advertência(s) → <strong>${x.pend} advertência(s) a emitir</strong>`, x.codKey)), "Ninguém atingiu 3 feedbacks sem advertência no mesmo motivo.")}
       ${sec("⏳ Período probatório acabando (até "+FB_PROBATORIO_AVISO+" dias)", "#e08a1f", a.probatorio.map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — termina em ${fmtDateBR(x.fim)} (${x.restam===0?"hoje":"faltam "+x.restam+" dia(s)"})`, x.codKey)), "Nenhum probatório vencendo nos próximos dias.")}
       ${sec("📝 Sem feedback há mais de "+FB_DIAS_SEM_FEEDBACK+" dias", "#2f6fce", a.semFeedback.slice(0,40).map(x=>lin(`<strong>${escapeHtml(x.nome)}</strong> — ${x.dias===null?"nunca recebeu feedback":x.dias+" dias sem feedback"}`, x.codKey)), "Toda a equipe recebeu feedback recentemente.") + (a.semFeedback.length>40 ? `<div class="small-muted">+ ${a.semFeedback.length-40} outros na tabela da aba.</div>` : "")}
@@ -405,11 +403,11 @@ const FeedbackAdv = {
     const semAdv = equipe.slice().sort((a,b)=>(b.diasSemAdv===null?1e9:b.diasSemAdv)-(a.diasSemAdv===null?1e9:a.diasSemAdv));
     const advertir = equipe.filter(e=>e.pendentes>0);
     const bullets = [];
-    if(advertir.length) bullets.push({ tom:'neg', ico:'🔴', h:`<strong>${advertir.length}</strong> funcionário(s) já atingiram ${FB_A_CADA} feedbacks no mesmo motivo sem advertência: ${advertir.slice(0,4).map(e=>escapeHtml(this.rotulo(e))).join(", ")}${advertir.length>4?"…":""}.` });
+    if(advertir.length) bullets.push({ tom:'neg', ico:'🔴', h:`<strong>${advertir.length}</strong> funcionário(s) já atingiram ${Regras.g("fbParaAdvOutros")} feedbacks no mesmo motivo sem advertência: ${advertir.slice(0,4).map(e=>escapeHtml(this.rotulo(e))).join(", ")}${advertir.length>4?"…":""}.` });
     if(semFb.length) bullets.push({ tom:'warn', ico:'📝', h:`<strong>${semFb.length}</strong> funcionário(s) estão sem feedback há mais de ${FB_DIAS_SEM_FEEDBACK} dias (${semFb.filter(e=>e.diasSemFb===null).length} nunca receberam).` });
     if(motivoTop) bullets.push({ tom:'info', ico:'📌', h:`Motivo mais frequente nos feedbacks: <strong>${escapeHtml(motivoTop[0])}</strong> (${motivoTop[1]}).` });
     const semMotivo = lista.reduce((n,e)=>n+e.feedbacks.filter(r=>!trimStr(r.motivo)).length, 0);
-    if(semMotivo) bullets.push({ tom:'info', ico:'ℹ️', h:`${semMotivo} feedback(s) antigos não têm motivo registrado — não entram na regra das ${FB_A_CADA} ocorrências.` });
+    if(semMotivo) bullets.push({ tom:'info', ico:'ℹ️', h:`${semMotivo} feedback(s) antigos não têm motivo registrado — não entram na regra das ${Regras.g("fbParaAdvOutros")} ocorrências.` });
     const susp = top(equipe, e=>e.susp);
     if(susp.length) bullets.push({ tom:'neg', ico:'⛔', h:`Mais suspensões na chamada: <strong>${escapeHtml(this.rotulo(susp[0]))}</strong> (${susp[0].susp}).` });
     return {
@@ -442,13 +440,13 @@ const FeedbackAdv = {
     e.motivos.forEach(m=>porMotivo.set(m.chave, { ...m, ncs:0 }));
     nc.forEach(x=>{
       const t = NC.tipo(x.tipo), k = this.mk(t.motivo);
-      if(!porMotivo.has(k)){ const kk = this.fbPorAdv(k); porMotivo.set(k, { chave:k, motivo:t.motivo, fb:0, adv:0, susp:0, porAdv:kk, pend:0, suspPend:0, faltam:kk, faltamSusp:FB_ADV_PARA_SUSP, ncs:0 }); }
+      if(!porMotivo.has(k)){ const kk = this.fbPorAdv(k); porMotivo.set(k, { chave:k, motivo:t.motivo, fb:0, adv:0, susp:0, porAdv:kk, pend:0, suspPend:0, faltam:kk, faltamSusp:Regras.advParaSusp(k), ncs:0 }); }
       porMotivo.get(k).ncs++;
     });
     const lanc = (pane, rot, m, cls)=> Auth.can("lancamentos", pane) ? `<button type="button" class="btn ${cls||'btn-primary'} btn-sm nc-btn" onclick="FeedbackAdv.irLancar('${pane}','${escapeHtml(e.codKey)}','${escapeHtml(m.chave)}')">${rot}</button>` : "";
     const linhas = Array.from(porMotivo.values()).filter(m=>m.chave!==FB_SEM_MOTIVO).sort((a,b)=>(b.suspPend-a.suspPend)||(b.pend-a.pend)||(b.ncs-a.ncs)||(b.fb-a.fb)).map(m=>{
       const ehNc = typeof NC!=="undefined" && NC.ehMotivo(m.chave);
-      const ncPend = ehNc ? Math.max(0, Math.floor(m.ncs/NC_POR_FB) - m.fb) : 0;
+      const ncPend = (ehNc && Regras.alertaFb(m.chave)) ? Math.max(0, Math.floor(m.ncs/Regras.ncPorFb(m.chave)) - m.fb) : 0;
       const dot = (c)=> `<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${c};margin-right:6px"></span>`;
       let passo;
       if(m.suspPend>0) passo = `${dot("#d64545")}<strong>Solicitar suspensão</strong> <span class="small-muted">(${m.suspPend})</span>`;
@@ -461,7 +459,7 @@ const FeedbackAdv = {
         <td>${passo}</td><td class="nc-act">${acao}</td></tr>`;
     });
     return `<div class="panel">
-      <div class="panel-header"><h3>Cadeia disciplinar por motivo</h3><span class="panel-note">NC (${typeof NC_POR_FB!=="undefined"?NC_POR_FB:2}) → feedback · ${typeof NC_FB_PARA_ADV!=="undefined"?NC_FB_PARA_ADV:2} feedbacks (NC) ou ${FB_A_CADA} (demais) → advertência · ${FB_ADV_PARA_SUSP} advertências → suspensão</span></div>
+      <div class="panel-header"><h3>Cadeia disciplinar por motivo</h3><span class="panel-note">NC (${Regras.g("ncPorFb")}) → feedback · ${Regras.g("fbParaAdvNC")} feedbacks (NC) ou ${Regras.g("fbParaAdvOutros")} (demais) → advertência · ${Regras.g("advParaSusp")} advertências → suspensão</span></div>
       <div class="table-wrap"><table class="data-table nc-table">
         <thead><tr><th>Motivo</th><th class="num">NCs</th><th class="num">Feedbacks</th><th class="num">Advertências</th><th class="num">Suspensões</th><th>Próximo passo</th><th></th></tr></thead>
         <tbody>${linhas.join("") || '<tr><td colspan="7" class="small-muted">Sem NCs, feedbacks nem advertências registrados.</td></tr>'}</tbody>
@@ -571,7 +569,7 @@ const FeedbackAdv = {
       </div>
 
       <div class="panel">
-        <div class="panel-header"><h3>Suspensões disciplinares (${e.suspD.length})</h3><span class="panel-note">${FB_ADV_PARA_SUSP} advertências no mesmo motivo geram a solicitação de suspensão</span></div>
+        <div class="panel-header"><h3>Suspensões disciplinares (${e.suspD.length})</h3><span class="panel-note">${Regras.g("advParaSusp")} advertências no mesmo motivo geram a solicitação de suspensão</span></div>
         <div class="table-wrap"><table class="data-table">
           <thead><tr><th>Início</th><th>Fim</th><th>Dias</th><th>Motivo</th><th>Resumo</th><th>Aplicador</th><th>Documento</th></tr></thead>
           <tbody>${e.suspD.length ? e.suspD.map(r=>`<tr>
