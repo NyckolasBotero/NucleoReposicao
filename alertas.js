@@ -45,6 +45,8 @@ const Alertas = {
       gerar(){ return Alertas.itensChamada(); } },
     { id:"ferias_venc", nome:"Férias vencendo", icone:"plane", cor:"#d9822b", desc:"Férias vencidas ou que vencem em até 1 mês e ainda não foram agendadas.", padrao:"*",
       gerar(){ return Alertas.itensFeriasVenc(); } },
+    { id:"refeit_aprov", nome:"Refeitório: aprovações e avulsos", icone:"utensils", cor:"#d9822b", desc:"Solicitações de inclusão no refeitório aguardando sua aprovação e avulsos do seu setor para responder (aparecem na hora, sem recarregar).", padrao:"*",
+      gerar(){ return Alertas.itensRefeitorio(); } },
     { id:"sem_anexo", nome:"Documento sem anexo", icone:"file", cor:"#c0392b", desc:"Advertência ou suspensão lançada, mas sem o documento assinado anexado (NC ainda não aplicada).", padrao:"*",
       gerar(){ return Alertas.itensSemAnexo(); } }
   ],
@@ -221,6 +223,12 @@ const Alertas = {
     const cu = filtra(this.itensCustom());
     if(cu.length) grupos.push({ id:"custom", nome:"Lembretes", icone:"clock", cor:"#2f6fce", itens:cu });
     return grupos;
+  },
+  itensRefeitorio(){
+    const n = (window.RefeitUI && RefeitUI.notif) || { aprovacoes:[], avulsos:[] }, ap = n.aprovacoes || [], av = n.avulsos || [];
+    const nome = (c, m) => (c ? c + " - " : "") + (m || "");
+    return ap.map(a=>({ key:`refeit_aprov|${a.id}`, veto:`refeit_aprov|${a.id}`, titulo:`Aprovar: ${nome(a.cod, a.nome)}`, texto:`${a.pornome} pede incluir no refeitório (${a.setor}). Motivo: ${a.motivo}`, sig:a.id, urgente:true, ir:()=>{ Alertas.fechar && Alertas.fechar(); RefeitUI.decidirModal(a.id); } }))
+      .concat(av.map(a=>({ key:`refeit_av|${a.data}|${a.cod}`, veto:`refeit_av|${a.data}|${a.cod}`, titulo:`Avulso: ${nome(a.cod, a.nome)}`, texto:`Almoçou como avulso em ${a.setor} às ${a.hora}. Responda se foi autorizado.`, sig:a.data+a.cod, urgente:true, ir:()=>{ Alertas.fechar && Alertas.fechar(); RefeitUI.modalAvulsoResp(a.data, a.cod); } })));
   },
   total(){ try{ return this.coletar().reduce((n,g)=>n+g.itens.length, 0); }catch(e){ return 0; } },
 

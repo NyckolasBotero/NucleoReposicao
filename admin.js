@@ -1061,7 +1061,7 @@ const AdminUI = {
       <div class="adm-checks" id="ac-rsets">${sets.map(s=>`<label class="adm-chk"><input type="checkbox" class="ac-rset" value="${escapeHtml(s)}" ${(p.setores||[]).includes(s)?"checked":""}> ${escapeHtml(s)}</label>`).join("")}</div>
       <div class="lanc-novo" style="margin-top:8px;"><button type="button" class="btn btn-outline btn-sm" id="ac-rsetor-btn">＋ Novo Setor</button>
         <span id="ac-rsetor-box" style="display:none"><input type="text" id="ac-rsetor-in" placeholder="Nome do novo setor" style="min-width:180px"> <button type="button" class="btn btn-primary btn-sm" id="ac-rsetor-ok">Adicionar</button></span></div>
-      <p class="small-muted" style="margin:8px 0 0;">Ao salvar, as telas Liberações Refeitório e Histórico Almoço são liberadas automaticamente conforme os papéis.</p></fieldset>`;
+      <p class="small-muted" style="margin:8px 0 0;">Ao salvar, a tela Gestão > Controle Refeitório é liberada automaticamente (aprovadores também recebem acesso).</p></fieldset>`;
   },
   ligarRefeitorio(box){
     const btn = box.querySelector("#ac-rsetor-btn"); if(!btn) return;
@@ -1118,9 +1118,7 @@ const AdminUI = {
     const rPapeis = Array.from(box.querySelectorAll(".ac-rpapel:checked")).map(c=>c.value), rNivel = (box.querySelector("#ac-rnivel")||{}).value || "restrito";
     const rSetores = Array.from(box.querySelectorAll(".ac-rset:checked")).map(c=>c.value);
     const addPerm = (aba, sub)=>{ if(!perms.some(p=>normPerm(p.aba)===normPerm(aba) && normPerm(p.sub)===normPerm(sub))) perms.push({ aba, sub }); };
-    if(rPapeis.length) addPerm("Lançamentos", "Liberações Refeitório");
-    if(rPapeis.includes("Encarregado") || rNivel==="geral") addPerm("Gestão", "Histórico Almoço");
-    if(rPapeis.length===0 && rNivel==="geral") addPerm("Lançamentos", "Liberações Refeitório");
+    if(rPapeis.length || rNivel==="geral") addPerm("Gestão", "Controle Refeitório");
     const payload = { acao:"admin_salvar", original: orig||"", matricula: document.getElementById("ac-mat").value.trim(), nome: document.getElementById("ac-nome").value.trim(),
       senha: document.getElementById("ac-senha").value, status: document.getElementById("ac-status").value, perms };
     btn.disabled = true; msg.innerHTML = "";

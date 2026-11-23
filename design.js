@@ -84,7 +84,7 @@ const Icons = {
     capacidade:"gauge", abastecimento:"layers", cd3d:"cube",
     feedbacks:"message", quadro:"users", chamada:"clipboard", auditoria:"shield", comissao:"coins", cronograma:"calendar",
     turnover:"repeat", ferias:"sun", organograma:"network",
-    lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", lrefeitorio:"utensils", hrefeitorio:"utensils", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",
+    lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", crefeitorio:"utensils", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",
     lcapacidade:"battery", lferias:"plane",
     bases:"database", acessos:"key", links:"link", versoes:"tag", alertas:"bell"
   },

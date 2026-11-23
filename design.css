@@ -1112,6 +1112,14 @@ body.sb-collapsed #sb-versao{ display:none; }
 .rf-notif{ border-left:4px solid var(--orange); }
 .rf-nt{ display:flex; justify-content:space-between; gap:12px; align-items:center; padding:10px 0; border-top:1px solid var(--gray-100); flex-wrap:wrap; }
 .rf-nt-b{ display:flex; gap:8px; }
+.rf-dec{ display:grid; gap:10px; }
+#rf-cards{ position:fixed; right:16px; bottom:16px; z-index:2500; display:flex; flex-direction:column; gap:10px; max-width:min(360px, calc(100vw - 32px)); }
+.rf-card{ position:relative; background:var(--white, #fff); border:1px solid var(--gray-200); border-left:4px solid var(--orange); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px 32px 12px 14px; animation:rf-card-in var(--duration-fast) var(--ease-standard); }
+.rf-card-t{ font-weight:700; margin-bottom:4px; }
+.rf-card-b{ margin-top:8px; display:flex; gap:8px; }
+.rf-card-x{ position:absolute; top:6px; right:8px; background:none; border:0; font-size:20px; line-height:1; cursor:pointer; color:var(--gray-500); }
+.rf-card-x:focus-visible{ outline:2px solid var(--focus, var(--blue-med)); }
+@keyframes rf-card-in{ from{ opacity:0; transform:translateY(12px); } to{ opacity:1; transform:none; } }
 .rf-badge{ display:inline-block; min-width:22px; padding:1px 8px; border-radius:20px; background:var(--orange); color:#fff; font-size:12px; text-align:center; }
 .rf-filtros{ align-items:flex-end; flex-wrap:wrap; gap:12px; }
 .rf-de{ font-size:12px; font-weight:600; color:var(--gray-500); }
