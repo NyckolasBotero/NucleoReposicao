@@ -225,10 +225,13 @@ const Alertas = {
     return grupos;
   },
   itensRefeitorio(){
-    const n = (window.RefeitUI && RefeitUI.notif) || { aprovacoes:[], avulsos:[] }, ap = n.aprovacoes || [], av = n.avulsos || [];
-    const nome = (c, m) => (c ? c + " - " : "") + (m || "");
-    return ap.map(a=>({ key:`refeit_aprov|${a.id}`, veto:`refeit_aprov|${a.id}`, titulo:`Aprovar: ${nome(a.cod, a.nome)}`, texto:`${a.pornome} pede incluir no refeitório (${a.setor}). Motivo: ${a.motivo}`, sig:a.id, urgente:true, ir:()=>{ Alertas.fechar && Alertas.fechar(); RefeitUI.decidirModal(a.id); } }))
-      .concat(av.map(a=>({ key:`refeit_av|${a.data}|${a.cod}`, veto:`refeit_av|${a.data}|${a.cod}`, titulo:`Avulso: ${nome(a.cod, a.nome)}`, texto:`Almoçou como avulso em ${a.setor} às ${a.hora}. Responda se foi autorizado.`, sig:a.data+a.cod, urgente:true, ir:()=>{ Alertas.fechar && Alertas.fechar(); RefeitUI.modalAvulsoResp(a.data, a.cod); } })));
+    const n = (window.RefeitUI && RefeitUI.notif) || { aprovacoes:[], avulsos:[] }, ap = n.aprovacoes || [], av = n.avulsos || [], t = ap.length + av.length;
+    if(!t) return [];
+    const partes = [];
+    if(ap.length) partes.push(`${ap.length} inclusão(ões) para aprovar`);
+    if(av.length) partes.push(`${av.length} avulso(s) para responder`);
+    const sig = ap.map(a=>a.id).concat(av.map(a=>a.data+a.cod)).join(",");
+    return [{ key:"refeit|resumo", veto:"refeit|resumo", titulo:`Refeitório: ${t} solicitação(ões) a revisar`, texto:partes.join(" · "), sig:sig, urgente:true, ir:()=>{ Alertas.fechar && Alertas.fechar(); RefeitUI.listaRevisar(); } }];
   },
   total(){ try{ return this.coletar().reduce((n,g)=>n+g.itens.length, 0); }catch(e){ return 0; } },
 

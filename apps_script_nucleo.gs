@@ -134,6 +134,7 @@ function doPost(e) {
       if (d.acao === 'refeit_historico') return resposta(refeitHistorico(d, s));
       if (d.acao === 'refeit_cardapio_ler') return resposta(refeitCardapioLer(d, s));
       if (d.acao === 'refeit_cardapio_salvar') return resposta(refeitCardapioSalvar(d, s));
+      if (d.acao === 'refeit_cardapio_foto') return resposta(refeitCardapioFoto(d, s));
       if (d.acao === 'refeit_perfis') { exigir(s, PERM_ACESSOS); return resposta(refeitPerfis()); }
       if (d.acao === 'refeit_perfil_salvar') { exigir(s, PERM_ACESSOS); return resposta(refeitPerfilSalvar(d, s)); }
       if (d.acao === 'refeit_setor_add') { exigir(s, PERM_ACESSOS); return resposta(refeitSetorAdd(d, s)); }
@@ -159,7 +160,7 @@ const LEITURAS_SEM_TRAVA = {
   admin_listar: 1, admin_historico: 1, alertas_ler: 1, param_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1,
-  refeit_sync: 1, refeit_notif: 1, refeit_aprovacoes: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_perfis: 1, refeit_aprov_ler: 1, refeit_lembrete_ler: 1
+  refeit_sync: 1, refeit_notif: 1, refeit_aprovacoes: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_cardapio_foto: 1, refeit_perfis: 1, refeit_aprov_ler: 1, refeit_lembrete_ler: 1
 };
 
 function resposta(obj) {
@@ -2598,7 +2599,7 @@ const REF_FIXOS_CAB = ['Codigo', 'Nome', 'Setor', 'IncluidoEm', 'IncluidoPor', '
 const REF_LIB_CAB = ['Data', 'Codigo', 'Nome', 'Setor', 'Tipo', 'LiberadoPor', 'LiberadoEm', 'Presenca', 'HoraRegistro', 'DataRegistro', 'RegistradoPor', 'AutorizouAvulso', 'AutorizadoPor', 'AutorizadoEm', 'InclusaoSolicitada', 'Status'];
 const REF_LISTAS_CAB = ['Data', 'Setor', 'EnviadoEm', 'EnviadoPor', 'Total'];
 const REF_SOL_CAB = ['Id', 'CriadoEm', 'Codigo', 'Nome', 'Setor', 'Motivo', 'SolicitadoPor', 'SolicitadoNome', 'Origem', 'Status', 'DecididoPor', 'DecididoEm', 'MotivoDecisao', 'DecididoNome'];
-const REF_CARD_CAB = ['Id', 'Data', 'Prato', 'Acompanhamentos', 'Observacao', 'AtualizadoPor'];
+const REF_CARD_CAB = ['Id', 'Data', 'Prato', 'Acompanhamentos', 'Observacao', 'AtualizadoPor', 'Foto'];
 const REF_STATUS_OK = 'Almoçou no Refeitório STA';
 const REF_PAPEIS = ['Portaria', 'Encarregado', 'Cozinha'];
 const REF_SETORES_PADRAO = ['Reposição', 'Picking', 'Recebimento', 'Armazenagem', 'Expedição', 'Conferência', 'Carregamento'];
@@ -2746,7 +2747,7 @@ function refeitNotif(s) {
 /** Guia Histórico de Aprovações: pendentes e já decididas, com data/hora, decisor e motivos. */
 function refeitAprovacoes(s) {
   const cfg = refCfg(), p = refPerfil(s, cfg);
-  refExigir(p.aprovador || p.admin, 'Só os aprovadores veem o histórico de aprovações.');
+  refExigir(p.aprovador, 'Só os aprovadores veem o histórico de aprovações.');
   const itens = refSolicitacoes().itens.slice(-600).reverse().map(function (x) {
     return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, pornome: x.pornome, origem: x.origem, status: x.status, decpor: x.decpor, decnome: x.decnome, decem: x.decem, decmot: x.decmot };
   });
@@ -2928,12 +2929,31 @@ function refeitHistorico(d, s) {
 }
 
 /* ---------- Cardápio e adesão ---------- */
+/** Aba do cardápio; a coluna Foto (G) é criada sozinha nas planilhas que já existiam sem ela. */
+function refCardSheet() {
+  const sh = abaComCabecalho(ABA_REF_CARD, REF_CARD_CAB);
+  if (!String(sh.getRange(1, 7).getDisplayValue() || '').trim()) {
+    garantirTamanho(sh, 1, 7);
+    sh.getRange(1, 7).setValue('Foto').setFontWeight('bold');
+  }
+  return sh;
+}
+/** Foto (data URL) de um prato: a tela pede uma por vez, só dos pratos da semana que está aberta. */
+function refeitCardapioFoto(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Cozinha'), 'Só o gestor de cozinha acessa o cardápio.');
+  const id = texto(d.id), sh = refCardSheet(), ult = sh.getLastRow();
+  if (!id || ult < 2) return { ok: true, foto: '' };
+  const v = sh.getRange(2, 1, ult - 1, 7).getDisplayValues();
+  for (let i = 0; i < v.length; i++) if (v[i][0] === id) return { ok: true, id: id, foto: v[i][6] || '' };
+  return { ok: true, foto: '' };
+}
 function refeitCardapioLer(d, s) {
   const cfg = refCfg(), p = refPerfil(s, cfg);
   refExigir(refTem(p, 'Cozinha'), 'Só o gestor de cozinha acessa o cardápio.');
   const dia = hoje(), ini = /^\d{4}-\d{2}-\d{2}$/.test(String(d.ini || '')) ? d.ini : refSomaDias(dia, -60), fim = /^\d{4}-\d{2}-\d{2}$/.test(String(d.fim || '')) ? d.fim : refSomaDias(dia, 30);
-  const sh = abaComCabecalho(ABA_REF_CARD, REF_CARD_CAB), ult = sh.getLastRow(), itens = [];
-  if (ult >= 2) sh.getRange(2, 1, ult - 1, 5).getDisplayValues().forEach(function (l) { if (l[1] >= ini && l[1] <= fim) itens.push({ id: l[0], data: l[1], prato: l[2], acomp: l[3], obs: l[4] }); });
+  const sh = refCardSheet(), ult = sh.getLastRow(), itens = [];
+  if (ult >= 2) sh.getRange(2, 1, ult - 1, 7).getDisplayValues().forEach(function (l) { if (l[1] >= ini && l[1] <= fim) itens.push({ id: l[0], data: l[1], prato: l[2], acomp: l[3], obs: l[4], temFoto: !!l[6] }); });
   const adesao = {};
   refLerLib(ini, [fim, dia].sort()[0]).rows.forEach(function (r) {
     const a = adesao[r.v[0]] = adesao[r.v[0]] || { liberados: 0, almocaram: 0, avulsos: 0 };
@@ -2946,7 +2966,7 @@ function refeitCardapioLer(d, s) {
 function refeitCardapioSalvar(d, s) {
   const cfg = refCfg(), p = refPerfil(s, cfg);
   refExigir(refTem(p, 'Cozinha'), 'Só o gestor de cozinha altera o cardápio.');
-  const sh = abaComCabecalho(ABA_REF_CARD, REF_CARD_CAB), ult = sh.getLastRow();
+  const sh = refCardSheet(), ult = sh.getLastRow();
   const id = texto(d.id);
   let linha = 0;
   if (id && ult >= 2) { const v = sh.getRange(2, 1, ult - 1, 1).getDisplayValues(); for (let i = 0; i < v.length; i++) if (v[i][0] === id) linha = i + 2; }
@@ -2954,9 +2974,18 @@ function refeitCardapioSalvar(d, s) {
   const data = String(d.data || ''), prato = texto(d.prato).slice(0, 120);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Data inválida.');
   if (!prato) throw new Error('Informe o prato.');
-  const nova = [id || Utilities.getUuid().slice(0, 8), data, prato, texto(d.acomp).slice(0, 200), texto(d.obs).slice(0, 200), s.nome || s.matricula];
+  // foto: sem campo = mantém a atual; d.foto = troca; d.removerFoto = tira. Uma foto por prato, já reduzida pelo navegador.
+  let foto = linha ? String(sh.getRange(linha, 7).getDisplayValue() || '') : '';
+  if (d.removerFoto) foto = '';
+  else if (d.foto) {
+    const f = String(d.foto);
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(f)) throw new Error('Foto inválida. Use uma imagem JPG, PNG ou WEBP.');
+    if (f.length > 48000) throw new Error('Foto grande demais. Escolha outra imagem.');
+    foto = f;
+  }
+  const nova = [id || Utilities.getUuid().slice(0, 8), data, prato, texto(d.acomp).slice(0, 200), texto(d.obs).slice(0, 200), s.nome || s.matricula, foto];
   refGravarLinha(sh, linha || ult + 1, 1, nova);
-  registrarLog(s, 'Refeitório (cardápio)', data + ' · ' + prato);
+  registrarLog(s, 'Refeitório (cardápio)', data + ' · ' + prato + (d.foto ? ' · foto atualizada' : d.removerFoto ? ' · foto removida' : ''));
   return { ok: true, id: nova[0] };
 }
 

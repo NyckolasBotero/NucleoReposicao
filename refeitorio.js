@@ -18,7 +18,7 @@ const RefeitUI = {
   fila: [], enviando: false, tentativas: 0, timerFila: null, timerPoll: null, sincEm: "",
   pessoas: null,                   // { matrícula: nome } (para completar o nome ao digitar o código)
   his: { ini: null, fim: null, setor: "", enc: "", busca: "", dados: null, carregando: false, erro: "", verTudo: false },
-  car: { semana: null, dados: null, carregando: false, erro: "" },
+  car: { semana: null, dados: null, carregando: false, erro: "", fotos: {} },
 
   /* ------------------------------ utilidades ------------------------------ */
   h(s){ return escapeHtml(s == null ? "" : String(s)); },
@@ -50,7 +50,7 @@ const RefeitUI = {
     const t = [];
     if(this.tem("Portaria") || this.tem("Encarregado")) t.push({ id: "lib", rot: "Liberações" });
     if(this.tem("Encarregado")) t.push({ id: "sol", rot: "Solicitar Inclusão" });
-    if(p.aprovador || p.admin) t.push({ id: "apr", rot: "Histórico de Aprovações" });
+    if(p.aprovador) t.push({ id: "apr", rot: "Histórico de Aprovações" });
     if(this.tem("Encarregado") || p.geral) t.push({ id: "his", rot: "Histórico Almoço" });
     if(this.tem("Cozinha")) t.push({ id: "car", rot: "Cardápio e Adesão" });
     return t;
@@ -475,7 +475,7 @@ const RefeitUI = {
       const r = await this.chamar({ acao: "refeit_decidir", id: a.id, aceitar, motivo: document.getElementById("dc-mot").value.trim() });
       if(!r || !r.ok){ bs.forEach(b => b.disabled = false); document.getElementById("dc-msg").innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h((r && r.erro) || "Não foi possível registrar a decisão.")}</div>`; return; }
       UI.closeModal();
-      this.notif.aprovacoes = (this.notif.aprovacoes || []).filter(x => x.id !== a.id); this.removerCard("a|" + a.id);
+      this.notif.aprovacoes = (this.notif.aprovacoes || []).filter(x => x.id !== a.id); this.atualizarAviso();
       toast(aceitar ? `Aprovado: ${a.cod} - ${a.nome} agora é fixo de ${a.setor}.` : "Solicitação recusada.", "success");
       this.apr.dados = null; this.posAcao();
     };
@@ -484,7 +484,8 @@ const RefeitUI = {
   },
   /** depois de uma ação feita fora do fluxo normal: atualiza avisos, sino e (se a tela estiver aberta) o módulo */
   async posAcao(){
-    this.desenharNotif(true); this.avisarAlertas();
+    this.desenharNotif(true); this.avisarAlertas(); this.atualizarAviso();
+    if(this.voltarLista && this.totalPend()) this.listaRevisar(); else this.voltarLista = false;
     const el = document.getElementById("pane-" + this.pane);
     if(el && el.classList.contains("active")){ await this.sync(true, true); if(this.tab === "apr") this.telaApr(document.getElementById("rf-corpo")); }
     else this.checarNotif();
@@ -518,26 +519,56 @@ const RefeitUI = {
     const novos = [];
     this.notif.aprovacoes.forEach(a => { const k = "a|" + a.id; chaves.add(k); if(!ja.has(k)) novos.push({ k, tipo: "aprov", a }); });
     this.notif.avulsos.forEach(a => { const k = "v|" + a.data + "|" + a.cod; chaves.add(k); if(!ja.has(k)) novos.push({ k, tipo: "avulso", a }); });
-    document.querySelectorAll("#rf-cards .rf-card").forEach(c => { if(!chaves.has(c.dataset.k)) c.remove(); });   // já resolvido por outra pessoa/aparelho
-    novos.forEach(x => { ja.add(x.k); this.mostrarCard(x); });
-    if(novos.length) this.anunciadosGravar();
+    novos.forEach(x => ja.add(x.k));
+    if(novos.length){ this.anunciadosGravar(); this.mostrarAviso(); } else this.atualizarAviso();   // um único aviso, não um por solicitação
     this.desenharNotif(false); this.avisarAlertas();
     if(novos.length && this.carregado && this.tab === "apr" && document.getElementById("rf-corpo")) this.apr.dados = null;
   },
-  mostrarCard(x){
+  /** Total de pendências do usuário (aprovações + avulsos) */
+  totalPend(){ const n = this.notif || {}; return (n.aprovacoes || []).length + (n.avulsos || []).length; },
+  textoAviso(t){ return t === 1 ? "Você tem 1 solicitação a revisar" : `Você tem ${t} solicitações a revisar`; },
+  /** Aviso flutuante ÚNICO (canto inferior direito): só diz que há solicitações. Some sozinho em 5 s, a menos que o mouse esteja sobre ele. */
+  mostrarAviso(){
+    const t = this.totalPend(); if(!t){ this.removerAviso(); return; }
     let box = document.getElementById("rf-cards");
     if(!box){ box = document.createElement("div"); box.id = "rf-cards"; box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
-    const c = document.createElement("div"); c.className = "rf-card"; c.dataset.k = x.k; c.setAttribute("role", "alert");
-    const a = x.a;
-    c.innerHTML = x.tipo === "aprov"
-      ? `<button type="button" class="rf-card-x" aria-label="Fechar">×</button><div class="rf-card-t">Nova solicitação para aprovar</div><div><strong>${this.h(a.pornome)}</strong> pede incluir <strong>${this.pessoa(a.cod, a.nome)}</strong> no refeitório (${this.h(a.setor)}).</div><div class="small-muted">Motivo: ${this.h(a.motivo)}</div><div class="rf-card-b"><button type="button" class="btn btn-primary btn-sm" data-go>Aprovar ou recusar</button></div>`
-      : `<button type="button" class="rf-card-x" aria-label="Fechar">×</button><div class="rf-card-t">Almoço avulso no seu setor</div><div><strong>${this.pessoa(a.cod, a.nome)}</strong> almoçou como avulso em ${this.h(a.setor)} (${this.br(a.data)} ${this.h(a.hora)}).</div><div class="rf-card-b"><button type="button" class="btn btn-primary btn-sm" data-go>Responder</button></div>`;
-    c.querySelector(".rf-card-x").addEventListener("click", () => c.remove());
-    c.querySelector("[data-go]").addEventListener("click", () => { c.remove(); if(x.tipo === "aprov") this.decidirModal(a.id); else this.modalAvulsoResp(a.data, a.cod); });
-    box.appendChild(c);
-    try{ if(navigator.vibrate) navigator.vibrate(120); }catch(e){}
+    let c = box.querySelector(".rf-card");
+    if(!c){
+      c = document.createElement("div"); c.className = "rf-card rf-aviso"; c.setAttribute("role", "alert"); c.tabIndex = 0;
+      c.innerHTML = `<button type="button" class="rf-card-x" aria-label="Fechar">×</button><div class="rf-card-t" data-rf-txt></div><div class="small-muted">Clique para ver e decidir</div>`;
+      const abrir = () => { this.removerAviso(); this.listaRevisar(); };
+      c.addEventListener("click", e => { if(e.target.closest(".rf-card-x")) { this.removerAviso(); return; } abrir(); });
+      c.addEventListener("keydown", e => { if(e.key === "Enter" || e.key === " "){ e.preventDefault(); abrir(); } });
+      c.addEventListener("mouseenter", () => this.pararAviso());
+      c.addEventListener("focusin", () => this.pararAviso());
+      c.addEventListener("mouseleave", () => this.agendarAviso());
+      c.addEventListener("focusout", () => this.agendarAviso());
+      box.appendChild(c);
+      try{ if(navigator.vibrate) navigator.vibrate(120); }catch(e){}
+    }
+    c.querySelector("[data-rf-txt]").textContent = this.textoAviso(t);
+    this.agendarAviso();
   },
-  removerCard(k){ document.querySelectorAll("#rf-cards .rf-card").forEach(c => { if(c.dataset.k === k) c.remove(); }); },
+  pararAviso(){ clearTimeout(this.avisoTimer); this.avisoTimer = null; },
+  agendarAviso(){ this.pararAviso(); this.avisoTimer = setTimeout(() => this.removerAviso(), 5000); },
+  removerAviso(){ this.pararAviso(); document.querySelectorAll("#rf-cards .rf-card").forEach(c => c.remove()); },
+  /** se o aviso estiver na tela, acompanha o total (ou some quando não sobrar nada) */
+  atualizarAviso(){
+    const c = document.querySelector("#rf-cards .rf-card"); if(!c) return;
+    const t = this.totalPend(); if(!t){ this.removerAviso(); return; }
+    c.querySelector("[data-rf-txt]").textContent = this.textoAviso(t);
+  },
+  /** Lista de tudo que está esperando o usuário (abre pelo aviso flutuante ou pelo sino) */
+  listaRevisar(){
+    const n = this.notif || { avulsos: [], aprovacoes: [] }, t = this.totalPend();
+    if(!t){ toast("Nada para revisar no momento.", "info"); return; }
+    this.voltarLista = true;
+    const ap = (n.aprovacoes || []).map(a => `<div class="rf-nt"><div><span class="adm-tag rep">Aprovação</span> <strong>${this.pessoa(a.cod, a.nome)}</strong> · ${this.h(a.setor)}<div class="small-muted">Pedido por ${this.h(a.pornome)} · Motivo: ${this.h(a.motivo)}</div></div><div class="rf-nt-b"><button type="button" class="btn btn-primary btn-sm" data-lr-dec="${this.h(a.id)}">Analisar</button></div></div>`).join("");
+    const av = (n.avulsos || []).map(a => `<div class="rf-nt"><div><span class="adm-tag rep">Avulso</span> <strong>${this.pessoa(a.cod, a.nome)}</strong> · ${this.h(a.setor)}<div class="small-muted">Almoçou em ${this.br(a.data)} às ${this.h(a.hora)} sem estar na lista</div></div><div class="rf-nt-b"><button type="button" class="btn btn-primary btn-sm" data-lr-av="${this.h(a.data)}|${this.h(a.cod)}">Responder</button></div></div>`).join("");
+    UI.openModal(`<h3 style="margin-top:0;">A revisar no refeitório <span class="rf-badge">${t}</span></h3><div class="rf-lista">${ap}${av}</div><div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Fechar</button></div>`);
+    document.querySelectorAll(".rf-lista [data-lr-dec]").forEach(b => b.addEventListener("click", () => this.decidirModal(b.dataset.lrDec)));
+    document.querySelectorAll(".rf-lista [data-lr-av]").forEach(b => b.addEventListener("click", () => { const [d, c] = b.dataset.lrAv.split("|"); this.modalAvulsoResp(d, c); }));
+  },
 
   /* ------------------------------ Histórico de Aprovações ------------------------------ */
   apr: { dados: null, status: "", so: false, busca: "", erro: "", carregando: false },
@@ -786,7 +817,7 @@ const RefeitUI = {
       const its = D.itens.filter(i => i.data === d), a = adesao(d);
       return `<div class="panel rf-cd ${d === hj ? "hoje" : ""}"><div class="adm-head"><h3 class="adm-h" style="margin:0">${this.dsem(d).replace(/^./, c => c.toUpperCase())} <span class="small-muted">${this.br2(d)}</span></h3>
         <button type="button" class="btn btn-outline btn-sm" data-cd-novo="${d}">＋ Prato</button></div>
-        ${its.map(i => `<div class="rf-prato"><div><strong>${this.h(i.prato)}</strong>${i.acomp ? `<div class="small-muted">${this.h(i.acomp)}</div>` : ""}${i.obs ? `<div class="small-muted">${this.h(i.obs)}</div>` : ""}</div>
+        ${its.map(i => `<div class="rf-prato">${i.temFoto ? `<img class="rf-foto vazia" data-cd-foto="${this.h(i.id)}" alt="Foto do prato ${this.h(i.prato)}">` : ""}<div style="flex:1;min-width:0"><strong>${this.h(i.prato)}</strong>${i.acomp ? `<div class="small-muted">${this.h(i.acomp)}</div>` : ""}${i.obs ? `<div class="small-muted">${this.h(i.obs)}</div>` : ""}</div>
           <button type="button" class="rf-rem" data-cd-ed="${this.h(i.id)}">editar</button></div>`).join("") || `<p class="small-muted" style="margin:6px 0">Cardápio ainda não cadastrado.</p>`}
         ${a ? `<div class="rf-ad"><span class="adm-tag acc">${this.num(a.alm)} almoçaram</span> <span class="small-muted">de ${this.num(a.lib)} liberados + ${this.num(a.av)} avulsos · ${this.pct(a.alm, a.tot)}% de adesão</span></div>` : ""}</div>`;
     }).join("");
@@ -803,21 +834,58 @@ const RefeitUI = {
     document.getElementById("cd-ant").addEventListener("click", () => { C.semana = this.soma(C.semana, -7); this.desenharCar(); });
     document.getElementById("cd-prox").addEventListener("click", () => { C.semana = this.soma(C.semana, 7); this.desenharCar(); });
     document.getElementById("cd-hoje").addEventListener("click", () => { C.semana = this.segunda(hj); this.desenharCar(); });
+    box.querySelectorAll("[data-cd-foto]").forEach(im => this.fotoPrato(im.dataset.cdFoto).then(src => { if(!src || !im.isConnected) return; im.src = src; im.classList.remove("vazia"); im.addEventListener("click", () => UI.openModal(`<h3 style="margin-top:0;">${this.h(im.alt.replace("Foto do prato ", ""))}</h3><img class="rf-foto-grande" src="${src}" alt="${this.h(im.alt)}"><div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Fechar</button></div>`)); }));
     box.querySelectorAll("[data-cd-novo]").forEach(b => b.addEventListener("click", () => this.modalPrato(b.dataset.cdNovo, null)));
     box.querySelectorAll("[data-cd-ed]").forEach(b => b.addEventListener("click", () => this.modalPrato(null, D.itens.find(i => i.id === b.dataset.cdEd))));
+  },
+  /** Foto de um prato (busca uma vez e guarda em memória) */
+  async fotoPrato(id){
+    const F = this.car.fotos; if(F[id] !== undefined) return F[id];
+    const r = await this.chamar({ acao: "refeit_cardapio_foto", id });
+    F[id] = (r && r.ok && r.foto) ? r.foto : ""; return F[id];
+  },
+  /** Reduz a imagem escolhida até caber na célula da planilha (JPEG, ~45 mil caracteres) */
+  reduzirFoto(file){
+    return new Promise((ok, erro) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onerror = () => { URL.revokeObjectURL(url); erro(new Error("Não consegui abrir essa imagem. Use JPG, PNG ou WEBP.")); };
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        for(const lado of [720, 600, 480, 400, 320, 260]) for(const q of [0.72, 0.6, 0.5, 0.4]){
+          const k = Math.min(1, lado / Math.max(img.width, img.height)), c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+          const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+          const d = c.toDataURL("image/jpeg", q); if(d.length <= 45000){ ok(d); return; }
+        }
+        erro(new Error("Imagem complexa demais para reduzir. Escolha outra foto."));
+      };
+      img.src = url;
+    });
   },
   modalPrato(data, it){
     UI.openModal(`<h3 style="margin-top:0;">${it ? "Editar prato" : "Novo prato"}</h3>
       <div class="adm-form"><label>Data<input type="date" id="cp-data" value="${this.h(it ? it.data : data)}"></label>
         <label>Prato principal<input type="text" id="cp-prato" value="${this.h(it ? it.prato : "")}" autocomplete="off"></label>
         <label>Acompanhamentos<input type="text" id="cp-acomp" value="${this.h(it ? it.acomp : "")}" autocomplete="off"></label>
-        <label>Observação<input type="text" id="cp-obs" value="${this.h(it ? it.obs : "")}" autocomplete="off"></label></div><div id="cp-msg"></div>
+        <label>Observação<input type="text" id="cp-obs" value="${this.h(it ? it.obs : "")}" autocomplete="off"></label>
+        <div style="grid-column:1/-1"><span class="small-muted">Foto do prato (opcional, uma por prato)</span>
+          <div class="rf-fotobox" style="margin-top:6px"><img id="cp-prev" alt="Prévia da foto" style="display:none"><input type="file" id="cp-foto" accept="image/*"><button type="button" class="btn btn-outline btn-sm" id="cp-fx" style="display:none">Remover foto</button></div></div></div><div id="cp-msg"></div>
       <div class="adm-actions">${it ? `<button class="btn btn-outline" id="cp-del">Excluir</button>` : ""}<button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="cp-ok">Salvar</button></div>`);
+    let foto = null, tirar = false;   // null = mantém a atual
+    const prev = document.getElementById("cp-prev"), fx = document.getElementById("cp-fx"), inp = document.getElementById("cp-foto");
+    const mostrar = src => { prev.style.display = src ? "" : "none"; if(src) prev.src = src; fx.style.display = src ? "" : "none"; };
+    if(it && it.temFoto) this.fotoPrato(it.id).then(src => { if(src && foto === null && !tirar) mostrar(src); });
+    inp.addEventListener("change", async () => {
+      const f = inp.files && inp.files[0]; if(!f) return;
+      try{ foto = await this.reduzirFoto(f); tirar = false; mostrar(foto); document.getElementById("cp-msg").innerHTML = ""; }
+      catch(e){ inp.value = ""; document.getElementById("cp-msg").innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h(e.message)}</div>`; }
+    });
+    fx.addEventListener("click", () => { foto = null; tirar = true; inp.value = ""; mostrar(""); });
     const salvar = async (extra, btn, okMsg) => {
       const txt = btn.textContent; btn.disabled = true; btn.textContent = "Salvando…";
-      const r = await this.chamar(Object.assign({ acao: "refeit_cardapio_salvar", id: it ? it.id : "", data: document.getElementById("cp-data").value, prato: document.getElementById("cp-prato").value, acomp: document.getElementById("cp-acomp").value, obs: document.getElementById("cp-obs").value }, extra));
+      const r = await this.chamar(Object.assign({ acao: "refeit_cardapio_salvar", id: it ? it.id : "", data: document.getElementById("cp-data").value, prato: document.getElementById("cp-prato").value, acomp: document.getElementById("cp-acomp").value, obs: document.getElementById("cp-obs").value }, foto ? { foto } : {}, tirar ? { removerFoto: true } : {}, extra));
       if(!r || !r.ok){ btn.disabled = false; btn.textContent = txt; document.getElementById("cp-msg").innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h((r && r.erro) || "Não foi possível salvar.")}</div>`; return; }
-      UI.closeModal(); toast(okMsg, "success"); this.carregarCar(true);
+      UI.closeModal(); toast(okMsg, "success"); this.car.fotos = {}; this.carregarCar(true);
     };
     document.getElementById("cp-ok").addEventListener("click", e => salvar({}, e.currentTarget, "Cardápio salvo."));
     const del = document.getElementById("cp-del"); if(del) del.addEventListener("click", e => salvar({ excluir: true }, e.currentTarget, "Prato excluído."));

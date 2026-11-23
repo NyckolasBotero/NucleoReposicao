@@ -1116,6 +1116,9 @@ body.sb-collapsed #sb-versao{ display:none; }
 #rf-cards{ position:fixed; right:16px; bottom:16px; z-index:2500; display:flex; flex-direction:column; gap:10px; max-width:min(360px, calc(100vw - 32px)); }
 .rf-card{ position:relative; background:var(--white, #fff); border:1px solid var(--gray-200); border-left:4px solid var(--orange); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px 32px 12px 14px; animation:rf-card-in var(--duration-fast) var(--ease-standard); }
 .rf-card-t{ font-weight:700; margin-bottom:4px; }
+.rf-aviso{ cursor:pointer; }
+.rf-aviso:hover, .rf-aviso:focus-visible{ box-shadow:var(--shadow-lg, var(--shadow)); outline:none; }
+.rf-lista{ max-height:55vh; overflow:auto; }
 .rf-card-b{ margin-top:8px; display:flex; gap:8px; }
 .rf-card-x{ position:absolute; top:6px; right:8px; background:none; border:0; font-size:20px; line-height:1; cursor:pointer; color:var(--gray-500); }
 .rf-card-x:focus-visible{ outline:2px solid var(--focus, var(--blue-med)); }
@@ -1131,5 +1134,13 @@ body.sb-collapsed #sb-versao{ display:none; }
 .rf-cd.hoje{ border-top:3px solid var(--orange); }
 .rf-prato{ display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-top:1px solid var(--gray-100); }
 .rf-ad{ margin-top:8px; font-size:12.5px; }
+#sl-itens input{ width:100%; padding:9px 12px; border:1px solid var(--gray-200); border-radius:9px; background:var(--white); color:var(--ink); font:inherit; font-size:14px; transition:border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+#sl-itens input:focus{ outline:none; box-shadow:var(--focus); border-color:var(--blue-med); }
+.rf-foto{ width:56px; height:56px; object-fit:cover; border-radius:10px; border:1px solid var(--gray-200); background:var(--gray-100); cursor:zoom-in; flex:none; }
+.rf-foto.vazia{ cursor:default; animation:none; }
+.rf-foto-grande{ display:block; max-width:100%; max-height:70vh; margin:0 auto; border-radius:12px; }
+.rf-fotobox{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.rf-fotobox img{ width:88px; height:88px; object-fit:cover; border-radius:12px; border:1px solid var(--gray-200); }
+.rf-fotobox input[type=file]{ max-width:100%; padding:8px; border:1px solid var(--gray-200); border-radius:9px; background:var(--white); color:var(--ink); font-size:13px; }
 @media (max-width:640px){ .rf-tab{ padding:10px 10px; font-size:13px; } .rf-dia{ grid-template-columns:56px 1fr auto; } }
 @media (prefers-reduced-motion:reduce){ .rf-row.flash{ animation:none; } }
