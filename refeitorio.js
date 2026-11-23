@@ -500,28 +500,63 @@ const RefeitUI = {
     corpo.innerHTML = `<div class="panel"><h2 class="adm-h">Solicitar Inclusão na lista fixa</h2>
       <p class="small-muted">Para incluir um colaborador de forma definitiva na lista do refeitório (exceções ou fora da janela padrão). ${this.perfil.aprovador ? "Como você é aprovador, a inclusão é aceita na hora." : "A solicitação vai para os aprovadores, que aceitam ou negam."}</p>
       <div class="adm-form">
-        <label>Código<input type="text" inputmode="numeric" id="sl-cod" autocomplete="off" value="${this.h(st.cod || "")}"></label>
-        <label>Nome<input type="text" id="sl-nome" autocomplete="off" value="${this.h(st.nome || "")}"></label>
         <label>Setor<select id="sl-setor">${unico ? "" : `<option value="">Selecione o setor</option>`}${set.map(s => `<option value="${this.h(s)}" ${st.setor === s ? "selected" : ""}>${this.h(s)}</option>`).join("")}</select></label>
-        <label style="grid-column:1/-1">Motivo da inclusão<textarea id="sl-mot" rows="2" placeholder="Obrigatório">${this.h(st.mot || "")}</textarea></label>
-      </div><div id="sl-msg"></div>
-      <div class="adm-actions"><button class="btn btn-primary" id="sl-ok">Enviar solicitação</button></div></div>
+        <label style="grid-column:1/-1">Motivo da inclusão (vale para todos desta solicitação)<textarea id="sl-mot" rows="2" placeholder="Obrigatório">${this.h(st.mot || "")}</textarea></label>
+      </div>
+      <h3 class="adm-h" style="margin:14px 0 6px">Colaboradores</h3>
+      <div class="table-wrap"><table class="adm-table"><thead><tr><th style="width:150px">Código</th><th>Nome</th><th style="width:90px"></th></tr></thead><tbody id="sl-itens"></tbody></table></div>
+      <div class="panel-actions" style="margin-top:8px;"><button type="button" class="btn btn-outline btn-sm" id="sl-add">＋ Adicionar colaborador</button><button type="button" class="btn btn-outline btn-sm" id="sl-colar-btn">Colar lista</button></div>
+      <div id="sl-colar-box" style="display:none;margin-top:8px;"><div class="filter-group"><label for="sl-colar">Um por linha: código e nome (pode copiar do Excel)</label><textarea id="sl-colar" rows="5" placeholder="10003993 Maria da Silva"></textarea></div>
+        <div class="panel-actions" style="margin-top:6px;"><button type="button" class="btn btn-primary btn-sm" id="sl-colar-ok">Adicionar à lista</button></div></div>
+      <div id="sl-msg"></div>
+      <div class="adm-actions"><button class="btn btn-primary" id="sl-ok">Enviar solicitação</button><span class="small-muted" id="sl-cont"></span></div></div>
       <div class="panel"><h3 class="adm-h">Minhas solicitações</h3><div class="table-wrap"><table class="adm-table"><thead><tr><th>Data</th><th>Colaborador</th><th>Setor</th><th>Motivo</th><th>Status</th></tr></thead><tbody>
         ${this.minhas.map(x => `<tr><td>${this.br((x.criado || "").slice(0, 10))}</td><td>${this.pessoa(x.cod, x.nome)}</td><td>${this.h(x.setor)}</td><td style="white-space:normal">${this.h(x.motivo)}</td>
           <td><span class="adm-tag ${x.status === "Aceita" ? "acc" : x.status === "Negada" ? "err" : "rep"}">${this.h(x.status)}</span></td></tr>`).join("") || `<tr><td colspan="5" class="small-muted">Você ainda não fez nenhuma solicitação.</td></tr>`}
       </tbody></table></div></div>`;
     this.carregarPessoas();
-    const cd = document.getElementById("sl-cod"), nm = document.getElementById("sl-nome");
-    cd.addEventListener("change", () => { const n = this.pessoas && this.pessoas[cd.value.replace(/\D/g, "")]; if(n && !nm.value) nm.value = n; });
+    const tb = document.getElementById("sl-itens");
+    const cont = () => { const n = Array.from(tb.querySelectorAll("tr")).filter(r => r.querySelector(".sl-c").value.trim() || r.querySelector(".sl-n").value.trim()).length; document.getElementById("sl-cont").textContent = n ? ` ${n} colaborador(es)` : ""; };
+    const linha = (cod, nome, erro) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td><input type="text" inputmode="numeric" class="sl-c" autocomplete="off" aria-label="Código" value="${this.h(cod || "")}"></td><td><input type="text" class="sl-n" autocomplete="off" aria-label="Nome" value="${this.h(nome || "")}">${erro ? `<div class="small-muted" style="color:var(--red)">${this.h(erro)}</div>` : ""}</td><td><button type="button" class="rf-rem sl-x">tirar</button></td>`;
+      const c = tr.querySelector(".sl-c"), n = tr.querySelector(".sl-n");
+      c.addEventListener("change", () => { const p = this.pessoas && this.pessoas[c.value.replace(/\D/g, "")]; if(p && !n.value) n.value = p; cont(); });
+      n.addEventListener("input", cont); c.addEventListener("input", cont);
+      n.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); if(tr === tb.lastElementChild){ const novo = linha(); novo.querySelector(".sl-c").focus(); } else tr.nextElementSibling.querySelector(".sl-c").focus(); } });
+      tr.querySelector(".sl-x").addEventListener("click", () => { if(tb.children.length > 1) tr.remove(); else { c.value = ""; n.value = ""; } cont(); });
+      tb.appendChild(tr); return tr;
+    };
+    linha(); linha(); linha();
+    document.getElementById("sl-add").addEventListener("click", () => linha().querySelector(".sl-c").focus());
+    document.getElementById("sl-colar-btn").addEventListener("click", () => { const b = document.getElementById("sl-colar-box"); b.style.display = b.style.display === "none" ? "" : "none"; });
+    document.getElementById("sl-colar-ok").addEventListener("click", () => {
+      const ta = document.getElementById("sl-colar"), novos = [];
+      ta.value.split(/\r?\n/).forEach(l => { const m = l.trim().match(/^(\d+)[\s;,\t-]*(.*)$/); if(m) novos.push([m[1], (m[2] || "").trim() || (this.pessoas && this.pessoas[m[1]]) || ""]); });
+      if(!novos.length){ toast("Não encontrei linhas com código no começo.", "error"); return; }
+      Array.from(tb.querySelectorAll("tr")).filter(r => !r.querySelector(".sl-c").value.trim() && !r.querySelector(".sl-n").value.trim()).forEach(r => r.remove());
+      novos.forEach(([c, n]) => linha(c, n)); ta.value = ""; document.getElementById("sl-colar-box").style.display = "none"; cont();
+      toast(`${novos.length} colaborador(es) adicionados à lista.`, "success");
+    });
     document.getElementById("sl-ok").addEventListener("click", async () => {
-      const f = { cod: cd.value.replace(/\D/g, ""), nome: nm.value.trim(), setor: document.getElementById("sl-setor").value, motivo: document.getElementById("sl-mot").value.trim() }, msg = document.getElementById("sl-msg");
-      if(!f.cod || !f.nome || !f.setor || !f.motivo){ msg.innerHTML = `<div class="error-box" style="margin-top:12px;">Preencha código, nome, setor e motivo.</div>`; return; }
+      const msg = document.getElementById("sl-msg"), setor = document.getElementById("sl-setor").value, motivo = document.getElementById("sl-mot").value.trim();
+      const itens = Array.from(tb.querySelectorAll("tr")).map(r => ({ cod: r.querySelector(".sl-c").value.replace(/\D/g, ""), nome: r.querySelector(".sl-n").value.trim() })).filter(i => i.cod || i.nome);
+      const erro = !setor ? "Escolha o setor." : !motivo ? "Informe o motivo da inclusão." : !itens.length ? "Informe ao menos um colaborador." : itens.some(i => !i.cod || !i.nome) ? "Preencha código e nome de todos os colaboradores (ou tire a linha)." : "";
+      if(erro){ msg.innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h(erro)}</div>`; return; }
       const btn = document.getElementById("sl-ok"); btn.disabled = true; btn.textContent = "Enviando…";
-      const r = await this.chamar(Object.assign({ acao: "refeit_solicitar" }, f));
+      const r = await this.chamar({ acao: "refeit_solicitar", setor, motivo, itens });
       btn.disabled = false; btn.textContent = "Enviar solicitação";
       if(!r || !r.ok){ msg.innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h((r && r.erro) || "Não foi possível enviar.")}</div>`; return; }
-      toast(r.status === "Aceita" ? "Colaborador incluído na lista fixa." : "Solicitação enviada aos aprovadores.", "success");
-      this.sol = null; await this.sync(true, true); this.desenhar();
+      const res = r.resultados || [], bons = res.filter(x => x.ok), ruins = res.filter(x => !x.ok);
+      await this.sync(true, true);
+      if(!ruins.length){
+        toast(bons.every(x => x.status === "Aceita") ? `${bons.length} colaborador(es) incluído(s) na lista fixa.` : `${bons.length} solicitação(ões) enviada(s) aos aprovadores.`, "success");
+        this.sol = null; this.desenhar(); return;
+      }
+      toast(`${bons.length} enviada(s); ${ruins.length} com problema. Corrija as linhas abaixo.`, "error");
+      this.sol = { setor, mot: motivo }; this.desenhar();                      // redesenha só com as que falharam
+      const tb2 = document.getElementById("sl-itens"); if(tb2){ tb2.innerHTML = ""; document.getElementById("sl-setor").value = setor; document.getElementById("sl-mot").value = motivo;
+        ruins.forEach(x => { const tr = document.createElement("tr"); tr.innerHTML = `<td><input type="text" inputmode="numeric" class="sl-c" value="${this.h(x.cod)}"></td><td><input type="text" class="sl-n" value="${this.h(x.nome)}"><div class="small-muted" style="color:var(--red)">${this.h(x.erro)}</div></td><td><button type="button" class="rf-rem sl-x">tirar</button></td>`; tr.querySelector(".sl-x").addEventListener("click", () => tr.remove()); tb2.appendChild(tr); }); }
     });
   },
 
