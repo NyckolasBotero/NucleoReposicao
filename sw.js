@@ -60,7 +60,9 @@ self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil((async () => {
     const lista = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of lista) { if ('focus' in c) { await c.focus(); c.postMessage({ tipo: 'abrir-alertas' }); return; } }
-    await self.clients.openWindow((e.notification.data && e.notification.data.url) || './');
+    const url = (e.notification.data && e.notification.data.url) || './';
+    const ir = (url.match(/[?&]ir=([a-z]+)/) || [])[1];
+    for (const c of lista) { if ('focus' in c) { await c.focus(); c.postMessage(ir ? { tipo: 'ir', ir: ir } : { tipo: 'abrir-alertas' }); return; } }
+    await self.clients.openWindow(url);
   })());
 });

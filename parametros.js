@@ -156,14 +156,18 @@ const ParametrosUI = {
   },
 
   /* ----------------------------- Refeitório: aprovadores ----------------------------- */
-  ref: { aprov:null, usuarios:[], erro:"", carregando:false },
+  ref: { aprov:null, usuarios:[], erro:"", carregando:false, lem:null },
   async desenharRef(el){
     const st = this.ref, h = this.h.bind(this);
     if(!Regras.admin){ el.innerHTML = `<div class="panel"><h2 class="adm-h">Refeitório</h2><div class="hint-box">Só o administrador altera os aprovadores do refeitório.</div></div>`; return; }
     if(!st.aprov && !st.carregando){
       el.innerHTML = `<div class="panel"><p class="small-muted">Carregando aprovadores…</p></div>`;
       st.carregando = true;
-      try{ const r = await Api.call({ acao:"refeit_aprov_ler" }); if(r && r.ok){ st.aprov = r.aprovadores; st.usuarios = r.usuarios; st.erro = ""; } else st.erro = (r && r.erro) || "Não foi possível carregar."; }
+      try{
+        const [r, lm] = await Promise.all([Api.call({ acao:"refeit_aprov_ler" }), Api.call({ acao:"refeit_lembrete_ler" }).catch(()=>null)]);
+        if(r && r.ok){ st.aprov = r.aprovadores; st.usuarios = r.usuarios; st.erro = ""; } else st.erro = (r && r.erro) || "Não foi possível carregar.";
+        if(lm && lm.ok){ st.lem = lm.lembrete; st.gestores = lm.usuarios; }
+      }
       catch(e){ st.erro = e.message; }
       st.carregando = false;
     }
@@ -178,7 +182,9 @@ const ParametrosUI = {
         <datalist id="rf-pm-lista">${st.usuarios.map(u=>`<option value="${h(u.matricula)}">${h(u.nome)}</option>`).join("")}</datalist>
         <button class="btn btn-outline btn-sm" id="rf-pm-add">＋ Adicionar</button></div>
       <div class="table-wrap"><table class="adm-table"><thead><tr><th>Código</th><th>Nome</th><th></th></tr></thead><tbody>
-        ${st.aprov.map(a=>`<tr><td><strong>${h(a.mat)}</strong></td><td>${h(a.nome||nomeDe(a.mat)||"—")}</td><td><button class="btn btn-outline btn-sm" data-rf-del="${h(a.mat)}">Remover</button></td></tr>`).join("") || `<tr><td colspan="3" class="small-muted">Nenhum aprovador cadastrado: as solicitações ficarão sem destinatário.</td></tr>`}</tbody></table></div></div>`;
+        ${st.aprov.map(a=>`<tr><td><strong>${h(a.mat)}</strong></td><td>${h(a.nome||nomeDe(a.mat)||"—")}</td><td><button class="btn btn-outline btn-sm" data-rf-del="${h(a.mat)}">Remover</button></td></tr>`).join("") || `<tr><td colspan="3" class="small-muted">Nenhum aprovador cadastrado: as solicitações ficarão sem destinatário.</td></tr>`}</tbody></table></div></div>
+      <div class="panel" id="rf-lem"></div>`;
+    this.desenharLembrete(document.getElementById("rf-lem"));
     document.getElementById("rf-pm-add").addEventListener("click", ()=>{
       const inp = document.getElementById("rf-pm-mat"), m = inp.value.replace(/\D/g,""); if(!m){ inp.focus(); return; }
       if(!st.aprov.some(a=>a.mat===m)) st.aprov.push({ mat:m, nome:nomeDe(m) });
@@ -190,6 +196,39 @@ const ParametrosUI = {
       let r; try{ r = await Api.call({ acao:"refeit_aprov_salvar", aprovadores: st.aprov.map(a=>a.mat) }); }catch(x){ r = { ok:false, erro:x.message }; }
       b.disabled = false; b.textContent = "Salvar aprovadores";
       if(r && r.ok) toast("Aprovadores salvos. As próximas solicitações já vão para eles.", "success"); else toast((r && r.erro) || "Não foi possível salvar.", "error");
+    });
+  },
+
+  desenharLembrete(box){
+    const l = this.ref.lem, h = this.h.bind(this), gestores = this.ref.gestores || [];
+    if(!l){ box.innerHTML = `<h2 class="adm-h">Lembrete para revisar a lista</h2><div class="hint-box">Atualize o Apps Script com a versão mais recente para configurar o lembrete.</div>`; return; }
+    const DIAS = [[1,"Seg"],[2,"Ter"],[3,"Qua"],[4,"Qui"],[5,"Sex"],[6,"Sáb"],[0,"Dom"]];
+    box.innerHTML = `<div class="adm-head"><h2 class="adm-h">Lembrete para revisar a lista do refeitório</h2>
+        <div class="panel-actions"><button class="btn btn-outline btn-sm" id="lm-teste">Enviar teste para mim</button><button class="btn btn-primary btn-sm" id="lm-salvar">Salvar lembrete</button></div></div>
+      <p class="small-muted">Notificação no celular (aplicativo instalado com as notificações ativadas) para os gestores escolhidos, no horário definido. Ao tocar nela, abre direto a pré-liberação de hoje, onde dá para adicionar pessoas ao dia, solicitar inclusão permanente ou excluir alguém da lista.</p>
+      <div class="panel-actions" style="align-items:flex-end;flex-wrap:wrap;gap:14px;">
+        <div class="filter-group"><label>Lembrete ligado?</label><div class="toggle-group" id="lm-ativo"><button type="button" data-v="1" class="${l.ativo?"active":""}">Sim</button><button type="button" data-v="0" class="${l.ativo?"":"active"}">Não</button></div></div>
+        <div class="filter-group"><label for="lm-hora">Horário do aviso</label><input type="time" id="lm-hora" value="${h(l.hora.length===4?"0"+l.hora:l.hora)}"></div>
+        <div class="filter-group"><label>Dias da semana</label><div class="adm-checks">${DIAS.map(([n,r])=>`<label class="adm-chk"><input type="checkbox" class="lm-dia" value="${n}" ${l.dias.includes(n)?"checked":""}> ${r}</label>`).join("")}</div></div>
+      </div>
+      <div class="filter-group" style="margin-top:12px;"><label for="lm-texto">Mensagem</label><input type="text" id="lm-texto" maxlength="160" value="${h(l.texto)}"></div>
+      <div class="filter-group" style="margin-top:12px;"><label>Quem recebe</label><div class="toggle-group" id="lm-todos" style="width:fit-content"><button type="button" data-v="1" class="${l.todos?"active":""}">Todos os encarregados</button><button type="button" data-v="0" class="${l.todos?"":"active"}">Escolher gestores</button></div></div>
+      <div id="lm-lista" class="adm-checks" style="margin-top:8px;${l.todos?"display:none":""}">${gestores.map(g=>`<label class="adm-chk"><input type="checkbox" class="lm-mat" value="${h(g.matricula)}" ${l.mats.includes(g.matricula)?"checked":""}> ${h(g.matricula)} - ${h(g.nome||"")}${g.encarregado?"":` <span class="small-muted">(sem perfil de encarregado)</span>`}</label>`).join("")}</div>
+      <div id="lm-msg"></div>`;
+    const tg = id=>{ const g = box.querySelector("#"+id); g.querySelectorAll("button").forEach(b=> b.addEventListener("click", ()=>{ g.querySelectorAll("button").forEach(x=>x.classList.remove("active")); b.classList.add("active"); if(id==="lm-todos") box.querySelector("#lm-lista").style.display = b.dataset.v==="1" ? "none" : ""; })); };
+    tg("lm-ativo"); tg("lm-todos");
+    const ler = ()=>({ ativo: box.querySelector("#lm-ativo .active").dataset.v==="1", hora: box.querySelector("#lm-hora").value, dias: Array.from(box.querySelectorAll(".lm-dia:checked")).map(c=>Number(c.value)),
+      texto: box.querySelector("#lm-texto").value.trim(), todos: box.querySelector("#lm-todos .active").dataset.v==="1", mats: Array.from(box.querySelectorAll(".lm-mat:checked")).map(c=>c.value) });
+    box.querySelector("#lm-salvar").addEventListener("click", async e=>{
+      const b = e.currentTarget; b.disabled = true; b.textContent = "Salvando…";
+      let r; try{ r = await Api.call({ acao:"refeit_lembrete_salvar", lembrete: ler() }); }catch(x){ r = { ok:false, erro:x.message }; }
+      b.disabled = false; b.textContent = "Salvar lembrete";
+      if(r && r.ok){ this.ref.lem = r.lembrete; toast(r.lembrete.ativo ? `Lembrete ligado para ${r.lembrete.hora}.` : "Lembrete salvo (desligado).", "success"); } else toast((r && r.erro) || "Não foi possível salvar.", "error");
+    });
+    box.querySelector("#lm-teste").addEventListener("click", async e=>{
+      const b = e.currentTarget; b.disabled = true;
+      let r; try{ r = await Api.call({ acao:"refeit_lembrete_teste" }); }catch(x){ r = { ok:false, erro:x.message }; }
+      b.disabled = false; if(r && r.ok) toast("Teste enviado ao seu aparelho.", "success"); else toast((r && r.erro) || "Não foi possível enviar o teste.", "error");
     });
   },
 

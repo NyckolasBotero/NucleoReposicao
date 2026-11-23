@@ -4,9 +4,15 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.23.0";
+const APP_VERSAO = "2.24.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.24.0", data:"2026-11-23", titulo:"Refeitório: lembrete no celular para revisar a lista", itens:[
+    "Parâmetros > Refeitório: lembrete push (\"Quase na hora do almoço, gostaria de revisar sua lista?\") com horário personalizado, dias da semana, mensagem editável e destinatários (todos os encarregados ou gestores escolhidos), mais botão para enviar um teste.",
+    "Ao tocar na notificação, o aplicativo abre direto a pré-liberação de hoje.",
+    "Pré-liberação: ＋ Adicionar pessoa ao dia (hoje, próximo dia útil ou data específica, sem entrar na lista fixa), Solicitar inclusão permanente e excluir da lista fixa ou só do dia.",
+    "Atenção: reimplantar o Apps Script e ligar o agendador (rodar ativarAgendador uma vez, se ainda não estiver ligado). O lembrete roda no mesmo gatilho de 5 em 5 minutos dos alertas."
+  ]},
   { v:"2.23.0", data:"2026-11-23", titulo:"Refeitório Interno: controle de entradas digital", itens:[
     "Novo módulo no lugar das listas em papel: Lançamentos > Liberações Refeitório e Gestão > Histórico Almoço, com abas Liberações Refeitório, Solicitar Inclusão, Histórico e Indicadores e Cardápio e Adesão (cada pessoa vê só as abas do seu perfil).",
     "Portaria (Bravo): lista do dia de todos os setores com busca instantânea por código ou nome. A presença marca na hora (horário e data automáticos) e sincroniza em segundo plano, sem telas de carregamento. Digitar o código e teclar Enter registra a presença.",
