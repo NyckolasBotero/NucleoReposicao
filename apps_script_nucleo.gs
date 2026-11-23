@@ -27,8 +27,8 @@ const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
 const PERM_RUAS = ['Gestão', 'Atribuição Ruas'];
-const PERM_HIST_REF = ['Gestão', 'Histórico Almoço'];
-const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias', 'Certificados', 'Liberações Refeitório'];
+const PERM_HIST_REF = ['Gestão', 'Controle Refeitório'];
+const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias', 'Certificados'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
 const ABA_ADVERTENCIAS = 'ADVERTÊNCIAS';
@@ -123,6 +123,8 @@ function doPost(e) {
       if (d.acao === 'ruas_historico') { exigir(s, PERM_RUAS); return resposta(ruasHistorico(d)); }
       if (d.acao === 'ruas_estado_em') { exigir(s, PERM_RUAS); return resposta(ruasEstadoEm(d)); }
       if (d.acao === 'refeit_sync') return resposta(refeitSync(d, s));
+      if (d.acao === 'refeit_notif') return resposta(refeitNotif(s));
+      if (d.acao === 'refeit_aprovacoes') return resposta(refeitAprovacoes(s));
       if (d.acao === 'refeit_ops') return resposta(refeitOps(d, s));
       if (d.acao === 'refeit_lista_salvar') return resposta(refeitListaSalvar(d, s));
       if (d.acao === 'refeit_fixo_status') return resposta(refeitFixoStatus(d, s));
@@ -157,7 +159,7 @@ const LEITURAS_SEM_TRAVA = {
   admin_listar: 1, admin_historico: 1, alertas_ler: 1, param_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1,
-  refeit_sync: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_perfis: 1, refeit_aprov_ler: 1, refeit_lembrete_ler: 1
+  refeit_sync: 1, refeit_notif: 1, refeit_aprovacoes: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_perfis: 1, refeit_aprov_ler: 1, refeit_lembrete_ler: 1
 };
 
 function resposta(obj) {
@@ -222,6 +224,16 @@ function lerUsuarios() {
     const kh = normalizar(PERM_HIST_REF[0]) + '|' + normalizar(PERM_HIST_REF[1]);
     if (!u._vistos[kh]) { u._vistos[kh] = true; u.perms.push({ aba: PERM_HIST_REF[0], sub: PERM_HIST_REF[1] }); }
   });
+  // Controle Refeitório: quem tem perfil do refeitório (ou é aprovador) recebe a tela automaticamente
+  try {
+    const rc = refCfg(), kh2 = normalizar(PERM_HIST_REF[0]) + '|' + normalizar(PERM_HIST_REF[1]);
+    const mats = Object.keys(rc.usuarios).concat(rc.aprovadores);
+    mats.forEach(function (m) {
+      const u = mapa[m]; if (!u) return;
+      const ant = [['Lançamentos', 'Liberações Refeitório'], ['Gestão', 'Histórico Almoço']].some(function (a) { return u._vistos[normalizar(a[0]) + '|' + normalizar(a[1])]; });
+      if (!u._vistos[kh2]) { u._vistos[kh2] = true; u.perms.push({ aba: PERM_HIST_REF[0], sub: PERM_HIST_REF[1] }); }
+    });
+  } catch (e) { /* sem configuração do refeitório ainda */ }
   return { T: T, usuarios: mapa };
 }
 
@@ -2585,7 +2597,7 @@ const ABA_REF_CARD = 'REFEIT_CARDAPIO';
 const REF_FIXOS_CAB = ['Codigo', 'Nome', 'Setor', 'IncluidoEm', 'IncluidoPor', 'Ativo'];
 const REF_LIB_CAB = ['Data', 'Codigo', 'Nome', 'Setor', 'Tipo', 'LiberadoPor', 'LiberadoEm', 'Presenca', 'HoraRegistro', 'DataRegistro', 'RegistradoPor', 'AutorizouAvulso', 'AutorizadoPor', 'AutorizadoEm', 'InclusaoSolicitada', 'Status'];
 const REF_LISTAS_CAB = ['Data', 'Setor', 'EnviadoEm', 'EnviadoPor', 'Total'];
-const REF_SOL_CAB = ['Id', 'CriadoEm', 'Codigo', 'Nome', 'Setor', 'Motivo', 'SolicitadoPor', 'SolicitadoNome', 'Origem', 'Status', 'DecididoPor', 'DecididoEm'];
+const REF_SOL_CAB = ['Id', 'CriadoEm', 'Codigo', 'Nome', 'Setor', 'Motivo', 'SolicitadoPor', 'SolicitadoNome', 'Origem', 'Status', 'DecididoPor', 'DecididoEm', 'MotivoDecisao', 'DecididoNome'];
 const REF_CARD_CAB = ['Id', 'Data', 'Prato', 'Acompanhamentos', 'Observacao', 'AtualizadoPor'];
 const REF_STATUS_OK = 'Almoçou no Refeitório STA';
 const REF_PAPEIS = ['Portaria', 'Encarregado', 'Cozinha'];
@@ -2679,9 +2691,10 @@ function refFixos(soAtivos) {
 }
 function refSolicitacoes() {
   const sh = abaComCabecalho(ABA_REF_SOL, REF_SOL_CAB), ult = sh.getLastRow(), out = [];
+  if (sh.getLastColumn() < REF_SOL_CAB.length) sh.getRange(1, 1, 1, REF_SOL_CAB.length).setValues([REF_SOL_CAB]).setFontWeight('bold');   // planilha criada antes das colunas de decisão
   if (ult < 2) return { sh: sh, itens: out };
   sh.getRange(2, 1, ult - 1, REF_SOL_CAB.length).getDisplayValues().forEach(function (l, i) {
-    out.push({ linha: i + 2, id: l[0], criado: l[1], cod: l[2], nome: l[3], setor: l[4], motivo: l[5], por: l[6], pornome: l[7], origem: l[8], status: l[9], decpor: l[10], decem: l[11] });
+    out.push({ linha: i + 2, id: l[0], criado: l[1], cod: l[2], nome: l[3], setor: l[4], motivo: l[5], por: l[6], pornome: l[7], origem: l[8], status: l[9], decpor: l[10], decem: l[11], decmot: l[12], decnome: l[13] });
   });
   return { sh: sh, itens: out };
 }
@@ -2706,18 +2719,38 @@ function refeitSync(d, s) {
   // fixos dos setores do encarregado
   if (refTem(p, 'Encarregado')) out.fixos = refFixos(true).itens.filter(function (f) { return refSetorOk(p, f.setor); }).map(function (f) { return { cod: f.cod, nome: f.nome, setor: f.setor }; });
   // notificações
-  out.notif = { avulsos: [], aprovacoes: [] };
-  if (refTem(p, 'Encarregado')) {
-    refLerLib(refSomaDias(dia, -7), dia).rows.map(refObj).forEach(function (r) {
-      if (r.tipo === 'Avulso' && !r.aut && refSetorOk(p, r.setor)) out.notif.avulsos.push({ data: r.data, cod: r.cod, nome: r.nome, setor: r.setor, hora: r.hora });
-    });
-  }
+  out.notif = refNotif(p, dia);
   if (p.aprovador || refTem(p, 'Encarregado')) {
     const sol = refSolicitacoes().itens;
-    if (p.aprovador) out.notif.aprovacoes = sol.filter(function (x) { return x.status === 'Pendente'; }).map(function (x) { return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, pornome: x.pornome, origem: x.origem }; });
-    out.minhas = sol.filter(function (x) { return x.por === s.matricula; }).slice(-30).reverse().map(function (x) { return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, status: x.status, origem: x.origem, decem: x.decem }; });
+    out.minhas = sol.filter(function (x) { return x.por === s.matricula; }).slice(-30).reverse().map(function (x) { return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, status: x.status, origem: x.origem, decem: x.decem, decmot: x.decmot, decnome: x.decnome }; });
   }
   return out;
+}
+
+/** Pendências do usuário: avulsos a responder (encarregado) e solicitações a decidir (aprovador). */
+function refNotif(p, dia) {
+  const n = { avulsos: [], aprovacoes: [] };
+  if (refTem(p, 'Encarregado')) {
+    refLerLib(refSomaDias(dia, -7), dia).rows.map(refObj).forEach(function (r) {
+      if (r.tipo === 'Avulso' && !r.aut && refSetorOk(p, r.setor)) n.avulsos.push({ data: r.data, cod: r.cod, nome: r.nome, setor: r.setor, hora: r.hora });
+    });
+  }
+  if (p.aprovador) n.aprovacoes = refSolicitacoes().itens.filter(function (x) { return x.status === 'Pendente'; }).map(function (x) { return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, pornome: x.pornome, origem: x.origem }; });
+  return n;
+}
+/** Consulta leve (o site faz a cada ~20 s para avisar na hora, sem recarregar). */
+function refeitNotif(s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  return { ok: true, agora: refAgora(), notif: refNotif(p, hoje()) };
+}
+/** Guia Histórico de Aprovações: pendentes e já decididas, com data/hora, decisor e motivos. */
+function refeitAprovacoes(s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(p.aprovador || p.admin, 'Só os aprovadores veem o histórico de aprovações.');
+  const itens = refSolicitacoes().itens.slice(-600).reverse().map(function (x) {
+    return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, pornome: x.pornome, origem: x.origem, status: x.status, decpor: x.decpor, decnome: x.decnome, decem: x.decem, decmot: x.decmot };
+  });
+  return { ok: true, matricula: s.matricula, itens: itens };
 }
 
 /* ---------- Portaria: presença e avulsos (lote, pensado para a interface otimista) ---------- */
@@ -2822,9 +2855,9 @@ function refCriarSolicitacao(cfg, p, s, d, origem) {
   const S = refSolicitacoes();
   if (S.itens.some(function (x) { return x.cod === cod && normalizar(x.setor) === normalizar(setor) && x.status === 'Pendente'; })) throw new Error('Já existe uma solicitação pendente para ' + cod + ' neste setor.');
   const auto = p.aprovador, agora = refAgora(), id = Utilities.getUuid().slice(0, 8);
-  refAnexar(S.sh, [[id, agora, cod, nome, setor, motivo, s.matricula, s.nome || s.matricula, origem, auto ? 'Aceita' : 'Pendente', auto ? s.matricula : '', auto ? agora : '']]);
+  refAnexar(S.sh, [[id, agora, cod, nome, setor, motivo, s.matricula, s.nome || s.matricula, origem, auto ? 'Aceita' : 'Pendente', auto ? s.matricula : '', auto ? agora : '', auto ? 'Aprovada na hora: quem solicitou também é aprovador' : '', auto ? (s.nome || s.matricula) : '']]);
   if (auto) refIncluirFixo(cod, nome, setor, s);
-  else if (cfg.aprovadores.length) pushEnviar(cfg.aprovadores, 'Solicitação de inclusão no refeitório', (s.nome || s.matricula) + ' pede incluir ' + cod + ' - ' + nome + ' (' + setor + ').', 'refeit_aprov');
+  else if (cfg.aprovadores.length) pushEnviar(cfg.aprovadores, 'Solicitação de inclusão no refeitório', (s.nome || s.matricula) + ' pede incluir ' + cod + ' - ' + nome + ' (' + setor + '). Toque para aprovar ou recusar.', 'refeit_aprov', 'refaprov');
   registrarLog(s, 'Refeitório (solicitação)', cod + ' · ' + setor + ' · ' + (auto ? 'aceita direto' : 'pendente'));
   return auto ? 'Aceita' : 'Pendente';
 }
@@ -2855,14 +2888,15 @@ function refeitSolicitar(d, s) {
 function refeitDecidir(d, s) {
   const cfg = refCfg(), p = refPerfil(s, cfg);
   refExigir(p.aprovador, 'Você não está na lista de aprovadores.');
+  const motivoDec = texto(d.motivo).slice(0, 300);
   const S = refSolicitacoes(), x = S.itens.filter(function (i) { return i.id === String(d.id); })[0];
   if (!x) throw new Error('Solicitação não encontrada.');
   if (x.status !== 'Pendente') throw new Error('Esta solicitação já foi decidida (' + x.status + ').');
   const aceitar = !!d.aceitar;
-  refGravarLinha(S.sh, x.linha, 10, [aceitar ? 'Aceita' : 'Negada', s.matricula, refAgora()]);
+  refGravarLinha(S.sh, x.linha, 10, [aceitar ? 'Aceita' : 'Negada', s.matricula, refAgora(), motivoDec, s.nome || s.matricula]);
   if (aceitar) refIncluirFixo(x.cod, x.nome, x.setor, s);
-  if (x.por) pushEnviar([x.por], 'Inclusão no refeitório ' + (aceitar ? 'aceita' : 'negada'), x.cod + ' - ' + x.nome + ' (' + x.setor + ')', 'refeit_dec');
-  registrarLog(s, 'Refeitório (decisão)', x.cod + ' · ' + x.setor + ' · ' + (aceitar ? 'aceita' : 'negada'));
+  if (x.por) pushEnviar([x.por], 'Inclusão no refeitório ' + (aceitar ? 'aceita' : 'negada'), x.cod + ' - ' + x.nome + ' (' + x.setor + ')' + (motivoDec ? ' — ' + motivoDec : ''), 'refeit_dec', 'refeitorio');
+  registrarLog(s, 'Refeitório (decisão)', x.cod + ' · ' + x.setor + ' · ' + (aceitar ? 'aceita' : 'negada') + (motivoDec ? ' · ' + motivoDec : ''));
   return { ok: true };
 }
 function refeitAvulsoResponder(d, s) {

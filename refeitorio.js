@@ -1,14 +1,14 @@
 /* =========================================================================
    Núcleo Reposição — Refeitório Interno (Controle de Entradas)
-   Menu: Lançamentos > Liberações Refeitório  ·  Gestão > Histórico Almoço
-   Abas: Liberações Refeitório · Solicitar Inclusão · Histórico e Indicadores · Cardápio e Adesão
+   Menu: Gestão > Controle Refeitório
+   Abas: Liberações · Solicitar Inclusão · Histórico de Aprovações · Histórico Almoço · Cardápio e Adesão
    Perfis (Portaria/Bravo, Encarregado/Gestor, Gestor de Cozinha), nível (restrito/geral) e setores
    vêm de Administração > Acessos; aprovadores, de Administração > Parâmetros > Refeitório.
    Dados: abas REFEIT_* (Apps Script, ações refeit_*).
    Portaria: interface otimista — a marcação aparece na hora e vai para o servidor em segundo plano (fila).
    ========================================================================= */
 const RefeitUI = {
-  pane: "lrefeitorio",
+  pane: "crefeitorio",
   tab: null,
   sub: null,                       // "portaria" | "pre" (quando o usuário tem os dois papéis)
   perfil: null, setores: [], encarregados: {}, hoje: null,
@@ -48,9 +48,10 @@ const RefeitUI = {
   tabsPermitidas(){
     const p = this.perfil; if(!p) return [];
     const t = [];
-    if(this.tem("Portaria") || this.tem("Encarregado")) t.push({ id: "lib", rot: "Liberações Refeitório" });
-    if(this.tem("Encarregado") || p.aprovador) t.push({ id: "sol", rot: "Solicitar Inclusão" });
-    if(this.tem("Encarregado") || p.geral) t.push({ id: "his", rot: "Histórico e Indicadores" });
+    if(this.tem("Portaria") || this.tem("Encarregado")) t.push({ id: "lib", rot: "Liberações" });
+    if(this.tem("Encarregado")) t.push({ id: "sol", rot: "Solicitar Inclusão" });
+    if(p.aprovador || p.admin) t.push({ id: "apr", rot: "Histórico de Aprovações" });
+    if(this.tem("Encarregado") || p.geral) t.push({ id: "his", rot: "Histórico Almoço" });
     if(this.tem("Cozinha")) t.push({ id: "car", rot: "Cardápio e Adesão" });
     return t;
   },
@@ -76,9 +77,9 @@ const RefeitUI = {
     const ts = this.tabsPermitidas().map(t => t.id);
     if(!ts.length) return null;
     if(this.tab && ts.includes(this.tab)) return this.tab;
-    if(this.pane === "hrefeitorio" && ts.includes("his")) return "his";
+    if(this.notif && this.notif.aprovacoes && this.notif.aprovacoes.length && ts.includes("apr")) return "apr";
     const salvo = this.ler("nr_ref_tab");
-    if(salvo && ts.includes(salvo) && salvo !== "his") return salvo;
+    if(salvo && ts.includes(salvo)) return salvo;
     return ts[0];
   },
 
@@ -100,12 +101,13 @@ const RefeitUI = {
     el.innerHTML = `<div class="rf-tabs" role="tablist">${tabs.map(t => `<button type="button" class="rf-tab ${this.tab === t.id ? "on" : ""}" role="tab" data-rf-tab="${t.id}">${this.h(t.rot)}</button>`).join("")}</div>
       <div id="rf-notif"></div><div id="rf-corpo"></div>`;
     el.querySelectorAll("[data-rf-tab]").forEach(b => b.addEventListener("click", () => {
-      this.tab = b.dataset.rfTab; if(this.tab !== "his") this.guardar("nr_ref_tab", this.tab); this.desenhar();
+      this.tab = b.dataset.rfTab; this.guardar("nr_ref_tab", this.tab); this.desenhar();
     }));
     this.desenharNotif(true);
     const corpo = document.getElementById("rf-corpo");
     if(this.tab === "lib") this.telaLib(corpo);
     else if(this.tab === "sol") this.telaSol(corpo);
+    else if(this.tab === "apr") this.telaApr(corpo);
     else if(this.tab === "his") this.telaHis(corpo);
     else this.telaCar(corpo);
   },
@@ -132,7 +134,7 @@ const RefeitUI = {
       this.sig = sig;
       if(this.tab === "lib") this.atualizarLib();
     }
-    this.desenharNotif(false);
+    this.desenharNotif(false); this.avisarAlertas();
   },
 
   iniciarPoll(){
@@ -450,20 +452,126 @@ const RefeitUI = {
         <button type="button" class="btn btn-primary btn-sm" data-nt-av="${this.h(a.data)}|${this.h(a.cod)}">Responder</button></div>`).join("");
     const ap = n.aprovacoes.map(a => `<div class="rf-nt"><div><span class="adm-tag rep">Aprovação</span> <strong>${this.h(a.pornome)}</strong> pede incluir <strong>${this.pessoa(a.cod, a.nome)}</strong> no setor ${this.h(a.setor)}${a.origem === "Avulso" ? " (veio de um avulso)" : ""}.
         <div class="small-muted">Motivo: ${this.h(a.motivo)}</div></div>
-        <div class="rf-nt-b"><button type="button" class="btn btn-primary btn-sm" data-nt-ok="${this.h(a.id)}">Aceitar</button><button type="button" class="btn btn-outline btn-sm" data-nt-no="${this.h(a.id)}">Negar</button></div></div>`).join("");
+        <div class="rf-nt-b"><button type="button" class="btn btn-primary btn-sm" data-nt-dec="${this.h(a.id)}">Analisar</button></div></div>`).join("");
     box.innerHTML = `<div class="panel rf-notif"><div class="adm-head"><h3 class="adm-h" style="margin:0">Notificações <span class="rf-badge">${total}</span></h3></div>${av}${ap}</div>`;
     box.querySelectorAll("[data-nt-av]").forEach(b => b.addEventListener("click", () => { const [d, c] = b.dataset.ntAv.split("|"); this.modalAvulsoResp(d, c); }));
-    box.querySelectorAll("[data-nt-ok]").forEach(b => b.addEventListener("click", () => this.decidir(b.dataset.ntOk, true, b)));
-    box.querySelectorAll("[data-nt-no]").forEach(b => b.addEventListener("click", () => this.decidir(b.dataset.ntNo, false, b)));
+    box.querySelectorAll("[data-nt-dec]").forEach(b => b.addEventListener("click", () => this.decidirModal(b.dataset.ntDec)));
   },
-  async decidir(id, aceitar, btn){
-    const alvo = this.notif.aprovacoes.find(a => a.id === id); if(!alvo) return;
-    const tudo = btn.closest(".rf-nt").querySelectorAll("button"); tudo.forEach(b => b.disabled = true);
-    this.notif.aprovacoes = this.notif.aprovacoes.filter(a => a.id !== id); this.desenharNotif(true);          // some na hora
-    const r = await this.chamar({ acao: "refeit_decidir", id, aceitar });
-    if(!r || !r.ok){ this.notif.aprovacoes.push(alvo); this.desenharNotif(true); toast((r && r.erro) || "Não foi possível registrar a decisão.", "error"); return; }
-    toast(aceitar ? `Inclusão aceita: ${alvo.cod} - ${alvo.nome} agora é fixo de ${alvo.setor}.` : "Solicitação negada.", "success");
-    this.sync(true, true);
+  /** Janela de decisão (abre de qualquer tela): o aprovador aceita ou recusa e, se quiser, escreve o motivo */
+  decidirModal(id, itemExtra){
+    const a = (this.notif.aprovacoes || []).find(x => x.id === id) || itemExtra; if(!a){ toast("Esta solicitação já foi decidida.", "info"); return; }
+    UI.openModal(`<h3 style="margin-top:0;">Solicitação de inclusão no refeitório</h3>
+      <div class="rf-dec">
+        <div><span class="small-muted">Colaborador</span><br><strong>${this.pessoa(a.cod, a.nome)}</strong></div>
+        <div><span class="small-muted">Setor</span><br><strong>${this.h(a.setor)}</strong></div>
+        <div><span class="small-muted">Solicitado por</span><br><strong>${this.h(a.pornome)}</strong> <span class="small-muted">em ${this.br((a.criado || "").slice(0, 10))} ${this.h((a.criado || "").slice(11, 16))}</span></div>
+        <div><span class="small-muted">Motivo da solicitação</span><br>${this.h(a.motivo)}${a.origem === "Avulso" ? ` <span class="adm-tag rep">veio de um avulso</span>` : ""}</div>
+      </div>
+      <div class="filter-group" style="margin-top:12px"><label for="dc-mot">Motivo da decisão (opcional)</label><textarea id="dc-mot" rows="2" placeholder="Se quiser, explique por que aprovou ou recusou"></textarea></div>
+      <div id="dc-msg"></div>
+      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Decidir depois</button><button class="btn btn-outline" id="dc-no">Recusar</button><button class="btn btn-primary" id="dc-ok">Aprovar</button></div>`);
+    const enviar = async aceitar => {
+      const bs = [document.getElementById("dc-ok"), document.getElementById("dc-no")]; bs.forEach(b => b.disabled = true);
+      const r = await this.chamar({ acao: "refeit_decidir", id: a.id, aceitar, motivo: document.getElementById("dc-mot").value.trim() });
+      if(!r || !r.ok){ bs.forEach(b => b.disabled = false); document.getElementById("dc-msg").innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h((r && r.erro) || "Não foi possível registrar a decisão.")}</div>`; return; }
+      UI.closeModal();
+      this.notif.aprovacoes = (this.notif.aprovacoes || []).filter(x => x.id !== a.id); this.removerCard("a|" + a.id);
+      toast(aceitar ? `Aprovado: ${a.cod} - ${a.nome} agora é fixo de ${a.setor}.` : "Solicitação recusada.", "success");
+      this.apr.dados = null; this.posAcao();
+    };
+    document.getElementById("dc-ok").addEventListener("click", () => enviar(true));
+    document.getElementById("dc-no").addEventListener("click", () => enviar(false));
+  },
+  /** depois de uma ação feita fora do fluxo normal: atualiza avisos, sino e (se a tela estiver aberta) o módulo */
+  async posAcao(){
+    this.desenharNotif(true); this.avisarAlertas();
+    const el = document.getElementById("pane-" + this.pane);
+    if(el && el.classList.contains("active")){ await this.sync(true, true); if(this.tab === "apr") this.telaApr(document.getElementById("rf-corpo")); }
+    else this.checarNotif();
+  },
+  avisarAlertas(){ try{ if(window.Alertas) Alertas.atualizarBadge(); }catch(e){} },
+
+  /* ------------------------------ avisos na hora (sem recarregar) ------------------------------ */
+  vigia: { timer: null, anunciados: null },
+  anunciadosLer(){
+    if(this.vigia.anunciados) return this.vigia.anunciados;
+    try{ this.vigia.anunciados = new Set(JSON.parse(localStorage.getItem("nr_ref_anun_" + this.mat()) || "[]")); }catch(e){ this.vigia.anunciados = new Set(); }
+    return this.vigia.anunciados;
+  },
+  anunciadosGravar(){ try{ localStorage.setItem("nr_ref_anun_" + this.mat(), JSON.stringify(Array.from(this.vigia.anunciados).slice(-300))); }catch(e){} },
+  iniciarVigia(){
+    if(this.vigia.timer) return;
+    this.vigia.timer = setInterval(() => this.checarNotif(), 20000);
+    document.addEventListener("visibilitychange", () => { if(!document.hidden) this.checarNotif(); });
+    window.addEventListener("online", () => this.checarNotif());
+    this.checarNotif();
+  },
+  async checarNotif(){
+    if(document.hidden || typeof Auth === "undefined" || !Auth.user || document.body.classList.contains("locked") || !Api.configured() || !Auth.can("gestao", "crefeitorio")) return;
+    const r = await this.chamar({ acao: "refeit_notif" });
+    if(!r || !r.ok) return;
+    this.aplicarNotif(r.notif);
+  },
+  aplicarNotif(n){
+    this.notif = n || { avulsos: [], aprovacoes: [] };
+    const ja = this.anunciadosLer(), chaves = new Set();
+    const novos = [];
+    this.notif.aprovacoes.forEach(a => { const k = "a|" + a.id; chaves.add(k); if(!ja.has(k)) novos.push({ k, tipo: "aprov", a }); });
+    this.notif.avulsos.forEach(a => { const k = "v|" + a.data + "|" + a.cod; chaves.add(k); if(!ja.has(k)) novos.push({ k, tipo: "avulso", a }); });
+    document.querySelectorAll("#rf-cards .rf-card").forEach(c => { if(!chaves.has(c.dataset.k)) c.remove(); });   // já resolvido por outra pessoa/aparelho
+    novos.forEach(x => { ja.add(x.k); this.mostrarCard(x); });
+    if(novos.length) this.anunciadosGravar();
+    this.desenharNotif(false); this.avisarAlertas();
+    if(novos.length && this.carregado && this.tab === "apr" && document.getElementById("rf-corpo")) this.apr.dados = null;
+  },
+  mostrarCard(x){
+    let box = document.getElementById("rf-cards");
+    if(!box){ box = document.createElement("div"); box.id = "rf-cards"; box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
+    const c = document.createElement("div"); c.className = "rf-card"; c.dataset.k = x.k; c.setAttribute("role", "alert");
+    const a = x.a;
+    c.innerHTML = x.tipo === "aprov"
+      ? `<button type="button" class="rf-card-x" aria-label="Fechar">×</button><div class="rf-card-t">Nova solicitação para aprovar</div><div><strong>${this.h(a.pornome)}</strong> pede incluir <strong>${this.pessoa(a.cod, a.nome)}</strong> no refeitório (${this.h(a.setor)}).</div><div class="small-muted">Motivo: ${this.h(a.motivo)}</div><div class="rf-card-b"><button type="button" class="btn btn-primary btn-sm" data-go>Aprovar ou recusar</button></div>`
+      : `<button type="button" class="rf-card-x" aria-label="Fechar">×</button><div class="rf-card-t">Almoço avulso no seu setor</div><div><strong>${this.pessoa(a.cod, a.nome)}</strong> almoçou como avulso em ${this.h(a.setor)} (${this.br(a.data)} ${this.h(a.hora)}).</div><div class="rf-card-b"><button type="button" class="btn btn-primary btn-sm" data-go>Responder</button></div>`;
+    c.querySelector(".rf-card-x").addEventListener("click", () => c.remove());
+    c.querySelector("[data-go]").addEventListener("click", () => { c.remove(); if(x.tipo === "aprov") this.decidirModal(a.id); else this.modalAvulsoResp(a.data, a.cod); });
+    box.appendChild(c);
+    try{ if(navigator.vibrate) navigator.vibrate(120); }catch(e){}
+  },
+  removerCard(k){ document.querySelectorAll("#rf-cards .rf-card").forEach(c => { if(c.dataset.k === k) c.remove(); }); },
+
+  /* ------------------------------ Histórico de Aprovações ------------------------------ */
+  apr: { dados: null, status: "", so: false, busca: "", erro: "", carregando: false },
+  async telaApr(corpo){
+    const A = this.apr;
+    if(!corpo) return;
+    if(!A.dados){
+      corpo.innerHTML = `<div class="panel"><p class="small-muted">Carregando aprovações…</p></div>`;
+      if(!A.carregando){
+        A.carregando = true; const r = await this.chamar({ acao: "refeit_aprovacoes" }); A.carregando = false;
+        if(!r || !r.ok){ A.erro = (r && r.erro) || "Não foi possível carregar."; } else { A.erro = ""; A.dados = r; }
+      }
+      if(this.tab !== "apr") return; corpo = document.getElementById("rf-corpo"); if(!corpo) return;
+    }
+    if(A.erro){ corpo.innerHTML = `<div class="panel"><div class="error-box">${this.h(A.erro)}</div><button class="btn btn-outline" id="ap-retry">Tentar novamente</button></div>`; document.getElementById("ap-retry").addEventListener("click", () => { A.erro = ""; this.telaApr(corpo); }); return; }
+    if(!A.dados) return;
+    const q = this.norm(A.busca), eu = A.dados.matricula;
+    const pend = A.dados.itens.filter(x => x.status === "Pendente");
+    const hist = A.dados.itens.filter(x => x.status !== "Pendente" && (!A.status || x.status === A.status) && (!A.so || x.decpor === eu) && (!q || this.norm(x.cod + " " + x.nome + " " + x.setor + " " + x.pornome + " " + x.decnome).includes(q)));
+    const dh = s => s ? `${this.br(s.slice(0, 10))} ${this.h(s.slice(11, 16))}` : "—";
+    corpo.innerHTML = `<div class="panel"><div class="adm-head"><h2 class="adm-h">Aguardando sua decisão <span class="rf-badge">${pend.length}</span></h2></div>
+        ${pend.map(x => `<div class="rf-nt"><div><strong>${this.pessoa(x.cod, x.nome)}</strong> · ${this.h(x.setor)} <span class="small-muted">· pedido por ${this.h(x.pornome)} em ${dh(x.criado)}</span><div class="small-muted">Motivo: ${this.h(x.motivo)}</div></div><div class="rf-nt-b"><button type="button" class="btn btn-primary btn-sm" data-ap-dec="${this.h(x.id)}">Analisar</button></div></div>`).join("") || `<p class="small-muted" style="margin:0">Nenhuma solicitação aguardando. Quando chegar uma, ela aparece aqui e como aviso na tela, sem precisar recarregar.</p>`}</div>
+      <div class="panel"><div class="adm-head"><h2 class="adm-h">Histórico de Aprovações</h2></div>
+        <div class="panel-actions rf-filtros">
+          <div class="filter-group"><label for="ap-st">Resultado</label><select id="ap-st"><option value="">Todos</option><option value="Aceita" ${A.status === "Aceita" ? "selected" : ""}>Aprovadas</option><option value="Negada" ${A.status === "Negada" ? "selected" : ""}>Recusadas</option></select></div>
+          <div class="filter-group"><label>Decididas por</label><div class="toggle-group" id="ap-so"><button type="button" data-v="0" class="${A.so ? "" : "active"}">Todos os aprovadores</button><button type="button" data-v="1" class="${A.so ? "active" : ""}">Só eu</button></div></div>
+          <div class="filter-group"><label for="ap-q">Buscar</label><input type="search" id="ap-q" placeholder="Colaborador, setor ou solicitante" value="${this.h(A.busca)}"></div></div>
+        <div class="table-wrap"><table class="adm-table"><thead><tr><th>Solicitação</th><th>Colaborador</th><th>Setor</th><th>Solicitante</th><th>Motivo da solicitação</th><th>Resultado</th><th>Decisão (data e hora)</th><th>Decidido por</th><th>Motivo da decisão</th></tr></thead><tbody>
+          ${hist.map(x => `<tr><td>${dh(x.criado)}</td><td>${this.pessoa(x.cod, x.nome)}</td><td>${this.h(x.setor)}</td><td>${this.h(x.pornome)}</td><td style="white-space:normal">${this.h(x.motivo)}</td>
+            <td><span class="adm-tag ${x.status === "Aceita" ? "acc" : "err"}">${x.status === "Aceita" ? "Aprovada" : "Recusada"}</span></td><td>${dh(x.decem)}</td><td>${this.h(x.decnome || x.decpor || "—")}</td><td style="white-space:normal">${this.h(x.decmot || "—")}</td></tr>`).join("") || `<tr><td colspan="9" class="small-muted">Nenhuma decisão encontrada com esses filtros.</td></tr>`}</tbody></table></div></div>`;
+    document.getElementById("ap-st").addEventListener("change", e => { A.status = e.target.value; this.telaApr(corpo); });
+    document.querySelectorAll("#ap-so button").forEach(b => b.addEventListener("click", () => { A.so = b.dataset.v === "1"; this.telaApr(corpo); }));
+    document.getElementById("ap-q").addEventListener("input", e => { A.busca = e.target.value; const p = e.target.selectionStart; this.telaApr(corpo); const n = document.getElementById("ap-q"); if(n){ n.focus(); try{ n.setSelectionRange(p, p); }catch(x){} } });
+    corpo.querySelectorAll("[data-ap-dec]").forEach(b => b.addEventListener("click", () => { const x = pend.find(i => i.id === b.dataset.apDec); this.decidirModal(x.id, x); }));
   },
   modalAvulsoResp(data, cod){
     const a = this.notif.avulsos.find(x => x.data === data && x.cod === cod); if(!a) return;
@@ -486,7 +594,7 @@ const RefeitUI = {
       if(!r || !r.ok){ btn.disabled = false; btn.textContent = "Enviar resposta"; msg.innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h((r && r.erro) || "Não foi possível enviar.")}</div>`; return; }
       UI.closeModal(); this.notif.avulsos = this.notif.avulsos.filter(x => x !== a); this.desenharNotif(true);
       toast(inc ? "Resposta registrada e solicitação de inclusão enviada aos aprovadores." : "Resposta registrada.", "success");
-      this.sync(true, true);
+      this.posAcao();
     });
   },
 
@@ -510,9 +618,10 @@ const RefeitUI = {
         <div class="panel-actions" style="margin-top:6px;"><button type="button" class="btn btn-primary btn-sm" id="sl-colar-ok">Adicionar à lista</button></div></div>
       <div id="sl-msg"></div>
       <div class="adm-actions"><button class="btn btn-primary" id="sl-ok">Enviar solicitação</button><span class="small-muted" id="sl-cont"></span></div></div>
-      <div class="panel"><h3 class="adm-h">Minhas solicitações</h3><div class="table-wrap"><table class="adm-table"><thead><tr><th>Data</th><th>Colaborador</th><th>Setor</th><th>Motivo</th><th>Status</th></tr></thead><tbody>
+      <div class="panel"><h3 class="adm-h">Minhas solicitações</h3><div class="table-wrap"><table class="adm-table"><thead><tr><th>Data</th><th>Colaborador</th><th>Setor</th><th>Motivo</th><th>Status</th><th>Decisão</th></tr></thead><tbody>
         ${this.minhas.map(x => `<tr><td>${this.br((x.criado || "").slice(0, 10))}</td><td>${this.pessoa(x.cod, x.nome)}</td><td>${this.h(x.setor)}</td><td style="white-space:normal">${this.h(x.motivo)}</td>
-          <td><span class="adm-tag ${x.status === "Aceita" ? "acc" : x.status === "Negada" ? "err" : "rep"}">${this.h(x.status)}</span></td></tr>`).join("") || `<tr><td colspan="5" class="small-muted">Você ainda não fez nenhuma solicitação.</td></tr>`}
+          <td><span class="adm-tag ${x.status === "Aceita" ? "acc" : x.status === "Negada" ? "err" : "rep"}">${this.h(x.status === "Aceita" ? "Aprovada" : x.status === "Negada" ? "Recusada" : "Aguardando")}</span></td>
+          <td style="white-space:normal">${x.decem ? `${this.br(x.decem.slice(0, 10))} ${this.h(x.decem.slice(11, 16))} · ${this.h(x.decnome || "")}${x.decmot ? `<div class="small-muted">${this.h(x.decmot)}</div>` : ""}` : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="small-muted">Você ainda não fez nenhuma solicitação.</td></tr>`}
       </tbody></table></div></div>`;
     this.carregarPessoas();
     const tb = document.getElementById("sl-itens");
@@ -715,28 +824,38 @@ const RefeitUI = {
   },
 
   /* ------------------------------ ligação com os menus ------------------------------ */
-  renderLiberacoes(){ this.abrir("lrefeitorio"); },
+  renderControle(){ this.abrir("crefeitorio"); },
   /** Chegada pelo lembrete (push): abre a pré-liberação de hoje */
   irRevisar(){
-    if(!Auth.user || !Auth.can("lancamentos", "lrefeitorio")) return;
+    if(!Auth.user || !Auth.can("gestao", "crefeitorio")) return;
     this.proxTab = "lib"; this.proxSub = "pre"; this.dataSel = null;
-    if(UI.currentPane === "lrefeitorio" && UI.currentView === "lancamentos") this.abrir("lrefeitorio"); else UI.goTo("lancamentos", "lrefeitorio");
+    if(UI.currentPane === "crefeitorio" && UI.currentView === "gestao") this.abrir("crefeitorio"); else UI.goTo("gestao", "crefeitorio");
   },
-  renderHistorico(){ this.abrir("hrefeitorio"); }
+  /** Chegada pelo aviso de aprovação (push): abre o Histórico de Aprovações */
+  irAprovar(){
+    if(!Auth.user || !Auth.can("gestao", "crefeitorio")) return;
+    this.proxTab = "apr"; this.apr.dados = null;
+    if(UI.currentPane === "crefeitorio" && UI.currentView === "gestao") this.abrir("crefeitorio"); else UI.goTo("gestao", "crefeitorio");
+  }
 };
 window.RefeitUI = RefeitUI;
-/* Link do lembrete (?ir=refeitorio) e clique na notificação com o aplicativo já aberto */
+/* Links dos avisos (?ir=refeitorio | ?ir=refaprov), clique na notificação com o aplicativo aberto e início da vigia de avisos */
 (function(){
   try{
     const ir = new URLSearchParams(location.search).get("ir");
-    if(ir === "refeitorio"){
+    const pronto = () => typeof Auth !== "undefined" && Auth.user && window.APP_STATE && APP_STATE.ready && !document.body.classList.contains("locked");
+    if(ir === "refeitorio" || ir === "refaprov"){
       let n = 0;
       const t = setInterval(() => {
         n++;
-        const pronto = window.Auth && Auth.user && window.APP_STATE && APP_STATE.ready && !document.body.classList.contains("locked");
-        if(pronto || n > 90){ clearInterval(t); if(Auth.user) RefeitUI.irRevisar(); try{ history.replaceState(null, "", location.pathname); }catch(e){} }
+        if(pronto() || n > 90){ clearInterval(t); if(Auth.user){ if(ir === "refaprov") RefeitUI.irAprovar(); else RefeitUI.irRevisar(); } try{ history.replaceState(null, "", location.pathname); }catch(e){} }
       }, 500);
     }
-    if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if(e.data && e.data.tipo === "ir" && e.data.ir === "refeitorio") RefeitUI.irRevisar(); });
+    if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => {
+      if(!e.data || e.data.tipo !== "ir") return;
+      if(e.data.ir === "refeitorio") RefeitUI.irRevisar(); else if(e.data.ir === "refaprov") RefeitUI.irAprovar();
+    });
+    let k = 0;
+    const espera = setInterval(() => { k++; if(pronto()){ clearInterval(espera); if(Auth.can("gestao", "crefeitorio")) RefeitUI.iniciarVigia(); } else if(k > 600) clearInterval(espera); }, 2000);
   }catch(e){}
 })();

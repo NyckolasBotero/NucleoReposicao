@@ -44,7 +44,8 @@ const Auth = {
     const it = ((typeof UI!=="undefined" && UI.subnavConfig[view])||[]).find(i=>i.id===paneId);
     if(!v || !it) return false;
     // nomes antigos das abas (aliases) continuam valendo para quem já tinha acesso
-    return [it.label].concat(it.aliases||[]).some(n=> this._set.has(normPerm(v.aba)+"|"+normPerm(n)));
+    if([it.label].concat(it.aliases||[]).some(n=> this._set.has(normPerm(v.aba)+"|"+normPerm(n)))) return true;
+    return paneId==="crefeitorio" && this._set.has(normPerm("Lançamentos")+"|"+normPerm("Liberações Refeitório"));   // quem já tinha a tela antiga na aba Lançamentos
   }
 };
 
@@ -4121,14 +4122,13 @@ const UI = {
       { id:"ferias", label:"Férias" },
       { id:"organograma", label:"Organograma" },
       { id:"ruas", label:"Atribuição Ruas" },
-      { id:"hrefeitorio", label:"Histórico Almoço" }
+      { id:"crefeitorio", label:"Controle Refeitório", aliases:["Histórico Almoço","Liberações Refeitório"] }
     ],
     lancamentos: [
       { id:"lfeedback", label:"Lançar Feedback" },
       { id:"ladvertencia", label:"Lançar Advertência" },
       { id:"lsuspensao", label:"Lançar Suspensão" },
       { id:"lcoletores", label:"Controle de Coletores" },
-      { id:"lrefeitorio", label:"Liberações Refeitório" },
       { id:"ldevolucao", label:"Devolução de Mercadorias" },
       { id:"lavaria", label:"Lançar Avaria 9712", aliases:["Lançar REP.AVARIA"] },
       { id:"lchamada", label:"Lançar Chamada" },
@@ -4410,7 +4410,7 @@ const UI = {
 
   renderPane(pane){
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
-    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','parametros','lfeedback','ladvertencia','lsuspensao','lcoletores','lrefeitorio','hrefeitorio','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias','lcertificado'].includes(pane)){
+    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','parametros','lfeedback','ladvertencia','lsuspensao','lcoletores','crefeitorio','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias','lcertificado'].includes(pane)){
       const el = $("#pane-"+pane);
       if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">Buscar dados online</button></div>`;
       return;
@@ -4420,7 +4420,7 @@ const UI = {
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
       bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(), alertas: ()=>window.Alertas && Alertas.renderPane(), tv: ()=>window.PainelTV && PainelTV.renderPane(), parametros: ()=>window.ParametrosUI && ParametrosUI.renderPane(),
-      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), lrefeitorio: ()=>window.RefeitUI && RefeitUI.renderLiberacoes(), hrefeitorio: ()=>window.RefeitUI && RefeitUI.renderHistorico(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
+      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), crefeitorio: ()=>window.RefeitUI && RefeitUI.renderControle(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lcertificado: ()=>window.CertUI && CertUI.renderPane(), ruas: ()=>window.RuasUI && RuasUI.renderPane(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };

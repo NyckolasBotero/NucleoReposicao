@@ -140,7 +140,14 @@ const DOC_FILTROS = {
     { id:"organograma", menu:"gestao", nome:"Organograma", filtros:[
       ["Mostrar outros setores?","alternar","toggle-group","Não / Sim"]
     ]},
-    { id:"hrefeitorio", menu:"gestao", nome:"Histórico Almoço", filtros:[
+    { id:"crefeitorio", menu:"gestao", nome:"Controle Refeitório", filtros:[
+      ["Buscar por código ou nome (aba Liberações, Portaria)","busca","inline","rf-q"],
+      ["Data da lista (Pré-liberação)","data","inline","pre-data"],
+      ["Resultado: Todos / Aprovadas / Recusadas (aba Histórico de Aprovações)","lista","inline","ap-st"],
+      ["Decididas por: Todos os aprovadores / Só eu","alternar","toggle-group","ap-so"],
+      ["Buscar colaborador, setor ou solicitante (Histórico de Aprovações)","busca","inline","ap-q"],
+      ["Motivo da decisão (opcional, ao aprovar ou recusar)","texto","inline","dc-mot"],
+      ["Aba Histórico Almoço:","lista","inline","(filtros abaixo)"],
       ["Data inicial / Data final + atalhos (Mês atual, Mês anterior, 7 dias)","periodo","inline","hs-ini / hs-fim / hs-atalhos"],
       ["Setor","lista","inline","hs-setor (Todos os setores)"],
       ["Encarregado (só Visão Geral)","lista","inline","hs-enc (Todos)"],
@@ -161,11 +168,6 @@ const DOC_FILTROS = {
     ]},
     { id:"lsuspensao", menu:"lancamentos", nome:"Lançar Suspensão", filtros:[
       ["Buscar matrícula, nome ou motivo","busca","inline","sp-l-busca"]
-    ]},
-    { id:"lrefeitorio", menu:"lancamentos", nome:"Liberações Refeitório", filtros:[
-      ["Buscar por código ou nome (Portaria)","busca","inline","rf-q"],
-      ["Data da lista (Pré-liberação)","data","inline","pre-data"],
-      ["Setor, Encarregado, período e busca (aba Histórico e Indicadores)","lista","inline","hs-setor / hs-enc / hs-ini / hs-fim / hs-q"]
     ]},
     { id:"lcoletores", menu:"lancamentos", nome:"Controle de Coletores", filtros:[
       ["Buscar ID, nome, login, usuário","busca","inline","col-q"],

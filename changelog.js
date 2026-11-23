@@ -4,9 +4,16 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.25.0";
+const APP_VERSAO = "2.26.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.26.0", data:"2026-11-23", titulo:"Controle Refeitório unificado e aprovações em tempo real", itens:[
+    "Tudo do refeitório agora fica em Gestão > Controle Refeitório (abas Liberações, Solicitar Inclusão, Histórico de Aprovações, Histórico Almoço e Cardápio e Adesão). As telas Liberações Refeitório e Histórico Almoço deixaram de existir; quem tinha acesso passa a ter o novo menu.",
+    "Aprovações chegam na hora: aviso flutuante na tela (sem recarregar), item na Central de Alertas (sino) e push no celular. Aprovadores recebem o acesso automaticamente.",
+    "Ao aprovar ou recusar, é possível escrever um motivo (opcional). O solicitante vê data, hora, quem decidiu e o motivo.",
+    "Nova aba Histórico de Aprovações: pendentes, aprovadas e recusadas com data/hora da decisão, motivo da solicitação e motivo da decisão.",
+    "Atenção: reimplantar o Apps Script (nova versão). Os cabeçalhos da aba de solicitações são ampliados sozinhos."
+  ]},
   { v:"2.25.0", data:"2026-11-23", titulo:"Refeitório: solicitação de inclusão em lote", itens:[
     "Solicitar Inclusão agora aceita vários colaboradores de uma vez (mesmo setor e mesmo motivo): adicione linhas ou use \"Colar lista\" (um por linha, código e nome, pode copiar do Excel). Se algum der problema (já é fixo, já tem pedido pendente), os demais seguem e só as linhas com problema ficam na tela com o motivo.",
     "Atenção: reimplantar o Apps Script (apps_script_nucleo.gs)."
