@@ -2836,6 +2836,20 @@ function refIncluirFixo(cod, nome, setor, s) {
 function refeitSolicitar(d, s) {
   const cfg = refCfg(), p = refPerfil(s, cfg);
   refExigir(refTem(p, 'Encarregado'), 'Só o encarregado solicita inclusão.');
+  if (Array.isArray(d.itens)) {                                         // em lote: vários colaboradores, mesmo setor e motivo
+    const itens = d.itens.slice(0, 100), vistos = {}, resultados = [];
+    if (!itens.length) throw new Error('Informe ao menos um colaborador.');
+    itens.forEach(function (it) {
+      const cod = refCodigo(it && it.cod), r = { cod: cod, nome: texto(it && it.nome), ok: true };
+      try {
+        if (cod && vistos[cod]) throw new Error('Código repetido na lista.');
+        vistos[cod] = true;
+        r.status = refCriarSolicitacao(cfg, p, s, { cod: cod, nome: it.nome, setor: d.setor, motivo: d.motivo }, 'Manual');
+      } catch (e) { r.ok = false; r.erro = String(e && e.message || e); }
+      resultados.push(r);
+    });
+    return { ok: true, resultados: resultados };
+  }
   return { ok: true, status: refCriarSolicitacao(cfg, p, s, d, 'Manual') };
 }
 function refeitDecidir(d, s) {

@@ -4,9 +4,13 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.24.0";
+const APP_VERSAO = "2.25.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.25.0", data:"2026-11-23", titulo:"Refeitório: solicitação de inclusão em lote", itens:[
+    "Solicitar Inclusão agora aceita vários colaboradores de uma vez (mesmo setor e mesmo motivo): adicione linhas ou use \"Colar lista\" (um por linha, código e nome, pode copiar do Excel). Se algum der problema (já é fixo, já tem pedido pendente), os demais seguem e só as linhas com problema ficam na tela com o motivo.",
+    "Atenção: reimplantar o Apps Script (apps_script_nucleo.gs)."
+  ]},
   { v:"2.24.0", data:"2026-11-23", titulo:"Refeitório: lembrete no celular para revisar a lista", itens:[
     "Parâmetros > Refeitório: lembrete push (\"Quase na hora do almoço, gostaria de revisar sua lista?\") com horário personalizado, dias da semana, mensagem editável e destinatários (todos os encarregados ou gestores escolhidos), mais botão para enviar um teste.",
     "Ao tocar na notificação, o aplicativo abre direto a pré-liberação de hoje.",
