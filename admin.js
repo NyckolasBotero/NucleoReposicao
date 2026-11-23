@@ -888,7 +888,7 @@ const AdminUI = {
   /* ================================================================== */
   /* ACESSOS                                                             */
   /* ================================================================== */
-  acState: { lista:null, erro:null, carregando:false, filtro:"" },
+  acState: { lista:null, erro:null, carregando:false, filtro:"", ref:null },
 
   async renderAcessos(force){
     const pane = document.getElementById("pane-acessos");
@@ -899,8 +899,9 @@ const AdminUI = {
       st.carregando = true; st.erro = null;
       pane.innerHTML = `<div class="panel"><h2 class="adm-h">Acessos</h2><p class="small-muted">Carregando acessos...</p></div>`;
       try{
-        const r = await Api.call({ acao:"admin_listar" });
+        const [r, rf] = await Promise.all([Api.call({ acao:"admin_listar" }), Api.call({ acao:"refeit_perfis" }).catch(()=>null)]);
         if(r && r.ok) st.lista = r.usuarios; else st.erro = (r && r.erro) || "Falha ao listar os acessos.";
+        if(rf && rf.ok) st.ref = rf;
       }catch(e){ st.erro = e.message; }
       st.carregando = false;
     }
@@ -931,14 +932,15 @@ const AdminUI = {
         </div>
         <p class="small-muted">Defina quem entra e quais abas e sub abas cada matrícula enxerga. As mudanças valem no próximo acesso da pessoa (ou ao atualizar a página).</p>
         <div class="table-wrap"><table class="adm-table">
-          <thead><tr><th>Matrícula</th><th>Nome</th><th>Status</th><th>Abas liberadas</th><th></th></tr></thead>
+          <thead><tr><th>Matrícula</th><th>Nome</th><th>Status</th><th>Abas liberadas</th><th>Refeitório</th><th></th></tr></thead>
           <tbody>${lista.map(u=>`<tr>
             <td><strong>${escapeHtml(u.matricula)}</strong></td>
             <td>${escapeHtml(u.nome||"—")}</td>
             <td><span class="adm-tag ${u.status==="Ativo"?"acc":"off"}">${escapeHtml(u.status)}</span>${u.temSenha?"":` <span class="adm-tag off" title="Defina uma senha">sem senha</span>`}</td>
             <td>${u.perms.length} de ${total}</td>
+            <td>${this.resumoRefeitorio(u.matricula)}</td>
             <td><button class="btn btn-outline btn-sm" data-mat="${escapeHtml(u.matricula)}">Editar</button></td>
-          </tr>`).join("") || `<tr><td colspan="5" class="small-muted">Nenhum acesso encontrado.</td></tr>`}</tbody>
+          </tr>`).join("") || `<tr><td colspan="6" class="small-muted">Nenhum acesso encontrado.</td></tr>`}</tbody>
         </table></div>
       </div>`;
     document.getElementById("ac-busca").addEventListener("input", (e)=>{
@@ -1040,6 +1042,41 @@ const AdminUI = {
     document.getElementById("hs-falhas").addEventListener("change", e=>{ st.soFalhas = e.target.checked; this.desenharHistorico(); });
   },
 
+  REF_PAPEIS: [["Portaria","Portaria / Bravo"],["Encarregado","Encarregado / Gestor"],["Cozinha","Gestor de Cozinha / Bravos"]],
+  resumoRefeitorio(mat){
+    const p = this.acState.ref && this.acState.ref.usuarios && this.acState.ref.usuarios[mat];
+    if(!p) return `<span class="small-muted">—</span>`;
+    const nomes = (p.papeis||[]).map(x=>({Portaria:"Portaria",Encarregado:"Encarregado",Cozinha:"Cozinha"}[x]||x));
+    const set = p.nivel==="geral" ? "Visão geral" : ((p.setores||[]).join(", ") || "sem setor");
+    return `<span class="adm-tag acc">${escapeHtml(nomes.join(" + ")||"Sem papel")}</span> <span class="small-muted">${escapeHtml(set)}</span>`;
+  },
+  htmlRefeitorio(mat){
+    const ref = this.acState.ref, p = (ref && ref.usuarios && ref.usuarios[mat]) || { papeis:[], nivel:"restrito", setores:[] };
+    if(!ref) return `<fieldset class="adm-fs"><legend><strong>Refeitório Interno</strong></legend><p class="small-muted">Perfis do refeitório indisponíveis (atualize o Apps Script com a versão mais recente).</p></fieldset>`;
+    const sets = ref.setores||[];
+    return `<fieldset class="adm-fs" id="ac-ref"><legend><strong>Refeitório Interno</strong></legend>
+      <div class="adm-checks">${this.REF_PAPEIS.map(([k,r])=>`<label class="adm-chk"><input type="checkbox" class="ac-rpapel" value="${k}" ${(p.papeis||[]).includes(k)?"checked":""}> ${escapeHtml(r)}</label>`).join("")}</div>
+      <div class="adm-form" style="margin-top:10px;"><label>Nível de visualização<select id="ac-rnivel"><option value="restrito" ${p.nivel!=="geral"?"selected":""}>Restrito aos setores vinculados</option><option value="geral" ${p.nivel==="geral"?"selected":""}>Visão geral (Gerência / Diretoria)</option></select></label></div>
+      <div class="small-muted" style="margin:8px 0 4px;">Setores vinculados (um ou mais)</div>
+      <div class="adm-checks" id="ac-rsets">${sets.map(s=>`<label class="adm-chk"><input type="checkbox" class="ac-rset" value="${escapeHtml(s)}" ${(p.setores||[]).includes(s)?"checked":""}> ${escapeHtml(s)}</label>`).join("")}</div>
+      <div class="lanc-novo" style="margin-top:8px;"><button type="button" class="btn btn-outline btn-sm" id="ac-rsetor-btn">＋ Novo Setor</button>
+        <span id="ac-rsetor-box" style="display:none"><input type="text" id="ac-rsetor-in" placeholder="Nome do novo setor" style="min-width:180px"> <button type="button" class="btn btn-primary btn-sm" id="ac-rsetor-ok">Adicionar</button></span></div>
+      <p class="small-muted" style="margin:8px 0 0;">Ao salvar, as telas Liberações Refeitório e Histórico Almoço são liberadas automaticamente conforme os papéis.</p></fieldset>`;
+  },
+  ligarRefeitorio(box){
+    const btn = box.querySelector("#ac-rsetor-btn"); if(!btn) return;
+    btn.addEventListener("click", ()=>{ const b = box.querySelector("#ac-rsetor-box"); b.style.display = b.style.display==="none" ? "inline-flex" : "none"; box.querySelector("#ac-rsetor-in").focus(); });
+    box.querySelector("#ac-rsetor-ok").addEventListener("click", async ()=>{
+      const inp = box.querySelector("#ac-rsetor-in"), nome = inp.value.trim(); if(!nome){ inp.focus(); return; }
+      const r = await Api.call({ acao:"refeit_setor_add", nome }).catch(e=>({ ok:false, erro:e.message }));
+      if(!r || !r.ok){ toast((r && r.erro) || "Não foi possível criar o setor.", "error"); return; }
+      this.acState.ref.setores = r.setores;
+      const marcados = new Set(Array.from(box.querySelectorAll(".ac-rset:checked")).map(c=>c.value)); marcados.add(r.nome);
+      box.querySelector("#ac-rsets").innerHTML = r.setores.map(s=>`<label class="adm-chk"><input type="checkbox" class="ac-rset" value="${escapeHtml(s)}" ${marcados.has(s)?"checked":""}> ${escapeHtml(s)}</label>`).join("");
+      inp.value = ""; box.querySelector("#ac-rsetor-box").style.display = "none"; toast(`Setor "${r.nome}" criado e vinculado.`, "success");
+    });
+  },
+
   editarAcesso(mat){
     const u = mat ? (this.acState.lista||[]).find(x=>x.matricula===mat) : null;
     const tem = new Set(u ? u.perms.map(p=>normPerm(p.aba)+"|"+normPerm(p.sub)) : []);
@@ -1057,6 +1094,7 @@ const AdminUI = {
         <label>Status<select id="ac-status"><option value="Ativo" ${(!u||u.status==="Ativo")?"selected":""}>Ativo</option><option value="Bloqueado" ${(u&&u.status==="Bloqueado")?"selected":""}>Bloqueado</option></select></label>
       </div>
       ${grupos}
+      ${this.htmlRefeitorio(mat||"")}
       <div id="ac-msg"></div>
       <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="ac-salvar">Salvar</button></div>`);
     const box = document.getElementById("modal-box");
@@ -1069,18 +1107,30 @@ const AdminUI = {
     }));
     box.querySelectorAll(".ac-sub").forEach(c=> c.addEventListener("change", sync));
     sync();
+    this.ligarRefeitorio(box);
     document.getElementById("ac-salvar").addEventListener("click", ()=> this.salvarAcesso(mat));
   },
 
   async salvarAcesso(orig){
     const box = document.getElementById("modal-box"), msg = document.getElementById("ac-msg"), btn = document.getElementById("ac-salvar");
     const perms = Array.from(box.querySelectorAll(".ac-sub:checked")).map(c=>({ aba:c.dataset.aba, sub:c.dataset.sub }));
+    // Refeitório: papéis liberam as telas automaticamente
+    const rPapeis = Array.from(box.querySelectorAll(".ac-rpapel:checked")).map(c=>c.value), rNivel = (box.querySelector("#ac-rnivel")||{}).value || "restrito";
+    const rSetores = Array.from(box.querySelectorAll(".ac-rset:checked")).map(c=>c.value);
+    const addPerm = (aba, sub)=>{ if(!perms.some(p=>normPerm(p.aba)===normPerm(aba) && normPerm(p.sub)===normPerm(sub))) perms.push({ aba, sub }); };
+    if(rPapeis.length) addPerm("Lançamentos", "Liberações Refeitório");
+    if(rPapeis.includes("Encarregado") || rNivel==="geral") addPerm("Gestão", "Histórico Almoço");
+    if(rPapeis.length===0 && rNivel==="geral") addPerm("Lançamentos", "Liberações Refeitório");
     const payload = { acao:"admin_salvar", original: orig||"", matricula: document.getElementById("ac-mat").value.trim(), nome: document.getElementById("ac-nome").value.trim(),
       senha: document.getElementById("ac-senha").value, status: document.getElementById("ac-status").value, perms };
     btn.disabled = true; msg.innerHTML = "";
     try{
       const r = await Api.call(payload);
       if(!r || !r.ok) throw new Error((r && r.erro) || "Não foi possível salvar.");
+      if(this.acState.ref){
+        const rr = await Api.call({ acao:"refeit_perfil_salvar", original: orig||"", matricula: payload.matricula, papeis:rPapeis, nivel:rNivel, setores:rSetores }).catch(e=>({ ok:false, erro:e.message }));
+        if(!rr || !rr.ok) toast("Acesso salvo, mas o perfil do refeitório não: " + ((rr && rr.erro)||"erro"), "error");
+      }
       UI.closeModal();
       toast("Acesso salvo.","success");
       await this.renderAcessos(true);

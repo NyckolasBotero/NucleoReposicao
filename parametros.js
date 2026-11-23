@@ -6,7 +6,7 @@
 const ParametrosUI = {
   aba: (()=>{ try{ return localStorage.getItem("nr_param_aba") || "nc"; }catch(e){ return "nc"; } })(),
   rascNC: null, rascAud: null, sujo: false,
-  ABAS: [ ["nc","Não Conformidades e Feedbacks"], ["aud","Auditoria"], ["com","Comissão"], ["tv","Painel TV"] ],
+  ABAS: [ ["nc","Não Conformidades e Feedbacks"], ["aud","Auditoria"], ["com","Comissão"], ["tv","Painel TV"], ["ref","Refeitório"] ],
   h(s){ return escapeHtml(String(s===undefined||s===null ? "" : s)); },
 
   devolverTV(){   // o painel de parâmetros da TV é o #pane-tv; ao sair da aba ele volta para seu lugar
@@ -30,6 +30,7 @@ const ParametrosUI = {
     if(this.aba === "nc") this.desenharNC(corpo);
     else if(this.aba === "aud") this.desenharAud(corpo);
     else if(this.aba === "com") this.desenharCom(corpo);
+    else if(this.aba === "ref") this.desenharRef(corpo);
     else this.desenharTV(corpo);
   },
 
@@ -152,6 +153,44 @@ const ParametrosUI = {
     el.innerHTML = `<div class="panel" id="comissao-params" style="border:1.5px solid #2f6fce;"></div>`;
     try{ if(window.ComissaoParamsUI) ComissaoParamsUI.render(); else el.firstChild.innerHTML = `<p class="small-muted">Parâmetros de comissão indisponíveis.</p>`; }
     catch(e){ el.firstChild.innerHTML = `<p class="small-muted">Carregue os dados (Bases) para editar os parâmetros de comissão.</p>`; }
+  },
+
+  /* ----------------------------- Refeitório: aprovadores ----------------------------- */
+  ref: { aprov:null, usuarios:[], erro:"", carregando:false },
+  async desenharRef(el){
+    const st = this.ref, h = this.h.bind(this);
+    if(!Regras.admin){ el.innerHTML = `<div class="panel"><h2 class="adm-h">Refeitório</h2><div class="hint-box">Só o administrador altera os aprovadores do refeitório.</div></div>`; return; }
+    if(!st.aprov && !st.carregando){
+      el.innerHTML = `<div class="panel"><p class="small-muted">Carregando aprovadores…</p></div>`;
+      st.carregando = true;
+      try{ const r = await Api.call({ acao:"refeit_aprov_ler" }); if(r && r.ok){ st.aprov = r.aprovadores; st.usuarios = r.usuarios; st.erro = ""; } else st.erro = (r && r.erro) || "Não foi possível carregar."; }
+      catch(e){ st.erro = e.message; }
+      st.carregando = false;
+    }
+    if(st.erro){ el.innerHTML = `<div class="panel"><div class="error-box">${h(st.erro)}</div><button class="btn btn-outline" id="rf-pm-retry">Tentar novamente</button></div>`; document.getElementById("rf-pm-retry").addEventListener("click", ()=>{ st.erro = ""; this.desenharRef(el); }); return; }
+    if(!st.aprov) return;
+    const nomeDe = m=>{ const u = st.usuarios.find(x=>x.matricula===m); return u ? u.nome : ""; };
+    el.innerHTML = `<div class="panel"><div class="adm-head"><h2 class="adm-h">Refeitório — aprovadores de inclusão</h2>
+        <div class="panel-actions"><button class="btn btn-primary btn-sm" id="rf-pm-salvar">Salvar aprovadores</button></div></div>
+      <p class="small-muted">As solicitações de inclusão fixa na lista do refeitório vão direto para a central de notificações destas matrículas. Quem é aprovador e também solicita tem a inclusão aceita na hora.</p>
+      <div class="panel-actions" style="align-items:flex-end;margin-bottom:12px;">
+        <div class="filter-group"><label for="rf-pm-mat">Matrícula / código</label><input type="text" inputmode="numeric" id="rf-pm-mat" list="rf-pm-lista" autocomplete="off" placeholder="Digite ou escolha"></div>
+        <datalist id="rf-pm-lista">${st.usuarios.map(u=>`<option value="${h(u.matricula)}">${h(u.nome)}</option>`).join("")}</datalist>
+        <button class="btn btn-outline btn-sm" id="rf-pm-add">＋ Adicionar</button></div>
+      <div class="table-wrap"><table class="adm-table"><thead><tr><th>Código</th><th>Nome</th><th></th></tr></thead><tbody>
+        ${st.aprov.map(a=>`<tr><td><strong>${h(a.mat)}</strong></td><td>${h(a.nome||nomeDe(a.mat)||"—")}</td><td><button class="btn btn-outline btn-sm" data-rf-del="${h(a.mat)}">Remover</button></td></tr>`).join("") || `<tr><td colspan="3" class="small-muted">Nenhum aprovador cadastrado: as solicitações ficarão sem destinatário.</td></tr>`}</tbody></table></div></div>`;
+    document.getElementById("rf-pm-add").addEventListener("click", ()=>{
+      const inp = document.getElementById("rf-pm-mat"), m = inp.value.replace(/\D/g,""); if(!m){ inp.focus(); return; }
+      if(!st.aprov.some(a=>a.mat===m)) st.aprov.push({ mat:m, nome:nomeDe(m) });
+      this.desenharRef(el);
+    });
+    el.querySelectorAll("[data-rf-del]").forEach(b=> b.addEventListener("click", ()=>{ st.aprov = st.aprov.filter(a=>a.mat!==b.dataset.rfDel); this.desenharRef(el); }));
+    document.getElementById("rf-pm-salvar").addEventListener("click", async e=>{
+      const b = e.currentTarget; b.disabled = true; b.textContent = "Salvando…";
+      let r; try{ r = await Api.call({ acao:"refeit_aprov_salvar", aprovadores: st.aprov.map(a=>a.mat) }); }catch(x){ r = { ok:false, erro:x.message }; }
+      b.disabled = false; b.textContent = "Salvar aprovadores";
+      if(r && r.ok) toast("Aprovadores salvos. As próximas solicitações já vão para eles.", "success"); else toast((r && r.erro) || "Não foi possível salvar.", "error");
+    });
   },
 
   /* ----------------------------- Painel TV ----------------------------- */
