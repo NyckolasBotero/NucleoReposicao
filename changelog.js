@@ -4,9 +4,25 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.26.0";
+const APP_VERSAO = "2.27.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.27.0", data:"2026-11-23", titulo:"Refeitório: foto no cardápio e campos arredondados", itens:[
+    "Cardápio e Adesão: cada prato pode ter uma foto (opcional). Ela aparece em miniatura no cartão do dia e, ao clicar, abre ampliada. A imagem é reduzida automaticamente ao escolher o arquivo; dá para trocar ou remover pela edição do prato.",
+    "Solicitar Inclusão: os campos Código e Nome da tabela de colaboradores agora seguem o visual do resto do sistema (cantos arredondados, foco azul).",
+    "Atenção: reimplantar o Apps Script (apps_script_nucleo.gs). A coluna Foto é criada sozinha na aba REFEIT_CARDAPIO."
+  ]},
+  { v:"2.26.2", data:"2026-11-23", titulo:"Refeitório: avisos agrupados e sem travar a tela", itens:[
+    "O aviso flutuante virou um só, no canto inferior direito: \"Você tem N solicitações a revisar\". Ele some sozinho em 5 segundos; se o mouse estiver sobre ele, fica na tela. Ao clicar, abre a lista para aprovar, recusar ou responder.",
+    "No sino de alertas, as solicitações do refeitório aparecem agrupadas em um único item com o total. Ao clicar nele, abre a mesma lista.",
+    "Depois de decidir uma solicitação, a lista reabre sozinha enquanto ainda houver pendências.",
+    "Nenhuma mudança no Apps Script nesta versão."
+  ]},
+  { v:"2.26.1", data:"2026-11-23", titulo:"Refeitório: Histórico de Aprovações só para aprovadores", itens:[
+    "A guia Histórico de Aprovações agora aparece somente para quem está na lista de aprovadores (Administração > Parâmetros > Refeitório). Antes, o administrador também a via mesmo sem ser aprovador.",
+    "O servidor também passou a recusar o pedido do histórico para quem não é aprovador, então a restrição vale mesmo fora da tela.",
+    "Atenção: reimplantar o Apps Script (apps_script_nucleo.gs)."
+  ]},
   { v:"2.26.0", data:"2026-11-23", titulo:"Controle Refeitório unificado e aprovações em tempo real", itens:[
     "Tudo do refeitório agora fica em Gestão > Controle Refeitório (abas Liberações, Solicitar Inclusão, Histórico de Aprovações, Histórico Almoço e Cardápio e Adesão). As telas Liberações Refeitório e Histórico Almoço deixaram de existir; quem tinha acesso passa a ter o novo menu.",
     "Aprovações chegam na hora: aviso flutuante na tela (sem recarregar), item na Central de Alertas (sino) e push no celular. Aprovadores recebem o acesso automaticamente.",
