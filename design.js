@@ -62,6 +62,7 @@ const Icons = {
     listcheck: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.500 6 1 1 2-2M3.500 12l1 1 2-2M3.500 18l1 1 2-2"/>',
     table: '<rect x="3.500" y="4" width="17" height="16" rx="2"/><path d="M3.500 10h17M10 10v10"/>',
     battery: '<rect x="2.500" y="8" width="17" height="8" rx="2"/><path d="M22 11v2"/><path d="M6 11v2M9.500 11v2"/>',
+    utensils: '<path d="M5 3v8a2 2 0 0 0 2 2v8"/><path d="M9 3v8a2 2 0 0 1-2 2"/><path d="M7 3v6"/><path d="M17 21V3c-2.200 1.500-3.500 4-3.500 7 0 1.800 1.200 3 3.500 3"/>',
     plane: '<path d="M17.800 19.200 16 11l3.500-3.500C21 6 21.500 4 21 3c-1-.5-3 0-4.500 1.500L13 8 4.800 6.200c-.5-.1-.9.100-1.100.5l-.3.500c-.2.500-.1 1 .3 1.300L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.500 5.300c.3.400.8.500 1.300.3l.5-.2c.4-.3.600-.7.500-1.200z"/>',
     truck: '<path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
     tag: '<path d="M3 12V4.500A1.500 1.500 0 0 1 4.500 3H12l9 9-9 9z"/><circle cx="8" cy="8" r="1.200"/>',
@@ -83,7 +84,7 @@ const Icons = {
     capacidade:"gauge", abastecimento:"layers", cd3d:"cube",
     feedbacks:"message", quadro:"users", chamada:"clipboard", auditoria:"shield", comissao:"coins", cronograma:"calendar",
     turnover:"repeat", ferias:"sun", organograma:"network",
-    lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",
+    lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", lrefeitorio:"utensils", hrefeitorio:"utensils", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",
     lcapacidade:"battery", lferias:"plane",
     bases:"database", acessos:"key", links:"link", versoes:"tag", alertas:"bell"
   },

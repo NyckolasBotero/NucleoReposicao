@@ -27,7 +27,8 @@ const PERM_ACESSOS = ['Administração', 'Acessos'];
 const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
 const PERM_RUAS = ['Gestão', 'Atribuição Ruas'];
-const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias', 'Certificados'];
+const PERM_HIST_REF = ['Gestão', 'Histórico Almoço'];
+const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias', 'Certificados', 'Liberações Refeitório'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
 const ABA_ADVERTENCIAS = 'ADVERTÊNCIAS';
@@ -121,6 +122,21 @@ function doPost(e) {
       if (d.acao === 'ruas_atribuir') { exigir(s, PERM_RUAS); return resposta(ruasAtribuir(d, s)); }
       if (d.acao === 'ruas_historico') { exigir(s, PERM_RUAS); return resposta(ruasHistorico(d)); }
       if (d.acao === 'ruas_estado_em') { exigir(s, PERM_RUAS); return resposta(ruasEstadoEm(d)); }
+      if (d.acao === 'refeit_sync') return resposta(refeitSync(d, s));
+      if (d.acao === 'refeit_ops') return resposta(refeitOps(d, s));
+      if (d.acao === 'refeit_lista_salvar') return resposta(refeitListaSalvar(d, s));
+      if (d.acao === 'refeit_fixo_status') return resposta(refeitFixoStatus(d, s));
+      if (d.acao === 'refeit_solicitar') return resposta(refeitSolicitar(d, s));
+      if (d.acao === 'refeit_decidir') return resposta(refeitDecidir(d, s));
+      if (d.acao === 'refeit_avulso_responder') return resposta(refeitAvulsoResponder(d, s));
+      if (d.acao === 'refeit_historico') return resposta(refeitHistorico(d, s));
+      if (d.acao === 'refeit_cardapio_ler') return resposta(refeitCardapioLer(d, s));
+      if (d.acao === 'refeit_cardapio_salvar') return resposta(refeitCardapioSalvar(d, s));
+      if (d.acao === 'refeit_perfis') { exigir(s, PERM_ACESSOS); return resposta(refeitPerfis()); }
+      if (d.acao === 'refeit_perfil_salvar') { exigir(s, PERM_ACESSOS); return resposta(refeitPerfilSalvar(d, s)); }
+      if (d.acao === 'refeit_setor_add') { exigir(s, PERM_ACESSOS); return resposta(refeitSetorAdd(d, s)); }
+      if (d.acao === 'refeit_aprov_ler') return resposta(refeitAprovLer(s));
+      if (d.acao === 'refeit_aprov_salvar') return resposta(refeitAprovSalvar(d, s));
       if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
     } finally { if (lk) lk.releaseLock(); }
     return resposta({ ok: false, erro: 'Ação desconhecida.' });
@@ -135,7 +151,8 @@ function doPost(e) {
 const LEITURAS_SEM_TRAVA = {
   admin_listar: 1, admin_historico: 1, alertas_ler: 1, param_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
-  lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1
+  lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1,
+  refeit_sync: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_perfis: 1, refeit_aprov_ler: 1
 };
 
 function resposta(obj) {
@@ -197,6 +214,8 @@ function lerUsuarios() {
     });
     const kr = normalizar(PERM_RUAS[0]) + '|' + normalizar(PERM_RUAS[1]);
     if (!u._vistos[kr]) { u._vistos[kr] = true; u.perms.push({ aba: PERM_RUAS[0], sub: PERM_RUAS[1] }); }
+    const kh = normalizar(PERM_HIST_REF[0]) + '|' + normalizar(PERM_HIST_REF[1]);
+    if (!u._vistos[kh]) { u._vistos[kh] = true; u.perms.push({ aba: PERM_HIST_REF[0], sub: PERM_HIST_REF[1] }); }
   });
   return { T: T, usuarios: mapa };
 }
@@ -2540,4 +2559,391 @@ function ruasEstadoEm(d) {
   }
   const mudancas = ruasHistorico({}).itens.filter(function (x) { return x.data === alvo; });
   return { ok: true, pedido: iso, foto: dia, ruas: mapa, mudancas: mudancas };
+}
+
+
+/* ===================== Refeitório Interno (Controle de Entradas) =====================
+   Abas (criadas sozinhas na planilha de dados):
+     REFEIT_FIXOS       colaboradores fixos por setor (alimentada pelas solicitações aceitas)
+     REFEIT_LIBERACOES  uma linha por colaborador liberado no dia (Fixo) ou registrado pela Portaria (Avulso)
+     REFEIT_LISTAS      quando cada setor enviou a lista do dia
+     REFEIT_SOLICITACOES pedidos de inclusão fixa e a decisão dos aprovadores
+     REFEIT_CARDAPIO    cardápio por dia
+   Perfis (papéis, nível, setores) e aprovadores ficam em ALERTAS_CONFIG, chave "refeit_cfg".
+*/
+const ABA_REF_FIXOS = 'REFEIT_FIXOS';
+const ABA_REF_LIB = 'REFEIT_LIBERACOES';
+const ABA_REF_LISTAS = 'REFEIT_LISTAS';
+const ABA_REF_SOL = 'REFEIT_SOLICITACOES';
+const ABA_REF_CARD = 'REFEIT_CARDAPIO';
+const REF_FIXOS_CAB = ['Codigo', 'Nome', 'Setor', 'IncluidoEm', 'IncluidoPor', 'Ativo'];
+const REF_LIB_CAB = ['Data', 'Codigo', 'Nome', 'Setor', 'Tipo', 'LiberadoPor', 'LiberadoEm', 'Presenca', 'HoraRegistro', 'DataRegistro', 'RegistradoPor', 'AutorizouAvulso', 'AutorizadoPor', 'AutorizadoEm', 'InclusaoSolicitada', 'Status'];
+const REF_LISTAS_CAB = ['Data', 'Setor', 'EnviadoEm', 'EnviadoPor', 'Total'];
+const REF_SOL_CAB = ['Id', 'CriadoEm', 'Codigo', 'Nome', 'Setor', 'Motivo', 'SolicitadoPor', 'SolicitadoNome', 'Origem', 'Status', 'DecididoPor', 'DecididoEm'];
+const REF_CARD_CAB = ['Id', 'Data', 'Prato', 'Acompanhamentos', 'Observacao', 'AtualizadoPor'];
+const REF_STATUS_OK = 'Almoçou no Refeitório STA';
+const REF_PAPEIS = ['Portaria', 'Encarregado', 'Cozinha'];
+const REF_SETORES_PADRAO = ['Reposição', 'Picking', 'Recebimento', 'Armazenagem', 'Expedição', 'Conferência', 'Carregamento'];
+
+function refCfg() {
+  const c = alertasLerChave('refeit_cfg') || {};
+  if (!Array.isArray(c.setores) || !c.setores.length) c.setores = REF_SETORES_PADRAO.slice();
+  if (!c.usuarios || typeof c.usuarios !== 'object') c.usuarios = {};
+  if (!Array.isArray(c.aprovadores)) c.aprovadores = [];
+  return c;
+}
+function refPerfil(s, cfg) {
+  const adm = ehAdminAlertas(s), u = cfg.usuarios[s.matricula] || {};
+  const papeis = adm ? REF_PAPEIS.slice() : (Array.isArray(u.papeis) ? u.papeis : []).filter(function (p) { return REF_PAPEIS.indexOf(p) >= 0; });
+  const geral = adm || u.nivel === 'geral';
+  const setores = geral ? cfg.setores.slice() : (Array.isArray(u.setores) ? u.setores : []);
+  return { matricula: s.matricula, nome: s.nome || nomeDaMatricula(s.matricula), papeis: papeis, geral: geral, setores: setores, admin: adm,
+    aprovador: cfg.aprovadores.indexOf(s.matricula) >= 0 };
+}
+function refTem(p, papel) { return p.papeis.indexOf(papel) >= 0; }
+function refSetorOk(p, setor) { return p.setores.some(function (x) { return normalizar(x) === normalizar(setor); }); }
+function refExigir(cond, msg) { if (!cond) throw new Error(msg || 'Sem permissão para esta ação no refeitório.'); }
+function refEncarregados(cfg) {
+  const out = {};
+  Object.keys(cfg.usuarios).forEach(function (m) {
+    const u = cfg.usuarios[m];
+    if ((u.papeis || []).indexOf('Encarregado') < 0) return;
+    (u.setores || []).forEach(function (st) { const k = normalizar(st); (out[k] = out[k] || []).push({ mat: m, nome: nomeDaMatricula(m) || m }); });
+  });
+  return out;
+}
+function refMatsEncarregados(cfg, setor) { return (refEncarregados(cfg)[normalizar(setor)] || []).map(function (x) { return x.mat; }); }
+function refAgora() { return Utilities.formatDate(new Date(), tzDados(), "yyyy-MM-dd'T'HH:mm:ss"); }
+function refTs(ts) {
+  const t = String(ts || '');
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(t)) {
+    const a = new Date(t.replace('T', ' ').replace(/-/g, '/')).getTime(), b = Date.now();
+    if (!isNaN(a) && Math.abs(a - b) < 36 * 3600 * 1000) return t;
+  }
+  return refAgora();
+}
+function refCodigo(v) { return soDigitos(v); }
+
+/** Linhas de REFEIT_LIBERACOES com Data entre ini e fim (lê de trás para frente, em blocos). */
+function refLerLib(ini, fim) {
+  const sh = abaComCabecalho(ABA_REF_LIB, REF_LIB_CAB), ult = sh.getLastRow(), out = [];
+  if (ult < 2) return { sh: sh, rows: out };
+  let f = ult;
+  while (f >= 2) {
+    const i0 = Math.max(2, f - 1999);
+    const v = sh.getRange(i0, 1, f - i0 + 1, REF_LIB_CAB.length).getDisplayValues();
+    let algum = false;
+    for (let i = v.length - 1; i >= 0; i--) {
+      const d = v[i][0];
+      if (d >= ini) algum = true;
+      if (d >= ini && d <= fim) out.push({ linha: i0 + i, v: v[i] });
+    }
+    if (!algum) break;
+    f = i0 - 1;
+  }
+  return { sh: sh, rows: out };
+}
+function refObj(r) {
+  const v = r.v;
+  return { linha: r.linha, data: v[0], cod: v[1], nome: v[2], setor: v[3], tipo: v[4], por: v[5], pres: v[7] === 'Sim', hora: v[8], dreg: v[9], regpor: v[10], aut: v[11], autpor: v[12], inc: v[14] };
+}
+function refSomaDias(iso, n) {
+  const p = iso.split('-').map(Number), d = new Date(p[0], p[1] - 1, p[2], 12);
+  d.setDate(d.getDate() + n);
+  return Utilities.formatDate(d, tzDados(), 'yyyy-MM-dd');
+}
+function refGravarLinha(sh, linha, ini, valores) {
+  sh.getRange(linha, ini, 1, valores.length).setNumberFormat('@').setValues([valores]);
+}
+function refAnexar(sh, linhas) {
+  if (!linhas.length) return;
+  const ini = sh.getLastRow() + 1;
+  sh.getRange(ini, 1, linhas.length, linhas[0].length).setNumberFormat('@').setValues(linhas);
+}
+
+function refFixos(soAtivos) {
+  const sh = abaComCabecalho(ABA_REF_FIXOS, REF_FIXOS_CAB), ult = sh.getLastRow(), out = [];
+  if (ult < 2) return { sh: sh, itens: out };
+  sh.getRange(2, 1, ult - 1, REF_FIXOS_CAB.length).getDisplayValues().forEach(function (l, i) {
+    const ativo = normalizar(l[5]) !== 'NAO';
+    if (soAtivos && !ativo) return;
+    out.push({ linha: i + 2, cod: l[0], nome: l[1], setor: l[2], ativo: ativo });
+  });
+  return { sh: sh, itens: out };
+}
+function refSolicitacoes() {
+  const sh = abaComCabecalho(ABA_REF_SOL, REF_SOL_CAB), ult = sh.getLastRow(), out = [];
+  if (ult < 2) return { sh: sh, itens: out };
+  sh.getRange(2, 1, ult - 1, REF_SOL_CAB.length).getDisplayValues().forEach(function (l, i) {
+    out.push({ linha: i + 2, id: l[0], criado: l[1], cod: l[2], nome: l[3], setor: l[4], motivo: l[5], por: l[6], pornome: l[7], origem: l[8], status: l[9], decpor: l[10], decem: l[11] });
+  });
+  return { sh: sh, itens: out };
+}
+
+/* ---------- leitura: o que a tela precisa (chamada a cada poucos segundos) ---------- */
+function refeitSync(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg), dia = hoje();
+  const data = /^\d{4}-\d{2}-\d{2}$/.test(String(d.data || '')) ? d.data : dia;
+  const out = { ok: true, hoje: dia, agora: refAgora(), data: data, perfil: p, setores: cfg.setores, encarregados: refEncarregados(cfg) };
+  const veLista = refTem(p, 'Portaria') || refTem(p, 'Encarregado') || p.geral;
+  const lib = veLista ? refLerLib(data, data) : { rows: [] };
+  const todos = refTem(p, 'Portaria');
+  out.dia = lib.rows.map(refObj).filter(function (r) { return todos || p.geral || refSetorOk(p, r.setor); }).map(function (r) {
+    return { cod: r.cod, nome: r.nome, setor: r.setor, tipo: r.tipo, pres: r.pres, hora: r.hora, dreg: r.dreg, aut: r.aut, inc: r.inc };
+  });
+  // lista enviada por setor
+  out.listas = {};
+  const shL = abaComCabecalho(ABA_REF_LISTAS, REF_LISTAS_CAB);
+  if (shL.getLastRow() >= 2) shL.getRange(2, 1, shL.getLastRow() - 1, 5).getDisplayValues().forEach(function (l) {
+    if (l[0] === data) out.listas[normalizar(l[1])] = { enviadoEm: l[2], por: l[3], total: Number(l[4]) || 0 };
+  });
+  // fixos dos setores do encarregado
+  if (refTem(p, 'Encarregado')) out.fixos = refFixos(true).itens.filter(function (f) { return refSetorOk(p, f.setor); }).map(function (f) { return { cod: f.cod, nome: f.nome, setor: f.setor }; });
+  // notificações
+  out.notif = { avulsos: [], aprovacoes: [] };
+  if (refTem(p, 'Encarregado')) {
+    refLerLib(refSomaDias(dia, -7), dia).rows.map(refObj).forEach(function (r) {
+      if (r.tipo === 'Avulso' && !r.aut && refSetorOk(p, r.setor)) out.notif.avulsos.push({ data: r.data, cod: r.cod, nome: r.nome, setor: r.setor, hora: r.hora });
+    });
+  }
+  if (p.aprovador || refTem(p, 'Encarregado')) {
+    const sol = refSolicitacoes().itens;
+    if (p.aprovador) out.notif.aprovacoes = sol.filter(function (x) { return x.status === 'Pendente'; }).map(function (x) { return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, pornome: x.pornome, origem: x.origem }; });
+    out.minhas = sol.filter(function (x) { return x.por === s.matricula; }).slice(-30).reverse().map(function (x) { return { id: x.id, criado: x.criado, cod: x.cod, nome: x.nome, setor: x.setor, motivo: x.motivo, status: x.status, origem: x.origem, decem: x.decem }; });
+  }
+  return out;
+}
+
+/* ---------- Portaria: presença e avulsos (lote, pensado para a interface otimista) ---------- */
+function refeitOps(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Portaria'), 'Só a Portaria (Bravo) registra presença.');
+  const ops = Array.isArray(d.ops) ? d.ops.slice(0, 60) : [];
+  const resultados = [], cache = {};
+  const doDia = function (data) { return cache[data] = cache[data] || refLerLib(data, data); };
+  ops.forEach(function (op) {
+    const res = { id: op.id, ok: true };
+    try {
+      const data = /^\d{4}-\d{2}-\d{2}$/.test(String(op.data || '')) ? op.data : hoje(), cod = refCodigo(op.cod);
+      if (!cod) throw new Error('Informe o código.');
+      const L = doDia(data), ts = refTs(op.ts);
+      let alvo = null;
+      L.rows.forEach(function (r) { if (r.v[1] === cod) alvo = r; });
+      if (op.tipo === 'avulso') {
+        if (alvo) { // já estava na lista: só marca a presença
+          if (alvo.v[7] !== 'Sim') { refMarcar(L.sh, alvo, true, ts, s); }
+          res.existente = true;
+        } else {
+          const nome = texto(op.nome).slice(0, 80), setor = texto(op.setor);
+          if (!nome) throw new Error('Informe o nome.');
+          if (!setor) throw new Error('Escolha o setor.');
+          const linha = [data, cod, nome, setor, 'Avulso', s.nome || s.matricula, ts, 'Sim', ts.slice(11, 19), ts.slice(0, 10), s.nome || s.matricula, '', '', '', '', REF_STATUS_OK];
+          refAnexar(L.sh, [linha]);
+          L.rows.push({ linha: L.sh.getLastRow(), v: linha });
+          const dest = refMatsEncarregados(cfg, setor);
+          if (dest.length) pushEnviar(dest, 'Almoço avulso no refeitório', cod + ' - ' + nome + ' almoçou como avulso no setor ' + setor + '. Responda no sistema.', 'refeit_avulso');
+        }
+      } else {
+        if (!alvo) throw new Error('O código ' + cod + ' não está na lista deste dia.');
+        refMarcar(L.sh, alvo, !!op.presente, ts, s);
+      }
+    } catch (e) { res.ok = false; res.erro = String(e && e.message || e); }
+    resultados.push(res);
+  });
+  return { ok: true, resultados: resultados };
+}
+function refMarcar(sh, r, presente, ts, s) {
+  const v = r.v;
+  v[7] = presente ? 'Sim' : ''; v[8] = presente ? ts.slice(11, 19) : ''; v[9] = presente ? ts.slice(0, 10) : ''; v[10] = presente ? (s.nome || s.matricula) : ''; v[15] = presente ? REF_STATUS_OK : '';
+  refGravarLinha(sh, r.linha, 8, [v[7], v[8], v[9], v[10]]);
+  refGravarLinha(sh, r.linha, 16, [v[15]]);
+}
+
+/* ---------- Encarregado: pré-liberação do dia ---------- */
+function refeitListaSalvar(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Encarregado'), 'Só o encarregado faz a pré-liberação.');
+  const data = String(d.data || ''), setor = texto(d.setor);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Data inválida.');
+  if (data < hoje()) throw new Error('Não é possível alterar a lista de um dia que já passou.');
+  refExigir(refSetorOk(p, setor), 'Você não está vinculado ao setor ' + setor + '.');
+  const cods = (Array.isArray(d.codigos) ? d.codigos : []).map(refCodigo).filter(Boolean);
+  const fx = {}; refFixos(true).itens.forEach(function (f) { if (normalizar(f.setor) === normalizar(setor)) fx[f.cod] = f; });
+  cods.forEach(function (c) { if (!fx[c]) throw new Error('O código ' + c + ' não é fixo do setor ' + setor + '.'); });
+  const L = refLerLib(data, data), agora = refAgora(), marcados = {};
+  cods.forEach(function (c) { marcados[c] = true; });
+  const existentes = {}, apagar = [];
+  L.rows.forEach(function (r) {
+    if (normalizar(r.v[3]) !== normalizar(setor)) return;
+    existentes[r.v[1]] = true;
+    if (r.v[4] === 'Fixo' && !marcados[r.v[1]]) { if (r.v[7] === 'Sim') throw new Error('O código ' + r.v[1] + ' já registrou presença e não pode sair da lista.'); apagar.push(r.linha); }
+  });
+  apagar.sort(function (a, b) { return b - a; }).forEach(function (ln) { L.sh.deleteRow(ln); });
+  const novas = cods.filter(function (c) { return !existentes[c]; }).map(function (c) {
+    return [data, c, fx[c].nome, fx[c].setor, 'Fixo', s.nome || s.matricula, agora, '', '', '', '', '', '', '', '', ''];
+  });
+  refAnexar(L.sh, novas);
+  // registro do envio
+  const sl = abaComCabecalho(ABA_REF_LISTAS, REF_LISTAS_CAB), ult = sl.getLastRow();
+  let linha = 0;
+  if (ult >= 2) { const v = sl.getRange(2, 1, ult - 1, 2).getDisplayValues(); for (let i = 0; i < v.length; i++) if (v[i][0] === data && normalizar(v[i][1]) === normalizar(setor)) linha = i + 2; }
+  refGravarLinha(sl, linha || ult + 1, 1, [data, setor, agora, s.nome || s.matricula, String(cods.length)]);
+  registrarLog(s, 'Refeitório (lista)', data + ' · ' + setor + ' · ' + cods.length + ' liberado(s)');
+  return { ok: true, total: cods.length, enviadoEm: agora };
+}
+function refeitFixoStatus(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Encarregado'));
+  const cod = refCodigo(d.cod), setor = texto(d.setor);
+  refExigir(refSetorOk(p, setor), 'Você não está vinculado ao setor ' + setor + '.');
+  const F = refFixos(false);
+  const f = F.itens.filter(function (x) { return x.cod === cod && normalizar(x.setor) === normalizar(setor); })[0];
+  if (!f) throw new Error('Colaborador não encontrado na lista fixa.');
+  refGravarLinha(F.sh, f.linha, 6, [d.ativo ? 'Sim' : 'Não']);
+  registrarLog(s, 'Refeitório (fixo)', cod + ' · ' + setor + (d.ativo ? ' · reativado' : ' · removido'));
+  return { ok: true };
+}
+
+/* ---------- Solicitação de inclusão fixa e aprovação ---------- */
+function refCriarSolicitacao(cfg, p, s, d, origem) {
+  const cod = refCodigo(d.cod), nome = texto(d.nome).slice(0, 80), setor = texto(d.setor), motivo = texto(d.motivo).slice(0, 300);
+  if (!cod) throw new Error('Informe o código do colaborador.');
+  if (!nome) throw new Error('Informe o nome do colaborador.');
+  if (!setor) throw new Error('Escolha o setor.');
+  if (!motivo) throw new Error('Informe o motivo da inclusão.');
+  refExigir(refSetorOk(p, setor), 'Você não está vinculado ao setor ' + setor + '.');
+  if (refFixos(true).itens.some(function (f) { return f.cod === cod && normalizar(f.setor) === normalizar(setor); })) throw new Error('O colaborador ' + cod + ' já é fixo do setor ' + setor + '.');
+  const S = refSolicitacoes();
+  if (S.itens.some(function (x) { return x.cod === cod && normalizar(x.setor) === normalizar(setor) && x.status === 'Pendente'; })) throw new Error('Já existe uma solicitação pendente para ' + cod + ' neste setor.');
+  const auto = p.aprovador, agora = refAgora(), id = Utilities.getUuid().slice(0, 8);
+  refAnexar(S.sh, [[id, agora, cod, nome, setor, motivo, s.matricula, s.nome || s.matricula, origem, auto ? 'Aceita' : 'Pendente', auto ? s.matricula : '', auto ? agora : '']]);
+  if (auto) refIncluirFixo(cod, nome, setor, s);
+  else if (cfg.aprovadores.length) pushEnviar(cfg.aprovadores, 'Solicitação de inclusão no refeitório', (s.nome || s.matricula) + ' pede incluir ' + cod + ' - ' + nome + ' (' + setor + ').', 'refeit_aprov');
+  registrarLog(s, 'Refeitório (solicitação)', cod + ' · ' + setor + ' · ' + (auto ? 'aceita direto' : 'pendente'));
+  return auto ? 'Aceita' : 'Pendente';
+}
+function refIncluirFixo(cod, nome, setor, s) {
+  const F = refFixos(false), f = F.itens.filter(function (x) { return x.cod === cod && normalizar(x.setor) === normalizar(setor); })[0];
+  if (f) { refGravarLinha(F.sh, f.linha, 1, [cod, nome, setor, refAgora(), s.nome || s.matricula, 'Sim']); return; }
+  refAnexar(F.sh, [[cod, nome, setor, refAgora(), s.nome || s.matricula, 'Sim']]);
+}
+function refeitSolicitar(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Encarregado'), 'Só o encarregado solicita inclusão.');
+  return { ok: true, status: refCriarSolicitacao(cfg, p, s, d, 'Manual') };
+}
+function refeitDecidir(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(p.aprovador, 'Você não está na lista de aprovadores.');
+  const S = refSolicitacoes(), x = S.itens.filter(function (i) { return i.id === String(d.id); })[0];
+  if (!x) throw new Error('Solicitação não encontrada.');
+  if (x.status !== 'Pendente') throw new Error('Esta solicitação já foi decidida (' + x.status + ').');
+  const aceitar = !!d.aceitar;
+  refGravarLinha(S.sh, x.linha, 10, [aceitar ? 'Aceita' : 'Negada', s.matricula, refAgora()]);
+  if (aceitar) refIncluirFixo(x.cod, x.nome, x.setor, s);
+  if (x.por) pushEnviar([x.por], 'Inclusão no refeitório ' + (aceitar ? 'aceita' : 'negada'), x.cod + ' - ' + x.nome + ' (' + x.setor + ')', 'refeit_dec');
+  registrarLog(s, 'Refeitório (decisão)', x.cod + ' · ' + x.setor + ' · ' + (aceitar ? 'aceita' : 'negada'));
+  return { ok: true };
+}
+function refeitAvulsoResponder(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Encarregado'));
+  const data = String(d.data || ''), cod = refCodigo(d.cod), aut = d.autorizou === 'Sim' ? 'Sim' : (d.autorizou === 'Não' ? 'Não' : '');
+  if (!aut) throw new Error('Responda se autorizou a entrada avulsa.');
+  const L = refLerLib(data, data), r = L.rows.filter(function (x) { return x.v[1] === cod && x.v[4] === 'Avulso'; })[0];
+  if (!r) throw new Error('Registro avulso não encontrado.');
+  refExigir(refSetorOk(p, r.v[3]), 'Este avulso é de outro setor.');
+  if (r.v[11]) throw new Error('Este avulso já foi respondido.');
+  const incluir = !!d.incluir;
+  if (incluir) refCriarSolicitacao(cfg, p, s, { cod: cod, nome: r.v[2], setor: r.v[3], motivo: d.motivo }, 'Avulso');
+  refGravarLinha(L.sh, r.linha, 12, [aut, s.nome || s.matricula, refAgora(), incluir ? 'Sim' : 'Não']);
+  registrarLog(s, 'Refeitório (avulso)', data + ' · ' + cod + ' · autorizou ' + aut + (incluir ? ' · pediu inclusão' : ''));
+  return { ok: true };
+}
+
+/* ---------- Histórico e indicadores ---------- */
+function refeitHistorico(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Encarregado') || p.geral, 'Sem acesso ao histórico do refeitório.');
+  const dia = hoje(), ini = /^\d{4}-\d{2}-\d{2}$/.test(String(d.ini || '')) ? d.ini : dia.slice(0, 8) + '01', fim = /^\d{4}-\d{2}-\d{2}$/.test(String(d.fim || '')) ? d.fim : dia;
+  const de = [ini, dia.slice(0, 8) + '01', refSomaDias(dia, -1)].sort()[0], ate = [fim, dia].sort().reverse()[0];
+  const linhas = refLerLib(de, ate).rows.map(refObj).filter(function (r) { return p.geral || refSetorOk(p, r.setor); }).map(function (r) {
+    return [r.data, r.cod, r.nome, r.setor, r.tipo, r.pres ? 1 : 0, r.hora, r.aut, r.inc, r.por];
+  });
+  return { ok: true, hoje: dia, de: de, ate: ate, linhas: linhas, setores: p.geral ? cfg.setores : p.setores, encarregados: refEncarregados(cfg), geral: p.geral };
+}
+
+/* ---------- Cardápio e adesão ---------- */
+function refeitCardapioLer(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Cozinha'), 'Só o gestor de cozinha acessa o cardápio.');
+  const dia = hoje(), ini = /^\d{4}-\d{2}-\d{2}$/.test(String(d.ini || '')) ? d.ini : refSomaDias(dia, -60), fim = /^\d{4}-\d{2}-\d{2}$/.test(String(d.fim || '')) ? d.fim : refSomaDias(dia, 30);
+  const sh = abaComCabecalho(ABA_REF_CARD, REF_CARD_CAB), ult = sh.getLastRow(), itens = [];
+  if (ult >= 2) sh.getRange(2, 1, ult - 1, 5).getDisplayValues().forEach(function (l) { if (l[1] >= ini && l[1] <= fim) itens.push({ id: l[0], data: l[1], prato: l[2], acomp: l[3], obs: l[4] }); });
+  const adesao = {};
+  refLerLib(ini, [fim, dia].sort()[0]).rows.forEach(function (r) {
+    const a = adesao[r.v[0]] = adesao[r.v[0]] || { liberados: 0, almocaram: 0, avulsos: 0 };
+    if (r.v[4] === 'Fixo') a.liberados++;
+    else a.avulsos++;
+    if (r.v[7] === 'Sim') a.almocaram++;
+  });
+  return { ok: true, hoje: dia, itens: itens, adesao: adesao };
+}
+function refeitCardapioSalvar(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Cozinha'), 'Só o gestor de cozinha altera o cardápio.');
+  const sh = abaComCabecalho(ABA_REF_CARD, REF_CARD_CAB), ult = sh.getLastRow();
+  const id = texto(d.id);
+  let linha = 0;
+  if (id && ult >= 2) { const v = sh.getRange(2, 1, ult - 1, 1).getDisplayValues(); for (let i = 0; i < v.length; i++) if (v[i][0] === id) linha = i + 2; }
+  if (d.excluir) { if (linha) sh.deleteRow(linha); registrarLog(s, 'Refeitório (cardápio)', 'excluído ' + id); return { ok: true }; }
+  const data = String(d.data || ''), prato = texto(d.prato).slice(0, 120);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Data inválida.');
+  if (!prato) throw new Error('Informe o prato.');
+  const nova = [id || Utilities.getUuid().slice(0, 8), data, prato, texto(d.acomp).slice(0, 200), texto(d.obs).slice(0, 200), s.nome || s.matricula];
+  refGravarLinha(sh, linha || ult + 1, 1, nova);
+  registrarLog(s, 'Refeitório (cardápio)', data + ' · ' + prato);
+  return { ok: true, id: nova[0] };
+}
+
+/* ---------- Administração: perfis (Acessos) e aprovadores (Parâmetros) ---------- */
+function refeitPerfis() {
+  const c = refCfg();
+  return { ok: true, setores: c.setores, usuarios: c.usuarios, aprovadores: c.aprovadores };
+}
+function refeitPerfilSalvar(d, s) {
+  const c = refCfg(), mat = soDigitos(d.matricula);
+  if (!mat) throw new Error('Informe a matrícula.');
+  const papeis = (Array.isArray(d.papeis) ? d.papeis : []).filter(function (x) { return REF_PAPEIS.indexOf(x) >= 0; });
+  const setores = (Array.isArray(d.setores) ? d.setores : []).map(texto).filter(function (x) { return x; });
+  const geral = d.nivel === 'geral';
+  if (papeis.length || geral || setores.length) c.usuarios[mat] = { papeis: papeis, nivel: geral ? 'geral' : 'restrito', setores: setores };
+  else delete c.usuarios[mat];
+  if (d.original && soDigitos(d.original) !== mat) delete c.usuarios[soDigitos(d.original)];
+  alertasGravarChave('refeit_cfg', c);
+  registrarLog(s, 'Refeitório (perfil)', mat + ' · ' + papeis.join('/') + ' · ' + (geral ? 'visão geral' : setores.join(', ')));
+  return { ok: true };
+}
+function refeitSetorAdd(d, s) {
+  const c = refCfg(), nome = texto(d.nome).replace(/\s+/g, ' ').slice(0, 40);
+  if (!nome) throw new Error('Informe o nome do setor.');
+  if (c.setores.some(function (x) { return normalizar(x) === normalizar(nome); })) throw new Error('Esse setor já existe.');
+  c.setores.push(nome);
+  alertasGravarChave('refeit_cfg', c);
+  registrarLog(s, 'Refeitório (setor)', 'novo setor: ' + nome);
+  return { ok: true, setores: c.setores, nome: nome };
+}
+function refeitAprovLer(s) {
+  refExigir(ehAdminAlertas(s), 'Só o administrador define os aprovadores.');
+  const c = refCfg(), r = lerUsuarios();
+  return { ok: true, aprovadores: c.aprovadores.map(function (m) { return { mat: m, nome: (r.usuarios[m] && r.usuarios[m].nome) || nomeDaMatricula(m) || '' }; }),
+    usuarios: Object.keys(r.usuarios).filter(function (m) { return !r.usuarios[m].bloqueado; }).map(function (m) { return { matricula: m, nome: r.usuarios[m].nome || nomeDaMatricula(m) }; }) };
+}
+function refeitAprovSalvar(d, s) {
+  refExigir(ehAdminAlertas(s), 'Só o administrador define os aprovadores.');
+  const c = refCfg();
+  c.aprovadores = (Array.isArray(d.aprovadores) ? d.aprovadores : []).map(soDigitos).filter(function (m, i, a) { return m && a.indexOf(m) === i; });
+  alertasGravarChave('refeit_cfg', c);
+  registrarLog(s, 'Refeitório (aprovadores)', c.aprovadores.join(', ') || 'nenhum');
+  return { ok: true, aprovadores: c.aprovadores };
 }

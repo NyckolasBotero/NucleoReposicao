@@ -4,9 +4,19 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.22.1";
+const APP_VERSAO = "2.23.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.23.0", data:"2026-11-23", titulo:"Refeitório Interno: controle de entradas digital", itens:[
+    "Novo módulo no lugar das listas em papel: Lançamentos > Liberações Refeitório e Gestão > Histórico Almoço, com abas Liberações Refeitório, Solicitar Inclusão, Histórico e Indicadores e Cardápio e Adesão (cada pessoa vê só as abas do seu perfil).",
+    "Portaria (Bravo): lista do dia de todos os setores com busca instantânea por código ou nome. A presença marca na hora (horário e data automáticos) e sincroniza em segundo plano, sem telas de carregamento. Digitar o código e teclar Enter registra a presença.",
+    "Registro Avulso: quem almoça sem estar na lista entra na contagem como avulso e o encarregado do setor é avisado (notificação no sistema e push no celular). O encarregado responde se autorizou e se quer pedir a inclusão fixa; a resposta fica para auditoria.",
+    "Encarregado: pré-liberação diária por setor (marcar e enviar a lista, com status de envio) e solicitação de inclusão fixa com motivo obrigatório. Os aprovadores aceitam ou negam pelas notificações.",
+    "Histórico e Indicadores: hoje, ontem e acumulado do mês (almoçaram x liberados que não almoçaram), por setor, dia a dia, auditoria de avulsos e registros, com filtros de período, setor e encarregado (Visão Geral).",
+    "Cardápio e Adesão (Gestor de Cozinha): cardápio semanal por dia e adesão por prato.",
+    "Administração > Acessos: papéis do refeitório, nível (restrito aos setores ou visão geral) e vários setores por usuário, com \"＋ Novo Setor\". Administração > Parâmetros > Refeitório: lista de aprovadores.",
+    "Atenção: reimplantar o Apps Script (apps_script_nucleo.gs). As abas REFEIT_* são criadas sozinhas no primeiro uso."
+  ]},
   { v:"2.22.1", data:"2026-11-17", titulo:"Comissão: faixas de qualidade voltam como opção nos parâmetros", itens:[
     "Novo parâmetro \"Usar faixas de qualidade?\" (Parâmetros > Comissão, junto de Desconto por qualidade). Em Não (padrão), a qualidade geral é direto o % da comissão que sobra; em Sim, vale a regra antiga por faixas: abaixo de 50% zera, 50 a 69% paga metade, 70% ou mais paga o % da qualidade.",
     "A regra aplicada de cada repositor, o resumo e o PDF indicam qual modo está ativo. Como os demais parâmetros, vale por mês e é gravado ao salvar os parâmetros."

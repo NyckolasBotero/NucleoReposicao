@@ -140,6 +140,12 @@ const DOC_FILTROS = {
     { id:"organograma", menu:"gestao", nome:"Organograma", filtros:[
       ["Mostrar outros setores?","alternar","toggle-group","Não / Sim"]
     ]},
+    { id:"hrefeitorio", menu:"gestao", nome:"Histórico Almoço", filtros:[
+      ["Data inicial / Data final + atalhos (Mês atual, Mês anterior, 7 dias)","periodo","inline","hs-ini / hs-fim / hs-atalhos"],
+      ["Setor","lista","inline","hs-setor (Todos os setores)"],
+      ["Encarregado (só Visão Geral)","lista","inline","hs-enc (Todos)"],
+      ["Buscar colaborador","busca","inline","hs-q"]
+    ]},
     { id:"ruas", menu:"gestao", nome:"Atribuição Ruas", filtros:[
       ["Período dos %","lista","próprio","rs-per"],
       ["Colorir por","lista","próprio","rs-col (Repositor / Qualidade)"],
@@ -155,6 +161,11 @@ const DOC_FILTROS = {
     ]},
     { id:"lsuspensao", menu:"lancamentos", nome:"Lançar Suspensão", filtros:[
       ["Buscar matrícula, nome ou motivo","busca","inline","sp-l-busca"]
+    ]},
+    { id:"lrefeitorio", menu:"lancamentos", nome:"Liberações Refeitório", filtros:[
+      ["Buscar por código ou nome (Portaria)","busca","inline","rf-q"],
+      ["Data da lista (Pré-liberação)","data","inline","pre-data"],
+      ["Setor, Encarregado, período e busca (aba Histórico e Indicadores)","lista","inline","hs-setor / hs-enc / hs-ini / hs-fim / hs-q"]
     ]},
     { id:"lcoletores", menu:"lancamentos", nome:"Controle de Coletores", filtros:[
       ["Buscar ID, nome, login, usuário","busca","inline","col-q"],
