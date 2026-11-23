@@ -65,7 +65,7 @@ const RefeitUI = {
       const c = this.cacheLer();
       if(c){ this.perfil = c.perfil; this.setores = c.setores; this.encarregados = c.encarregados; this.hoje = c.hoje; this.dia = c.dia; this.carregado = true; this.dataSel = c.hoje; }
     }
-    this.tab = null;
+    this.tab = this.proxTab || null; this.proxTab = null;
     this.desenhar();
     this.sync(false, true);
     this.iniciarPoll();
@@ -196,6 +196,7 @@ const RefeitUI = {
   /* ------------------------------ Tab 1: Liberações ------------------------------ */
   telaLib(corpo){
     const ambos = this.tem("Portaria") && this.tem("Encarregado");
+    if(this.proxSub){ this.sub = this.proxSub; this.proxSub = null; }
     if(!this.sub || (this.sub === "portaria" && !this.tem("Portaria")) || (this.sub === "pre" && !this.tem("Encarregado"))) this.sub = this.tem("Portaria") ? "portaria" : "pre";
     const sw = ambos ? `<div class="toggle-group rf-sub"><button type="button" data-rf-sub="portaria" class="${this.sub === "portaria" ? "active" : ""}">Portaria (Bravo)</button><button type="button" data-rf-sub="pre" class="${this.sub === "pre" ? "active" : ""}">Pré-liberação</button></div>` : "";
     corpo.innerHTML = `${sw}<div id="rf-lib"></div>`;
@@ -217,7 +218,7 @@ const RefeitUI = {
   linhaHtml(r){
     return `<tr class="rf-row ${r.pres ? "on" : ""} ${r.tipo === "Avulso" ? "avu" : ""}" data-cod="${this.h(r.cod)}" data-q="${this.h(this.norm(r.cod + " " + r.nome))}">
       <td><strong>${this.h(r.cod)}</strong></td>
-      <td>${this.h(r.nome)}${r.tipo === "Avulso" ? ` <span class="adm-tag rep">Avulso</span>` : ""}</td>
+      <td>${this.h(r.nome)}${r.tipo === "Avulso" ? ` <span class="adm-tag rep">Avulso</span>` : r.tipo === "Pontual" ? ` <span class="adm-tag">Pontual</span>` : ""}</td>
       <td>${this.h(r.setor)}</td><td>${this.h(this.encNome(r.setor))}</td>
       <td class="rf-hora">${r.pres ? this.h(r.hora) : "—"}</td><td class="rf-data">${r.pres ? this.br(r.dreg) : "—"}</td>
       <td class="rf-pres"><label class="rf-chk" title="Presença"><input type="checkbox" ${r.pres ? "checked" : ""} aria-label="Presença de ${this.h(r.nome)}"><span></span></label></td></tr>`;
@@ -332,12 +333,16 @@ const RefeitUI = {
     const cards = meus.map(st => this.cardSetor(st, dsel)).join("");
     box.innerHTML = `<div class="panel"><div class="adm-head"><h2 class="adm-h">Pré-liberação do refeitório</h2>
         <div class="panel-actions"><div class="filter-group" style="min-width:150px"><label for="pre-data">Data da lista</label><input type="date" id="pre-data" value="${dsel}" min="${this.hojeIso()}"></div></div></div>
-        <p class="small-muted">Marque quem do seu setor está liberado para almoçar no Refeitório Interno nesse dia e envie a lista. A Portaria vê o resultado na hora.</p></div>
+        <p class="small-muted">Marque quem do seu setor está liberado para almoçar no Refeitório Interno nesse dia e envie a lista. A Portaria vê o resultado na hora.</p>
+        <div class="panel-actions"><button type="button" class="btn btn-primary btn-sm" id="pre-add">＋ Adicionar pessoa ao dia</button><button type="button" class="btn btn-outline btn-sm" id="pre-perm">Solicitar inclusão permanente</button></div></div>
       ${cards || `<div class="panel"><div class="hint-box">Você ainda não está vinculado a nenhum setor. Peça ao administrador em Administração > Acessos.</div></div>`}`;
     document.getElementById("pre-data").addEventListener("change", e => {
       const v = e.target.value; if(!v || v < this.hojeIso()){ e.target.value = dsel; return; }
       this.dataSel = v; this.sel = {}; this.carregado = true; this.sync(false, true);
     });
+    document.getElementById("pre-add").addEventListener("click", () => this.modalPontual());
+    document.getElementById("pre-perm").addEventListener("click", () => { this.tab = "sol"; this.desenhar(); });
+    box.querySelectorAll("[data-pre-pont]").forEach(b => b.addEventListener("click", () => this.removerPontual(b.dataset.prePont)));
     box.querySelectorAll("[data-pre-chk]").forEach(c => c.addEventListener("change", () => {
       const st = c.dataset.setor, s = this.sel[st] = this.sel[st] || new Set();
       if(c.checked) s.add(c.dataset.preChk); else s.delete(c.dataset.preChk);
@@ -362,7 +367,9 @@ const RefeitUI = {
     const presentes = new Set(doDia.filter(r => r.pres).map(r => r.cod));
     const linhas = fx.map(f => `<label class="rf-item ${presentes.has(f.cod) ? "bloq" : ""}"><input type="checkbox" data-pre-chk="${this.h(f.cod)}" data-setor="${this.h(st)}" ${s.has(f.cod) || presentes.has(f.cod) ? "checked" : ""} ${presentes.has(f.cod) ? "disabled" : ""}>
         <span>${this.pessoa(f.cod, f.nome)}${presentes.has(f.cod) ? ` <span class="adm-tag acc">já almoçou</span>` : ""}</span>
-        <button type="button" class="rf-rem" data-pre-rem="${this.h(f.cod)}" data-setor="${this.h(st)}" data-nome="${this.h(f.nome)}" title="Tirar da lista fixa do setor">remover</button></label>`).join("");
+        <button type="button" class="rf-rem" data-pre-rem="${this.h(f.cod)}" data-setor="${this.h(st)}" data-nome="${this.h(f.nome)}" title="Excluir da lista fixa do setor">excluir da lista</button></label>`).join("");
+    const pont = doDia.filter(r => r.tipo === "Pontual");
+    const pontHtml = pont.length ? `<div class="rf-avs"><h4>Adicionados só para ${this.br(data)}</h4>${pont.map(r => `<div class="rf-av"><span>${this.pessoa(r.cod, r.nome)}</span>${r.pres ? `<span class="adm-tag acc">já almoçou</span>` : `<button type="button" class="rf-rem" data-pre-pont="${this.h(r.cod)}">excluir do dia</button>`}</div>`).join("")}</div>` : "";
     const avulsos = doDia.filter(r => r.tipo === "Avulso");
     const avHtml = avulsos.length ? `<div class="rf-avs"><h4>Avulsos deste dia</h4>${avulsos.map(r => `<div class="rf-av"><span>${this.pessoa(r.cod, r.nome)} <span class="small-muted">${this.h(r.hora)}</span></span>${r.aut === "Sim" ? `<span class="adm-tag acc">Autorizado</span>` : r.aut === "Não" ? `<span class="adm-tag err">Não autorizado</span>` : `<span class="adm-tag rep">Aguardando sua resposta</span>`}</div>`).join("")}</div>` : "";
     return `<div class="panel rf-setor"><div class="adm-head"><h3 class="adm-h" style="margin:0">${this.h(st)}</h3>${status}</div>
@@ -370,7 +377,41 @@ const RefeitUI = {
         <div class="rf-lista">${linhas}</div>
         <div class="adm-actions"><button type="button" class="btn btn-primary" data-pre-enviar="${this.h(st)}">${lista ? "Atualizar lista" : "Enviar lista"} de ${this.br(data)}</button></div>`
         : `<div class="hint-box">Este setor ainda não tem colaboradores fixos. Inclua pela aba <a href="#" data-ir-sol>Solicitar Inclusão</a>.</div>`}
-      ${avHtml}</div>`;
+      ${pontHtml}${avHtml}</div>`;
+  },
+  proximoDiaUtil(){ let d = this.soma(this.hojeIso(), 1); while([0, 6].includes(this.aData(d).getDay())) d = this.soma(d, 1); return d; },
+  modalPontual(){
+    this.carregarPessoas();
+    const meus = this.perfil.setores || [], hj = this.hojeIso(), am = this.proximoDiaUtil();
+    UI.openModal(`<h3 style="margin-top:0;">Adicionar pessoa ao dia</h3>
+      <p class="small-muted">Libera alguém só para a data escolhida, sem entrar na lista fixa. Para ficar permanente, use "Solicitar inclusão permanente".</p>
+      <div class="adm-form" style="grid-template-columns:1fr;">
+        <div class="filter-group"><label>Data</label><div class="toggle-group" id="pt-dias"><button type="button" class="active" data-d="${hj}">Hoje</button><button type="button" data-d="${am}">${this.soma(hj, 1) === am ? "Amanhã" : "Próximo dia útil"} (${this.br2(am)})</button><button type="button" data-d="">Outra data</button></div>
+          <input type="date" id="pt-data" value="${hj}" min="${hj}" style="display:none;margin-top:6px"></div>
+        <label>Código<input type="text" inputmode="numeric" id="pt-cod" autocomplete="off"></label>
+        <label>Nome<input type="text" id="pt-nome" autocomplete="off"></label>
+        <label>Setor<select id="pt-setor">${meus.length === 1 ? "" : `<option value="">Selecione o setor</option>`}${meus.map(s => `<option value="${this.h(s)}">${this.h(s)}</option>`).join("")}</select></label>
+      </div><div id="pt-msg"></div>
+      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="pt-ok">Adicionar</button></div>`);
+    const di = document.getElementById("pt-data"), g = document.getElementById("pt-dias");
+    g.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { g.querySelectorAll("button").forEach(x => x.classList.remove("active")); b.classList.add("active"); if(b.dataset.d){ di.value = b.dataset.d; di.style.display = "none"; } else { di.style.display = ""; di.focus(); } }));
+    const cd = document.getElementById("pt-cod"), nm = document.getElementById("pt-nome");
+    cd.addEventListener("change", () => { const n = this.pessoas && this.pessoas[cd.value.replace(/\D/g, "")]; if(n && !nm.value) nm.value = n; });
+    document.getElementById("pt-ok").addEventListener("click", async e => {
+      const f = { data: di.value, cod: cd.value.replace(/\D/g, ""), nome: nm.value.trim(), setor: document.getElementById("pt-setor").value }, msg = document.getElementById("pt-msg");
+      if(!f.data || !f.cod || !f.nome || !f.setor){ msg.innerHTML = `<div class="error-box" style="margin-top:12px;">Informe data, código, nome e setor.</div>`; return; }
+      const b = e.currentTarget; b.disabled = true; b.textContent = "Adicionando…";
+      const r = await this.chamar(Object.assign({ acao: "refeit_pontual" }, f));
+      if(!r || !r.ok){ b.disabled = false; b.textContent = "Adicionar"; msg.innerHTML = `<div class="error-box" style="margin-top:12px;">${this.h((r && r.erro) || "Não foi possível adicionar.")}</div>`; return; }
+      UI.closeModal(); toast(`${f.cod} - ${f.nome} liberado para ${this.br(f.data)}.`, "success");
+      this.dataSel = f.data; this.sel = {}; this.sync(false, true);
+    });
+    cd.focus();
+  },
+  async removerPontual(cod){
+    const r = await this.chamar({ acao: "refeit_pontual_remover", data: this.dataSel || this.hojeIso(), cod });
+    if(!r || !r.ok){ toast((r && r.erro) || "Não foi possível excluir.", "error"); return; }
+    toast("Pessoa excluída da lista do dia.", "success"); this.sync(false, true);
   },
   contarSel(st){
     const el = document.getElementById("pre-cont-" + this.norm(st)); if(!el) return;
@@ -387,13 +428,13 @@ const RefeitUI = {
     delete this.sel[st]; this.sync(false, true);
   },
   removerFixo(cod, setor, nome){
-    UI.openModal(`<h3 style="margin-top:0;">Tirar da lista fixa?</h3><p>${this.pessoa(cod, nome)} deixa de aparecer na pré-liberação de <strong>${this.h(setor)}</strong>. Para voltar, será preciso solicitar a inclusão de novo.</p>
-      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="rf-rem-ok">Tirar da lista</button></div>`);
+    UI.openModal(`<h3 style="margin-top:0;">Excluir da lista fixa?</h3><p>${this.pessoa(cod, nome)} deixa de aparecer na pré-liberação de <strong>${this.h(setor)}</strong> em todos os dias. Para voltar, será preciso solicitar a inclusão de novo. Para tirar só de um dia, desmarque a caixa e envie a lista.</p>
+      <div class="adm-actions"><button class="btn btn-outline" onclick="UI.closeModal()">Cancelar</button><button class="btn btn-primary" id="rf-rem-ok">Excluir da lista</button></div>`);
     document.getElementById("rf-rem-ok").addEventListener("click", async () => {
       const r = await this.chamar({ acao: "refeit_fixo_status", cod, setor, ativo: false });
       UI.closeModal();
       if(!r || !r.ok){ toast((r && r.erro) || "Não foi possível remover.", "error"); return; }
-      toast("Colaborador removido da lista fixa.", "success"); delete this.sel[setor]; this.sync(false, true);
+      toast("Colaborador excluído da lista fixa.", "success"); delete this.sel[setor]; this.sync(false, true);
     });
   },
 
@@ -535,7 +576,7 @@ const RefeitUI = {
     const setoresEnc = H.enc ? new Set(Object.keys(this.encarregados).filter(k => this.encarregados[k].some(e => e.mat === H.enc))) : null;
     const todas = H.dados.linhas.map(a => ({ data: a[0], cod: a[1], nome: a[2], setor: a[3], tipo: a[4], pres: a[5] === 1, hora: a[6], aut: a[7], inc: a[8] }))
       .filter(r => (!H.setor || this.norm(r.setor) === this.norm(H.setor)) && (!setoresEnc || setoresEnc.has(this.norm(r.setor))) && (!q || this.norm(r.cod + " " + r.nome).includes(q)));
-    const res = rs => { const lib = rs.filter(r => r.tipo === "Fixo"), alm = rs.filter(r => r.pres); return { lib: lib.length, alm: alm.length, aus: lib.filter(r => !r.pres).length, avu: rs.filter(r => r.tipo === "Avulso").length }; };
+    const res = rs => { const lib = rs.filter(r => r.tipo !== "Avulso"), alm = rs.filter(r => r.pres); return { lib: lib.length, alm: alm.length, aus: lib.filter(r => !r.pres).length, avu: rs.filter(r => r.tipo === "Avulso").length }; };
     const ontem = this.soma(hj, -1), mes0 = hj.slice(0, 8) + "01";
     const kHoje = res(todas.filter(r => r.data === hj)), kOntem = res(todas.filter(r => r.data === ontem)), kMes = res(todas.filter(r => r.data >= mes0 && r.data <= hj));
     const card = (t, k, sub) => `<div class="card"><div class="card-label">${t}</div><div class="card-value">${this.num(k.alm)} <span class="rf-de">almoçaram</span></div>
@@ -567,7 +608,7 @@ const RefeitUI = {
           ${avs.slice().sort((a, b) => a.data < b.data ? 1 : -1).map(r => `<tr><td>${this.br(r.data)} <span class="small-muted">${this.h(r.hora)}</span></td><td>${this.pessoa(r.cod, r.nome)}</td><td>${this.h(r.setor)}</td><td>${this.h(this.encNome(r.setor))}</td>
             <td>${r.aut === "Sim" ? `<span class="adm-tag acc">Sim</span>` : r.aut === "Não" ? `<span class="adm-tag err">Não</span>` : `<span class="adm-tag rep">Sem resposta</span>`}</td><td>${r.inc === "Sim" ? "Sim" : r.inc === "Não" ? "Não" : "—"}</td></tr>`).join("") || `<tr><td colspan="6" class="small-muted">Nenhum avulso no período.</td></tr>`}</tbody></table></div></div>
         <div class="panel"><h3 class="adm-h">Registros (${this.num(regs.length)})</h3><div class="table-wrap"><table class="adm-table"><thead><tr><th>Data</th><th>Código</th><th>Nome</th><th>Setor</th><th>Tipo</th><th>Situação</th><th>Horário</th></tr></thead><tbody>
-          ${regs.slice(0, lim).map(r => `<tr><td>${this.br(r.data)}</td><td><strong>${this.h(r.cod)}</strong></td><td>${this.h(r.nome)}</td><td>${this.h(r.setor)}</td><td>${r.tipo === "Avulso" ? `<span class="adm-tag rep">Avulso</span>` : "Fixo"}</td>
+          ${regs.slice(0, lim).map(r => `<tr><td>${this.br(r.data)}</td><td><strong>${this.h(r.cod)}</strong></td><td>${this.h(r.nome)}</td><td>${this.h(r.setor)}</td><td>${r.tipo === "Avulso" ? `<span class="adm-tag rep">Avulso</span>` : r.tipo === "Pontual" ? "Pontual" : "Fixo"}</td>
             <td>${r.pres ? `<span class="adm-tag acc">Almoçou no Refeitório STA</span>` : `<span class="adm-tag off">Não almoçou</span>`}</td><td>${r.pres ? this.h(r.hora) : "—"}</td></tr>`).join("") || `<tr><td colspan="7" class="small-muted">Sem registros no período e filtros escolhidos.</td></tr>`}</tbody></table></div>
           ${regs.length > lim ? `<button class="btn btn-outline btn-sm" id="hs-mais" style="margin-top:10px">Ver todos os ${this.num(regs.length)} registros</button>` : ""}</div>
       </div>`;
@@ -640,6 +681,27 @@ const RefeitUI = {
 
   /* ------------------------------ ligação com os menus ------------------------------ */
   renderLiberacoes(){ this.abrir("lrefeitorio"); },
+  /** Chegada pelo lembrete (push): abre a pré-liberação de hoje */
+  irRevisar(){
+    if(!Auth.user || !Auth.can("lancamentos", "lrefeitorio")) return;
+    this.proxTab = "lib"; this.proxSub = "pre"; this.dataSel = null;
+    if(UI.currentPane === "lrefeitorio" && UI.currentView === "lancamentos") this.abrir("lrefeitorio"); else UI.goTo("lancamentos", "lrefeitorio");
+  },
   renderHistorico(){ this.abrir("hrefeitorio"); }
 };
 window.RefeitUI = RefeitUI;
+/* Link do lembrete (?ir=refeitorio) e clique na notificação com o aplicativo já aberto */
+(function(){
+  try{
+    const ir = new URLSearchParams(location.search).get("ir");
+    if(ir === "refeitorio"){
+      let n = 0;
+      const t = setInterval(() => {
+        n++;
+        const pronto = window.Auth && Auth.user && window.APP_STATE && APP_STATE.ready && !document.body.classList.contains("locked");
+        if(pronto || n > 90){ clearInterval(t); if(Auth.user) RefeitUI.irRevisar(); try{ history.replaceState(null, "", location.pathname); }catch(e){} }
+      }, 500);
+    }
+    if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if(e.data && e.data.tipo === "ir" && e.data.ir === "refeitorio") RefeitUI.irRevisar(); });
+  }catch(e){}
+})();

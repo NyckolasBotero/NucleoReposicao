@@ -135,6 +135,11 @@ function doPost(e) {
       if (d.acao === 'refeit_perfis') { exigir(s, PERM_ACESSOS); return resposta(refeitPerfis()); }
       if (d.acao === 'refeit_perfil_salvar') { exigir(s, PERM_ACESSOS); return resposta(refeitPerfilSalvar(d, s)); }
       if (d.acao === 'refeit_setor_add') { exigir(s, PERM_ACESSOS); return resposta(refeitSetorAdd(d, s)); }
+      if (d.acao === 'refeit_pontual') return resposta(refeitPontual(d, s));
+      if (d.acao === 'refeit_pontual_remover') return resposta(refeitPontualRemover(d, s));
+      if (d.acao === 'refeit_lembrete_ler') return resposta(refeitLembreteLer(s));
+      if (d.acao === 'refeit_lembrete_salvar') return resposta(refeitLembreteSalvar(d, s));
+      if (d.acao === 'refeit_lembrete_teste') return resposta(refeitLembreteTeste(s));
       if (d.acao === 'refeit_aprov_ler') return resposta(refeitAprovLer(s));
       if (d.acao === 'refeit_aprov_salvar') return resposta(refeitAprovSalvar(d, s));
       if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
@@ -152,7 +157,7 @@ const LEITURAS_SEM_TRAVA = {
   admin_listar: 1, admin_historico: 1, alertas_ler: 1, param_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1,
-  refeit_sync: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_perfis: 1, refeit_aprov_ler: 1
+  refeit_sync: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_perfis: 1, refeit_aprov_ler: 1, refeit_lembrete_ler: 1
 };
 
 function resposta(obj) {
@@ -1046,6 +1051,7 @@ function alertasAgendados() {
       enviados[c.id] = marca; mudou = true;
     });
     if (mudou) alertasGravarChave('push_enviados', enviados);
+    try { refeitLembreteTick(hojeIso, minAgora, dow); } catch (e2) { /* o lembrete do refeitório nunca derruba os outros */ }
   } catch (e) { /* o gatilho nunca deve quebrar */ } finally { lock.releaseLock(); }
 }
 
@@ -1060,7 +1066,7 @@ function desativarAgendador() {
 }
 
 /** Envia a notificação aos aparelhos das matrículas. Nunca lança erro (não pode atrapalhar quem está lançando). */
-function pushEnviar(mats, titulo, corpo, tag) {
+function pushEnviar(mats, titulo, corpo, tag, ir) {
   const r = { config: false, aparelhos: 0, enviados: 0, motivo: '' };
   try {
     const c = pushProps();
@@ -1071,7 +1077,7 @@ function pushEnviar(mats, titulo, corpo, tag) {
     r.aparelhos = subs.length;
     if (!subs.length) return r;
     const resp = UrlFetchApp.fetch(c.url, { method: 'post', contentType: 'application/json', headers: { 'X-Segredo': c.segredo }, muteHttpExceptions: true,
-      payload: JSON.stringify({ subs: subs, titulo: titulo, corpo: corpo, tag: tag || 'nucleo', url: './' }) });
+      payload: JSON.stringify({ subs: subs, titulo: titulo, corpo: corpo, tag: tag || 'nucleo', url: ir ? './?ir=' + ir : './' }) });
     if (resp.getResponseCode() !== 200) { r.motivo = 'servidor respondeu ' + resp.getResponseCode(); return r; }
     const res = (JSON.parse(resp.getContentText()).resultados) || [], mortos = {};
     res.forEach(function (x) {
@@ -2741,7 +2747,7 @@ function refeitOps(d, s) {
           refAnexar(L.sh, [linha]);
           L.rows.push({ linha: L.sh.getLastRow(), v: linha });
           const dest = refMatsEncarregados(cfg, setor);
-          if (dest.length) pushEnviar(dest, 'Almoço avulso no refeitório', cod + ' - ' + nome + ' almoçou como avulso no setor ' + setor + '. Responda no sistema.', 'refeit_avulso');
+          if (dest.length) pushEnviar(dest, 'Almoço avulso no refeitório', cod + ' - ' + nome + ' almoçou como avulso no setor ' + setor + '. Responda no sistema.', 'refeit_avulso', 'refeitorio');
         }
       } else {
         if (!alvo) throw new Error('O código ' + cod + ' não está na lista deste dia.');
@@ -2883,7 +2889,7 @@ function refeitCardapioLer(d, s) {
   const adesao = {};
   refLerLib(ini, [fim, dia].sort()[0]).rows.forEach(function (r) {
     const a = adesao[r.v[0]] = adesao[r.v[0]] || { liberados: 0, almocaram: 0, avulsos: 0 };
-    if (r.v[4] === 'Fixo') a.liberados++;
+    if (r.v[4] !== 'Avulso') a.liberados++;
     else a.avulsos++;
     if (r.v[7] === 'Sim') a.almocaram++;
   });
@@ -2946,4 +2952,85 @@ function refeitAprovSalvar(d, s) {
   alertasGravarChave('refeit_cfg', c);
   registrarLog(s, 'Refeitório (aprovadores)', c.aprovadores.join(', ') || 'nenhum');
   return { ok: true, aprovadores: c.aprovadores };
+}
+
+
+/* ---------- Lembrete "revise sua lista" (push no horário definido pelo administrador) ---------- */
+const REF_LEMBRETE_PADRAO = { ativo: false, hora: '10:30', dias: [1, 2, 3, 4, 5], todos: true, mats: [], texto: 'Quase na hora do almoço, gostaria de revisar sua lista?' };
+function refLembreteCfg() {
+  const c = refCfg(), l = c.lembrete || {};
+  return { ativo: !!l.ativo, hora: /^\d{1,2}:\d{2}$/.test(String(l.hora || '')) ? l.hora : REF_LEMBRETE_PADRAO.hora, dias: Array.isArray(l.dias) ? l.dias.map(Number) : REF_LEMBRETE_PADRAO.dias,
+    todos: l.todos !== false, mats: Array.isArray(l.mats) ? l.mats.map(String) : [], texto: texto(l.texto) || REF_LEMBRETE_PADRAO.texto };
+}
+function refLembreteDest(l, cfg) {
+  if (!l.todos) return l.mats;
+  return Object.keys(cfg.usuarios).filter(function (m) { return (cfg.usuarios[m].papeis || []).indexOf('Encarregado') >= 0; });
+}
+function refeitLembreteTick(hojeIso, minAgora, dow) {
+  const cfg = refCfg(), l = refLembreteCfg();
+  if (!l.ativo || l.dias.indexOf(dow) < 0) return;
+  const p = l.hora.split(':'), m = Number(p[0]) * 60 + Number(p[1]);
+  if (minAgora < m || minAgora > m + 20) return;                       // só nos 20 min seguintes ao horário (é um aviso "de agora")
+  const enviados = alertasLerChave('push_enviados') || {}, marca = hojeIso + '|' + l.hora;
+  if (enviados.refeit_lembrete === marca) return;
+  enviados.refeit_lembrete = marca; alertasGravarChave('push_enviados', enviados);
+  const dest = refLembreteDest(l, cfg);
+  if (dest.length) pushEnviar(dest, 'Refeitório', l.texto, 'refeit_lembrete', 'refeitorio');
+}
+function refeitLembreteLer(s) {
+  refExigir(ehAdminAlertas(s), 'Só o administrador define o lembrete.');
+  const cfg = refCfg(), r = lerUsuarios();
+  return { ok: true, lembrete: refLembreteCfg(), usuarios: Object.keys(r.usuarios).filter(function (m) { return !r.usuarios[m].bloqueado; }).map(function (m) {
+    return { matricula: m, nome: r.usuarios[m].nome || nomeDaMatricula(m), encarregado: ((cfg.usuarios[m] || {}).papeis || []).indexOf('Encarregado') >= 0 };
+  }).sort(function (a, b) { return String(a.nome).localeCompare(String(b.nome)); }) };
+}
+function refeitLembreteSalvar(d, s) {
+  refExigir(ehAdminAlertas(s), 'Só o administrador define o lembrete.');
+  const c = refCfg(), l = d.lembrete || {};
+  if (!/^\d{1,2}:\d{2}$/.test(String(l.hora || ''))) throw new Error('Informe o horário do lembrete.');
+  const dias = (Array.isArray(l.dias) ? l.dias : []).map(Number).filter(function (x) { return x >= 0 && x <= 6; });
+  if (!dias.length) throw new Error('Escolha ao menos um dia da semana.');
+  const mats = (Array.isArray(l.mats) ? l.mats : []).map(soDigitos).filter(Boolean);
+  if (l.todos === false && !mats.length) throw new Error('Escolha ao menos um gestor ou use "Todos os encarregados".');
+  c.lembrete = { ativo: !!l.ativo, hora: l.hora, dias: dias, todos: l.todos !== false, mats: mats, texto: texto(l.texto).slice(0, 160) || REF_LEMBRETE_PADRAO.texto };
+  alertasGravarChave('refeit_cfg', c);
+  registrarLog(s, 'Refeitório (lembrete)', (c.lembrete.ativo ? 'ligado às ' + c.lembrete.hora : 'desligado'));
+  return { ok: true, lembrete: refLembreteCfg() };
+}
+function refeitLembreteTeste(s) {
+  refExigir(ehAdminAlertas(s), 'Só o administrador envia o teste.');
+  const r = pushEnviar([String(s.matricula)], 'Refeitório', refLembreteCfg().texto, 'refeit_lembrete', 'refeitorio');
+  if (!r.config) throw new Error('O servidor de notificações push ainda não foi configurado.');
+  if (!r.aparelhos) throw new Error('Nenhum aparelho seu está inscrito. Ative em Alertas > Notificações no celular.');
+  return { ok: true, enviados: r.enviados };
+}
+
+/* ---------- Encarregado: pessoa pontual em um dia (hoje, amanhã ou data específica) ---------- */
+function refeitPontual(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Encarregado'), 'Só o encarregado adiciona pessoas à lista do dia.');
+  const data = String(d.data || ''), cod = refCodigo(d.cod), nome = texto(d.nome).slice(0, 80), setor = texto(d.setor);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new Error('Escolha a data.');
+  if (data < hoje()) throw new Error('Não é possível alterar um dia que já passou.');
+  if (!cod) throw new Error('Informe o código.');
+  if (!nome) throw new Error('Informe o nome.');
+  refExigir(refSetorOk(p, setor), 'Você não está vinculado ao setor ' + (setor || '—') + '.');
+  const L = refLerLib(data, data);
+  if (L.rows.some(function (r) { return r.v[1] === cod; })) throw new Error('O código ' + cod + ' já está na lista de ' + data.split('-').reverse().join('/') + '.');
+  refAnexar(L.sh, [[data, cod, nome, setor, 'Pontual', s.nome || s.matricula, refAgora(), '', '', '', '', '', '', '', '', '']]);
+  registrarLog(s, 'Refeitório (pontual)', data + ' · ' + cod + ' · ' + setor);
+  return { ok: true };
+}
+function refeitPontualRemover(d, s) {
+  const cfg = refCfg(), p = refPerfil(s, cfg);
+  refExigir(refTem(p, 'Encarregado'));
+  const data = String(d.data || ''), cod = refCodigo(d.cod);
+  if (data < hoje()) throw new Error('Não é possível alterar um dia que já passou.');
+  const L = refLerLib(data, data), r = L.rows.filter(function (x) { return x.v[1] === cod && x.v[4] === 'Pontual'; })[0];
+  if (!r) throw new Error('Registro não encontrado.');
+  refExigir(refSetorOk(p, r.v[3]), 'Este registro é de outro setor.');
+  if (r.v[7] === 'Sim') throw new Error('Esta pessoa já registrou presença e não pode sair da lista.');
+  L.sh.deleteRow(r.linha);
+  registrarLog(s, 'Refeitório (pontual removido)', data + ' · ' + cod);
+  return { ok: true };
 }
