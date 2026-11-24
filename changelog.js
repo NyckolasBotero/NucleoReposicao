@@ -4,9 +4,12 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.29.0";
+const APP_VERSAO = "2.29.1";
 
 const NOTAS_VERSAO = [
+  { v:"2.29.1", data:"2026-11-24", titulo:"Carga online mais resistente", itens:[
+    "Ao buscar dados online, uma aba que falha por oscilação de conexão (\"Failed to fetch\", tempo esgotado, limite do Google) agora é tentada de novo até 4 vezes antes de dar erro. Isso evita a mensagem de aba obrigatória ausente no celular."
+  ]},
   { v:"2.29.0", data:"2026-11-24", titulo:"Novo nome: Gestão STA", itens:[
     "O sistema passou a se chamar Gestão STA: login, menu lateral, cabeçalho, título da página, aplicativo instalado, notificações e relatórios.",
     "O selo \"Quadro atual · data · repositores\" do cabeçalho agora só aparece para quem é gestor da Reposição (quem tem acesso à tela Produção)."

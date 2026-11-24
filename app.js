@@ -867,12 +867,28 @@ const OnlineSheets = {
     return `https://docs.google.com/spreadsheets/d/${ONLINE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}${extra||""}&_ts=${Date.now()}`;
   },
 
+  // tenta de novo quando a conexão cai ("Failed to fetch"), dá tempo esgotado ou o Google limita (429/5xx);
+  // no celular, ~20 abas ao mesmo tempo às vezes derrubam a aba mais pesada (8460)
   async fetchText(name, extra){
+    let ultimo;
+    for(let t=0; t<4; t++){
+      try{ return await this.fetchTextUma(name, extra); }
+      catch(e){
+        ultimo = e;
+        const transitorio = !e || e.transitorio || e.name==="TypeError" || /Failed to fetch|NetworkError|Load failed|Tempo esgotado/i.test(String(e.message||e));
+        if(!transitorio || t===3) break;
+        await new Promise(r=> setTimeout(r, 1200*(t+1)));
+      }
+    }
+    throw ultimo;
+  },
+
+  async fetchTextUma(name, extra){
     const ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
     const timer = ctrl ? setTimeout(()=>ctrl.abort(), 90000) : null;
     try{
       const res = await fetch(this.url(name, extra), { cache:"no-store", signal: ctrl ? ctrl.signal : undefined });
-      if(!res.ok) throw new Error("HTTP "+res.status+". Verifique se a planilha está compartilhada como 'Qualquer pessoa com o link pode visualizar'.");
+      if(!res.ok){ const er = new Error("HTTP "+res.status+". Verifique se a planilha está compartilhada como 'Qualquer pessoa com o link pode visualizar'."); er.transitorio = (res.status===429 || res.status>=500); throw er; }
       const text = await res.text();
       if(/^\s*</.test(text)) throw new Error("A planilha não devolveu dados (provavelmente não está compartilhada publicamente).");
       return text;
