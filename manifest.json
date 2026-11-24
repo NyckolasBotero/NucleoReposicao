@@ -1,7 +1,7 @@
 {
-  "name": "Núcleo Reposição",
-  "short_name": "Núcleo Reposição",
-  "description": "Central de gestão da operação de reposição – Santa Therezinha",
+  "name": "Gestão STA",
+  "short_name": "Gestão STA",
+  "description": "Central de gestão da operação – Santa Therezinha",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
