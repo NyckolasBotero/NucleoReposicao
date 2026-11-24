@@ -4,9 +4,16 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.27.0";
+const APP_VERSAO = "2.28.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.28.0", data:"2026-11-23", titulo:"Refeitório: lista fixa automática e perfil do administrador respeitado", itens:[
+    "A lista do refeitório agora é fixa: o gestor do setor não precisa mais enviar a lista todo dia. A Portaria (Bravo) já vê a lista completa de todos os setores a cada dia, com base na data de hoje, e marca quem veio.",
+    "Para mudar a lista, o gestor exclui alguém na hora (sem autorização) ou solicita a inclusão (precisa de aprovação). Quem for liberado só para um dia (\"Adicionar pessoa ao dia\") ou entrar como avulso vale somente para aquela data.",
+    "A tela do gestor virou \"Lista do setor\": mostra a lista fixa, os adicionados no dia e os avulsos, sem botão de enviar.",
+    "Correção: o administrador deixou de ter visão geral automática quando tem perfil próprio em Acessos. Quem configurou o próprio perfil como \"restrito aos setores vinculados\" passa a ver só esses setores (histórico, setor e indicadores). Sem perfil configurado, o administrador continua com acesso total.",
+    "Atenção: reimplantar o Apps Script (apps_script_nucleo.gs)."
+  ]},
   { v:"2.27.0", data:"2026-11-23", titulo:"Refeitório: foto no cardápio e campos arredondados", itens:[
     "Cardápio e Adesão: cada prato pode ter uma foto (opcional). Ela aparece em miniatura no cartão do dia e, ao clicar, abre ampliada. A imagem é reduzida automaticamente ao escolher o arquivo; dá para trocar ou remover pela edição do prato.",
     "Solicitar Inclusão: os campos Código e Nome da tabela de colaboradores agora seguem o visual do resto do sistema (cantos arredondados, foco azul).",

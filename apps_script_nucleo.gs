@@ -2613,8 +2613,10 @@ function refCfg() {
 }
 function refPerfil(s, cfg) {
   const adm = ehAdminAlertas(s), u = cfg.usuarios[s.matricula] || {};
-  const papeis = adm ? REF_PAPEIS.slice() : (Array.isArray(u.papeis) ? u.papeis : []).filter(function (p) { return REF_PAPEIS.indexOf(p) >= 0; });
-  const geral = adm || u.nivel === 'geral';
+  // O administrador só ganha acesso total enquanto não tiver um perfil próprio em Acessos; com perfil configurado, vale o que foi configurado.
+  const total = adm && !((Array.isArray(u.papeis) && u.papeis.length) || u.nivel || (Array.isArray(u.setores) && u.setores.length));
+  const papeis = total ? REF_PAPEIS.slice() : (Array.isArray(u.papeis) ? u.papeis : []).filter(function (p) { return REF_PAPEIS.indexOf(p) >= 0; });
+  const geral = total || u.nivel === 'geral';
   const setores = geral ? cfg.setores.slice() : (Array.isArray(u.setores) ? u.setores : []);
   return { matricula: s.matricula, nome: s.nome || nomeDaMatricula(s.matricula), papeis: papeis, geral: geral, setores: setores, admin: adm,
     aprovador: cfg.aprovadores.indexOf(s.matricula) >= 0 };
@@ -2700,12 +2702,37 @@ function refSolicitacoes() {
   return { sh: sh, itens: out };
 }
 
+/* ---------- Lista do dia: é a lista fixa dos setores, sem ninguém precisar enviar nada ---------- */
+/** Cria as linhas "Fixo" do dia que ainda não existem (quem já está no dia, de qualquer tipo, não é repetido). Chamar com a trava global já em mãos. */
+function refMaterializarSemTrava(dia) {
+  const L = refLerLib(dia, dia), tem = {};
+  L.rows.forEach(function (r) { tem[r.v[1]] = true; });
+  const agora = refAgora(), novas = [];
+  refFixos(true).itens.forEach(function (f) {
+    if (tem[f.cod]) return;
+    tem[f.cod] = true;
+    novas.push([dia, f.cod, f.nome, f.setor, 'Fixo', 'Lista fixa', agora, '', '', '', '', '', '', '', '', '']);
+  });
+  refAnexar(L.sh, novas);
+  return novas.length;
+}
+/** Versão para telas de leitura: pega a trava só na primeira vez do dia (ou depois de mudar a lista fixa). */
+function refMaterializarDia(dia) {
+  const cache = CacheService.getScriptCache(), chave = 'ref_mat_' + dia;
+  if (cache.get(chave)) return;
+  const lk = LockService.getScriptLock();
+  if (!lk.tryLock(20000)) return;               // outra gravação em andamento: a próxima atualização da tela tenta de novo
+  try { refMaterializarSemTrava(dia); cache.put(chave, '1', 21600); } finally { lk.releaseLock(); }
+}
+function refInvalidarDia() { try { CacheService.getScriptCache().remove('ref_mat_' + hoje()); } catch (e) {} }
+
 /* ---------- leitura: o que a tela precisa (chamada a cada poucos segundos) ---------- */
 function refeitSync(d, s) {
   const cfg = refCfg(), p = refPerfil(s, cfg), dia = hoje();
   const data = /^\d{4}-\d{2}-\d{2}$/.test(String(d.data || '')) ? d.data : dia;
   const out = { ok: true, hoje: dia, agora: refAgora(), data: data, perfil: p, setores: cfg.setores, encarregados: refEncarregados(cfg) };
   const veLista = refTem(p, 'Portaria') || refTem(p, 'Encarregado') || p.geral;
+  if (refTem(p, 'Portaria') && data === dia) { try { refMaterializarDia(dia); } catch (e) { /* a tela segue com o que já existe */ } }
   const lib = veLista ? refLerLib(data, data) : { rows: [] };
   const todos = refTem(p, 'Portaria');
   out.dia = lib.rows.map(refObj).filter(function (r) { return todos || p.geral || refSetorOk(p, r.setor); }).map(function (r) {
@@ -2760,7 +2787,7 @@ function refeitOps(d, s) {
   refExigir(refTem(p, 'Portaria'), 'Só a Portaria (Bravo) registra presença.');
   const ops = Array.isArray(d.ops) ? d.ops.slice(0, 60) : [];
   const resultados = [], cache = {};
-  const doDia = function (data) { return cache[data] = cache[data] || refLerLib(data, data); };
+  const doDia = function (data) { if (!cache[data]) { if (data === hoje()) refMaterializarSemTrava(data); cache[data] = refLerLib(data, data); } return cache[data]; };
   ops.forEach(function (op) {
     const res = { id: op.id, ok: true };
     try {
@@ -2840,6 +2867,12 @@ function refeitFixoStatus(d, s) {
   const f = F.itens.filter(function (x) { return x.cod === cod && normalizar(x.setor) === normalizar(setor); })[0];
   if (!f) throw new Error('Colaborador não encontrado na lista fixa.');
   refGravarLinha(F.sh, f.linha, 6, [d.ativo ? 'Sim' : 'Não']);
+  if (!d.ativo) {   // sai também da lista de hoje em diante (quem já almoçou fica no registro)
+    const L = refLerLib(hoje(), '9999-12-31');
+    L.rows.filter(function (r) { return r.v[1] === cod && r.v[4] === 'Fixo' && normalizar(r.v[3]) === normalizar(setor) && r.v[7] !== 'Sim'; })
+      .map(function (r) { return r.linha; }).sort(function (a, b) { return b - a; }).forEach(function (ln) { L.sh.deleteRow(ln); });
+  }
+  refInvalidarDia();
   registrarLog(s, 'Refeitório (fixo)', cod + ' · ' + setor + (d.ativo ? ' · reativado' : ' · removido'));
   return { ok: true };
 }
@@ -2864,8 +2897,9 @@ function refCriarSolicitacao(cfg, p, s, d, origem) {
 }
 function refIncluirFixo(cod, nome, setor, s) {
   const F = refFixos(false), f = F.itens.filter(function (x) { return x.cod === cod && normalizar(x.setor) === normalizar(setor); })[0];
-  if (f) { refGravarLinha(F.sh, f.linha, 1, [cod, nome, setor, refAgora(), s.nome || s.matricula, 'Sim']); return; }
+  if (f) { refGravarLinha(F.sh, f.linha, 1, [cod, nome, setor, refAgora(), s.nome || s.matricula, 'Sim']); refInvalidarDia(); return; }
   refAnexar(F.sh, [[cod, nome, setor, refAgora(), s.nome || s.matricula, 'Sim']]);
+  refInvalidarDia();
 }
 function refeitSolicitar(d, s) {
   const cfg = refCfg(), p = refPerfil(s, cfg);
@@ -3092,6 +3126,8 @@ function refeitPontual(d, s) {
   if (!cod) throw new Error('Informe o código.');
   if (!nome) throw new Error('Informe o nome.');
   refExigir(refSetorOk(p, setor), 'Você não está vinculado ao setor ' + (setor || '—') + '.');
+  const jaFixo = refFixos(true).itens.filter(function (f) { return f.cod === cod; })[0];
+  if (jaFixo) throw new Error('O código ' + cod + ' já faz parte da lista fixa (' + jaFixo.setor + ') e aparece sozinho todos os dias.');
   const L = refLerLib(data, data);
   if (L.rows.some(function (r) { return r.v[1] === cod; })) throw new Error('O código ' + cod + ' já está na lista de ' + data.split('-').reverse().join('/') + '.');
   refAnexar(L.sh, [[data, cod, nome, setor, 'Pontual', s.nome || s.matricula, refAgora(), '', '', '', '', '', '', '', '', '']]);
