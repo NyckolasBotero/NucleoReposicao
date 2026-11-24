@@ -375,8 +375,8 @@ const Alertas = {
       if(!titulo && !n) return;
       const op = { body: corpo || `${n} alerta(s) pendente(s)`, tag: titulo ? "nucleo-chamada" : "nucleo-alertas", icon: "icon-192.png", data:{ url:"./" } };
       const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
-      if(reg) await reg.showNotification(titulo || "Núcleo Reposição", op);       // único jeito aceito no Android
-      else new Notification(titulo || "Núcleo Reposição", op);
+      if(reg) await reg.showNotification(titulo || "Gestão STA", op);       // único jeito aceito no Android
+      else new Notification(titulo || "Gestão STA", op);
     }catch(e){}
   },
 

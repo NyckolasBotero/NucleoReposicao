@@ -4,9 +4,13 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.28.0";
+const APP_VERSAO = "2.29.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.29.0", data:"2026-11-24", titulo:"Novo nome: Gestão STA", itens:[
+    "O sistema passou a se chamar Gestão STA: login, menu lateral, cabeçalho, título da página, aplicativo instalado, notificações e relatórios.",
+    "O selo \"Quadro atual · data · repositores\" do cabeçalho agora só aparece para quem é gestor da Reposição (quem tem acesso à tela Produção)."
+  ]},
   { v:"2.28.0", data:"2026-11-23", titulo:"Refeitório: lista fixa automática e perfil do administrador respeitado", itens:[
     "A lista do refeitório agora é fixa: o gestor do setor não precisa mais enviar a lista todo dia. A Portaria (Bravo) já vê a lista completa de todos os setores a cada dia, com base na data de hoje, e marca quem veio.",
     "Para mudar a lista, o gestor exclui alguém na hora (sem autorização) ou solicita a inclusão (precisa de aprovação). Quem for liberado só para um dia (\"Adicionar pessoa ao dia\") ou entrar como avulso vale somente para aquela data.",

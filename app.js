@@ -34,6 +34,8 @@ const Auth = {
   load(){ try{ const j = JSON.parse(localStorage.getItem(AUTH_KEY)||"null"); if(j && j.matricula && j.token) return j; }catch(e){} return null; },
   clear(){ try{ localStorage.removeItem(AUTH_KEY); }catch(e){} this.user = null; this._set = null; },
   logout(){ this.clear(); location.reload(); },
+  // gestor da Reposição = quem enxerga a tela de Produção (dados da operação de reposição)
+  gestorReposicao(){ return !!this.user && (this.user.legacy || this.can("indicadores","producao")); },
   // tem acesso a esta sub aba? (view = "indicadores" | "gestao" | "admin"; paneId = id do painel)
   can(view, paneId){
     if(!this.user) return false;
@@ -187,7 +189,7 @@ const Nav = {
     const it = (UI.subnavConfig[UI.currentView]||[]).find(i=>i.id===UI.currentPane);
     const v = NAV_VIEWS.find(x=>x.id===UI.currentView);
     const t = document.getElementById("hdr-title"), c = document.getElementById("hdr-crumb");
-    if(t) t.textContent = it ? it.label : "NÚCLEO REPOSIÇÃO";
+    if(t) t.textContent = it ? it.label : "GESTÃO STA";
     if(c) c.textContent = (v && it) ? v.aba : "";
     const chip = document.querySelector("#sub-nav .subnav-btn.active");
     if(chip && chip.scrollIntoView){ try{ chip.scrollIntoView({ block:"nearest", inline:"center" }); }catch(e){} }
@@ -3439,7 +3441,7 @@ const FeedbackDoc = {
       <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
         <tr>
           <td style="width:110px;border:1px solid #c3ccd6;text-align:center;padding:6px;"><img src="${logoSrc}" style="height:46px;width:auto;"></td>
-          <td style="background:#eaeef3;border:1px solid #c3ccd6;padding:10px 16px;"><span style="font-size:19px;font-weight:800;color:#123a6b;">Ficha Feedback — Núcleo Reposição</span></td>
+          <td style="background:#eaeef3;border:1px solid #c3ccd6;padding:10px 16px;"><span style="font-size:19px;font-weight:800;color:#123a6b;">Ficha Feedback — Gestão STA</span></td>
         </tr>
       </table>
       <div style="font-size:9.5px;color:#7a8798;margin-bottom:8px;">Data de geração: ${hoje}</div>
@@ -4304,6 +4306,7 @@ const UI = {
       const jaAberto = $("#main-content").style.display === "block";
       const abrirPainel = () => {
           $("#quadro-badge").textContent = badgeText;
+          $("#quadro-badge").style.display = Auth.gestorReposicao() ? "" : "none";   // quadro/repositores só interessa ao gestor da Reposição
           $("#empty-state").style.display = "none";
           $("#main-content").style.display = "block";
           $("#btn-export-png").disabled = false;
@@ -6081,7 +6084,7 @@ function buildQuadroAtualReportContainer(quadroAtualRows, scounts, maxDate, regi
 
   el.innerHTML = `
     <div style="background:#0b2647;padding:28px 32px 22px;border-bottom:3px solid #e08a1f;">
-      <div style="font-size:30px;font-weight:800;color:#fff;">Núcleo Reposição</div>
+      <div style="font-size:30px;font-weight:800;color:#fff;">Gestão STA</div>
       <div style="font-size:13px;color:#9db8dd;margin-top:6px;">Relatório de presença — ${dataLabel}</div>
     </div>
 
@@ -6134,7 +6137,7 @@ function buildQuadroAtualReportContainer(quadroAtualRows, scounts, maxDate, regi
     </div>
 
     <div style="display:flex;justify-content:space-between;padding:14px 32px;margin-top:14px;font-size:10px;color:#9aa5b1;border-top:1px solid #dde3ea;">
-      <span>Núcleo Reposição — Painel de Gestão</span>
+      <span>Gestão STA — Painel de Gestão</span>
       <span>Gerado em ${fmtDateBR(new Date())}</span>
     </div>
   `;
@@ -7033,7 +7036,7 @@ function exportComissaoToExcel(){
     ? `${st.dataInicial?fmtDateBR(st.dataInicial):'inicio'} ate ${st.dataFinal?fmtDateBR(st.dataFinal):'hoje'}`
     : "todo o historico";
   const aoa = [
-    ["Comissão Calculada — Núcleo Reposição"],
+    ["Comissão Calculada — Gestão STA"],
     ["Período:", periodoLabel],
     ["Considerar Missões:", calc.P.considerarMissoes==='SIM' ? 'Sim' : 'Não'],
     ["Apenas Repositor:", commissionOnlyRepositor ? 'Sim' : 'Não'],
@@ -7323,7 +7326,7 @@ function exportCronogramaToExcel(){
   const activities = [...CronogramaState.activities].sort((a,b)=>a.horaInicioMin-b.horaInicioMin);
   const header = ["Atividade", "Hora Início", "Hora Fim", "Prioridade"];
   const aoa = [
-    ["Cronograma Dia / Reposição — Núcleo Reposição"],
+    ["Cronograma Dia / Reposição — Gestão STA"],
     ["Gerado em:", fmtDateBR(new Date())],
     [],
     header

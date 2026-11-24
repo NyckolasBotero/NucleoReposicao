@@ -368,7 +368,7 @@ const PainelTV = {
     try{ if(window.AuditOnline && AuditOnline.rows === null) await AuditOnline.load(); }catch(e){}
     await Promise.all([this.cfgCarregar(), this.fotosCarregar()]);
     if(!this.aberto) return;
-    document.title = "Painel TV — Núcleo Reposição";
+    document.title = "Painel TV — Gestão STA";
     const r = document.createElement("div"); r.id = "tv-root"; r.setAttribute("role","dialog"); r.setAttribute("aria-label","Painel de pontuação");
     document.body.appendChild(r); this.root = r; this.desenhar();
     this._t.push(setInterval(()=> this.relogio(), 20000));
