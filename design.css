@@ -1144,3 +1144,23 @@ body.sb-collapsed #sb-versao{ display:none; }
 .rf-fotobox input[type=file]{ max-width:100%; padding:8px; border:1px solid var(--gray-200); border-radius:9px; background:var(--white); color:var(--ink); font-size:13px; }
 @media (max-width:640px){ .rf-tab{ padding:10px 10px; font-size:13px; } .rf-dia{ grid-template-columns:56px 1fr auto; } }
 @media (prefers-reduced-motion:reduce){ .rf-row.flash{ animation:none; } }
+
+/* ---------- Ecommerce (STA · SIA · Total) ---------- */
+.ec-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:14px; margin-bottom:14px; }
+.ec-grid2{ display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; margin-bottom:14px; }
+.ec-grid > .panel, .ec-grid2 > .panel{ margin-bottom:0; }
+.ec-bloco{ border-top:4px solid var(--blue-med); }
+.ec-bloco.ec-sia{ border-top-color:var(--orange); }
+.ec-bloco.ec-total{ border-top-color:var(--blue-dark, #123a6b); }
+.ec-bt{ font-weight:800; color:var(--blue-dark, #123a6b); margin-bottom:10px; letter-spacing:-.01em; }
+.ec-met{ padding:9px 0; border-top:1px solid var(--gray-200); }
+.ec-met:first-of-type{ border-top:0; padding-top:0; }
+.ec-met .card-value{ font-size:22px; }
+.ec-seg{ display:inline-flex; border:1px solid var(--gray-200); border-radius:10px; overflow:hidden; background:var(--white); }
+.ec-segb{ appearance:none; border:0; background:transparent; padding:8px 14px; min-height:38px; font:inherit; font-weight:600; color:var(--gray-500); cursor:pointer; }
+.ec-segb + .ec-segb{ border-left:1px solid var(--gray-200); }
+.ec-segb:hover{ color:var(--blue-med); }
+.ec-segb.on{ background:var(--blue-dark, #123a6b); color:#fff; }
+.ec-segb:focus-visible{ outline:none; box-shadow:var(--focus); }
+.ec-f{ grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+@media (max-width:640px){ .ec-segb{ padding:8px 10px; font-size:13px; } }

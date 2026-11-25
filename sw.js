@@ -1,6 +1,6 @@
 /* Gestão STA – funcionamento como aplicativo (PWA) */
 const VERSION = 'nucleo-v3';
-const CORE = ['./', './index.html', './app.js', './changelog.js', './docs_filtros.js', './comissao.js', './admin.js', './alertas.js', './painel_tv.js', './certificados_modelos.js', './certificados.js', './ruas.js', './design.js', './design.css', './regras.js', './parametros.js', './feedbacks.js', './nc.js', './fbdocs.js', './retornos.js', './lancamentos.js', './coletores.js', './refeitorio.js', './devolucao.js', './scanner.js', './manifest.json', './icon-192.png', './icon-512.png', './logo.png', './logo-branco.png'];
+const CORE = ['./', './index.html', './app.js', './changelog.js', './docs_filtros.js', './comissao.js', './admin.js', './alertas.js', './painel_tv.js', './certificados_modelos.js', './certificados.js', './ruas.js', './design.js', './design.css', './regras.js', './parametros.js', './feedbacks.js', './nc.js', './fbdocs.js', './retornos.js', './lancamentos.js', './coletores.js', './refeitorio.js', './ecommerce.js', './devolucao.js', './scanner.js', './manifest.json', './icon-192.png', './icon-512.png', './logo.png', './logo-branco.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {

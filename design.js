@@ -64,6 +64,7 @@ const Icons = {
     battery: '<rect x="2.500" y="8" width="17" height="8" rx="2"/><path d="M22 11v2"/><path d="M6 11v2M9.500 11v2"/>',
     utensils: '<path d="M5 3v8a2 2 0 0 0 2 2v8"/><path d="M9 3v8a2 2 0 0 1-2 2"/><path d="M7 3v6"/><path d="M17 21V3c-2.200 1.500-3.500 4-3.500 7 0 1.800 1.200 3 3.500 3"/>',
     plane: '<path d="M17.800 19.200 16 11l3.500-3.500C21 6 21.500 4 21 3c-1-.5-3 0-4.500 1.500L13 8 4.800 6.200c-.5-.1-.9.100-1.100.5l-.3.500c-.2.500-.1 1 .3 1.300L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.500 5.300c.3.400.8.500 1.300.3l.5-.2c.4-.3.600-.7.500-1.200z"/>',
+    cart: '<circle cx="9" cy="20" r="1.500"/><circle cx="18" cy="20" r="1.500"/><path d="M2.500 3.500h2.800l2.100 11h11l1.800-8H6.200"/>',
     truck: '<path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
     tag: '<path d="M3 12V4.500A1.500 1.500 0 0 1 4.500 3H12l9 9-9 9z"/><circle cx="8" cy="8" r="1.200"/>',
     eyeoff: '<path d="m3 3 18 18"/><path d="M10.600 6.200A9.800 9.800 0 0 1 12 6c6.500 0 10 6 10 6a17 17 0 0 1-3.200 3.900M6.300 7.600A17 17 0 0 0 2 12s3.500 6 10 6a9.700 9.700 0 0 0 4-.9"/><path d="M9.900 9.900a3 3 0 0 0 4.200 4.200"/>',
@@ -81,7 +82,7 @@ const Icons = {
   nav: {
     indicadores:"chart", gestao:"compass", lancamentos:"pen", admin:"sliders",
     producao:"factory", projecao:"trend", individual:"user", avaria:"alert", operadores:"truck", relacoes:"file",
-    capacidade:"gauge", abastecimento:"layers", cd3d:"cube",
+    capacidade:"gauge", abastecimento:"layers", cd3d:"cube", ecommerce:"cart",
     feedbacks:"message", quadro:"users", chamada:"clipboard", auditoria:"shield", comissao:"coins", cronograma:"calendar",
     turnover:"repeat", ferias:"sun", organograma:"network",
     lfeedback:"msgplus", ladvertencia:"alertc", lsuspensao:"ban", lcoletores:"handheld", crefeitorio:"utensils", ldevolucao:"boxreturn", lavaria:"cubex", lchamada:"listcheck", lquadro:"table", lmissoes:"target",

@@ -28,6 +28,7 @@ const PERM_BASES = ['Administração', 'Bases'];
 const ABA_LANC = 'Lançamentos';
 const PERM_RUAS = ['Gestão', 'Atribuição Ruas'];
 const PERM_HIST_REF = ['Gestão', 'Controle Refeitório'];
+const PERM_ECOM = ['Indicadores', 'Ecommerce'];   // aba Ecommerce: só quem tiver essa sub aba liberada em Administração > Acessos
 const SUBS_LANC = ['Lançar Feedback', 'Lançar Advertência', 'Lançar Suspensão', 'Lançar Avaria 9712', 'Lançar Chamada', 'Lançar Quadro', 'Lançar Missões', 'Lançar Capacidade', 'Lançar Férias', 'Controle de Coletores', 'Devolução de Mercadorias', 'Certificados'];
 /** Nomes antigos de abas continuam valendo (quem já tinha "Feedbacks" ou "Lançar REP.AVARIA" não perde o acesso). */
 const NOMES_ANTIGOS = { 'FEEDBACKSEADVERTENCIAS': 'FEEDBACKS', 'LANCARAVARIA9712': 'LANCARREPAVARIA' };
@@ -145,6 +146,7 @@ function doPost(e) {
       if (d.acao === 'refeit_lembrete_teste') return resposta(refeitLembreteTeste(s));
       if (d.acao === 'refeit_aprov_ler') return resposta(refeitAprovLer(s));
       if (d.acao === 'refeit_aprov_salvar') return resposta(refeitAprovSalvar(d, s));
+      if (String(d.acao || '').indexOf('ecom_') === 0) return resposta(ecomAcao(d, s));
       if (String(d.acao || '').indexOf('lanc_') === 0) return resposta(lancamento(d, s));
     } finally { if (lk) lk.releaseLock(); }
     return resposta({ ok: false, erro: 'Ação desconhecida.' });
@@ -160,6 +162,7 @@ const LEITURAS_SEM_TRAVA = {
   admin_listar: 1, admin_historico: 1, alertas_ler: 1, param_ler: 1, tv_cfg_ler: 1, tv_fotos_ler: 1, ruas_historico: 1, ruas_estado_em: 1, push_chave: 1, bases_status: 1, bases_resumo: 1, bases_dias: 1,
   lanc_avaria_listar: 1, lanc_avaria_verificar: 1, lanc_anexo_ler: 1, lanc_base_atualizada: 1, lanc_chamada_dia: 1,
   lanc_feedback_listar: 1, lanc_advertencia_listar: 1, lanc_ferias_listar: 1,
+  ecom_ler: 1,
   refeit_sync: 1, refeit_notif: 1, refeit_aprovacoes: 1, refeit_historico: 1, refeit_cardapio_ler: 1, refeit_cardapio_foto: 1, refeit_perfis: 1, refeit_aprov_ler: 1, refeit_lembrete_ler: 1
 };
 
@@ -3145,5 +3148,261 @@ function refeitPontualRemover(d, s) {
   if (r.v[7] === 'Sim') throw new Error('Esta pessoa já registrou presença e não pode sair da lista.');
   L.sh.deleteRow(r.linha);
   registrarLog(s, 'Refeitório (pontual removido)', data + ' · ' + cod);
+  return { ok: true };
+}
+
+
+/* ===================== Ecommerce (Indicadores > Ecommerce) =====================
+   Acesso: só quem tem Indicadores > Ecommerce liberado em Administração > Acessos (conferido em TODA ação).
+   Abas (criadas sozinhas na planilha de dados):
+     ECOM_FECHAMENTO       um registro por Data + Origem (STA ou SIA); os campos ficam em JSON
+     ECOM_PEDIDOS          pedidos do STA; sem nota = pendente, com nota = deixa de ser pendente
+     ECOM_EXPEDICAO_SIA    notas expedidas do SIA (substitui a planilha CONTROLE_SIA)
+     ECOM_TRANSPORTADORAS  lista de transportadoras (dá para criar novas pelo site)
+     ECOM_LOG              toda criação, edição e exclusão (quem, quando, antes e depois)
+*/
+const ABA_ECOM_FECH = 'ECOM_FECHAMENTO';
+const ABA_ECOM_PED = 'ECOM_PEDIDOS';
+const ABA_ECOM_EXP = 'ECOM_EXPEDICAO_SIA';
+const ABA_ECOM_TR = 'ECOM_TRANSPORTADORAS';
+const ABA_ECOM_LOG = 'ECOM_LOG';
+const ECOM_FECH_CAB = ['Data', 'Origem', 'Json', 'AtualizadoEm', 'AtualizadoPor'];
+const ECOM_PED_CAB = ['Id', 'Pedido', 'DataEntrada', 'Cliente', 'Valor', 'Volumes', 'Transportadora', 'Bloqueado', 'Nota', 'DataNota', 'CriadoEm', 'CriadoPor', 'AtualizadoEm', 'AtualizadoPor'];
+const ECOM_EXP_CAB = ['Id', 'Data', 'Volumes', 'Transportadora', 'RCA', 'Carregamento', 'Nota', 'Valor', 'Peso', 'UF', 'CriadoEm', 'CriadoPor', 'AtualizadoEm', 'AtualizadoPor'];
+const ECOM_TR_CAB = ['Nome', 'CriadaEm', 'CriadaPor'];
+const ECOM_LOG_CAB = ['DataHora', 'Matricula', 'Usuario', 'Entidade', 'Id', 'Acao', 'Antes', 'Depois'];
+const ECOM_TRANSP_PADRAO = ['QUICK', 'AZUL', 'RODONAVES', 'SANTA THEREZINHA LOGÍSTICA', 'RG LOG'];
+
+function ecomAcao(d, s) {
+  exigir(s, PERM_ECOM);
+  switch (d.acao) {
+    case 'ecom_ler': return ecomLer(d);
+    case 'ecom_fech_salvar': return ecomFechSalvar(d, s);
+    case 'ecom_ped_salvar': return ecomPedSalvar(d, s);
+    case 'ecom_ped_lote': return ecomPedLote(d, s);
+    case 'ecom_ped_excluir': return ecomExcluir(ABA_ECOM_PED, ECOM_PED_CAB, 'Pedido', d, s);
+    case 'ecom_exp_salvar': return ecomExpSalvar(d, s);
+    case 'ecom_exp_lote': return ecomExpLote(d, s);
+    case 'ecom_exp_excluir': return ecomExcluir(ABA_ECOM_EXP, ECOM_EXP_CAB, 'Expedição SIA', d, s);
+    case 'ecom_transp_add': return ecomTranspAdd(d, s);
+  }
+  return { ok: false, erro: 'Ação desconhecida.' };
+}
+
+function ecomNow() { return Utilities.formatDate(new Date(), tzDados(), "yyyy-MM-dd'T'HH:mm:ss"); }
+function ecomIso(v) { const t = String(v == null ? '' : v).trim(); return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : ''; }
+function ecomNum(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (typeof v === 'number') return isFinite(v) ? v : '';
+  let t = String(v).trim().replace(/[^\d,.\-]/g, '');
+  if (!t) return '';
+  if (t.indexOf(',') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+  const n = Number(t);
+  return isFinite(n) ? n : '';
+}
+function ecomTxt(v, max) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().substring(0, max || 200); }
+function ecomId() { return Utilities.getUuid().replace(/-/g, '').substring(0, 10); }
+
+function ecomLog(s, entidade, id, acao, antes, depois) {
+  try {
+    const sh = abaComCabecalho(ABA_ECOM_LOG, ECOM_LOG_CAB);
+    const q = Utilities.formatDate(new Date(), tzDados(), 'dd/MM/yyyy HH:mm:ss');
+    sh.getRange(sh.getLastRow() + 1, 1, 1, ECOM_LOG_CAB.length).setNumberFormat('@')
+      .setValues([[q, s.matricula, s.nome || s.matricula, entidade, id, acao, String(antes || '').substring(0, 1500), String(depois || '').substring(0, 1500)]]);
+  } catch (e) { /* o registro nunca impede um lançamento */ }
+}
+
+/** Todas as linhas da aba (texto como aparece), já com cabeçalho garantido. */
+function ecomLerAba(nome, cab) {
+  const sh = abaComCabecalho(nome, cab), ult = sh.getLastRow();
+  const rows = ult > 1 ? sh.getRange(2, 1, ult - 1, cab.length).getDisplayValues() : [];
+  return { sh: sh, rows: rows };
+}
+function ecomGravarLinha(sh, linha, valores) { sh.getRange(linha, 1, 1, valores.length).setNumberFormat('@').setValues([valores]); }
+function ecomAnexar(sh, linhas) {
+  if (!linhas.length) return;
+  sh.getRange(sh.getLastRow() + 1, 1, linhas.length, linhas[0].length).setNumberFormat('@').setValues(linhas);
+}
+function ecomAcharId(A, id) {
+  for (let i = 0; i < A.rows.length; i++) if (A.rows[i][0] === id) return i;
+  return -1;
+}
+
+function ecomTransportadoras() {
+  const sh = abaComCabecalho(ABA_ECOM_TR, ECOM_TR_CAB);
+  if (sh.getLastRow() < 2) {
+    ecomAnexar(sh, ECOM_TRANSP_PADRAO.map(function (n) { return [n, ecomNow(), 'Sistema']; }));
+  }
+  const ult = sh.getLastRow();
+  return sh.getRange(2, 1, ult - 1, 1).getDisplayValues().map(function (l) { return l[0]; }).filter(function (n) { return n; });
+}
+/** Garante que a transportadora exista na lista (cria se for nova) e devolve o nome padronizado. */
+function ecomGarantirTransp(nome, s, lista) {
+  const n = ecomTxt(nome, 60).toUpperCase();
+  if (!n) return '';
+  const achou = lista.filter(function (x) { return normalizar(x) === normalizar(n); })[0];
+  if (achou) return achou;
+  ecomAnexar(abaComCabecalho(ABA_ECOM_TR, ECOM_TR_CAB), [[n, ecomNow(), s.matricula]]);
+  lista.push(n);
+  ecomLog(s, 'Transportadora', n, 'Criada', '', n);
+  return n;
+}
+function ecomTranspAdd(d, s) {
+  const lista = ecomTransportadoras(), n = ecomTxt(d.nome, 60);
+  if (!n) throw new Error('Informe o nome da transportadora.');
+  const nome = ecomGarantirTransp(n, s, lista);
+  return { ok: true, nome: nome, transportadoras: lista };
+}
+
+function ecomPedObj(l) {
+  return { id: l[0], pedido: l[1], entrada: l[2], cliente: l[3], valor: l[4] === '' ? null : Number(l[4]), volumes: l[5] === '' ? null : Number(l[5]),
+    transp: l[6], bloq: l[7] === 'Sim', nota: l[8], dataNota: l[9], criadoEm: l[10], criadoPor: l[11], atualizadoEm: l[12], atualizadoPor: l[13] };
+}
+function ecomExpObj(l) {
+  return { id: l[0], data: l[1], volumes: l[2] === '' ? 0 : Number(l[2]), transp: l[3], rca: l[4], carreg: l[5], nota: l[6],
+    valor: l[7] === '' ? 0 : Number(l[7]), peso: l[8] === '' ? null : Number(l[8]), uf: l[9] };
+}
+
+/** Tudo que a tela precisa. ini = data inicial do histórico (padrão: ~13 meses); pedidos em aberto vêm sempre. */
+function ecomLer(d) {
+  const h = hoje(), ini = ecomIso(d.ini) || Utilities.formatDate(new Date(Date.now() - 400 * 864e5), tzDados(), 'yyyy-MM-dd');
+  const F = ecomLerAba(ABA_ECOM_FECH, ECOM_FECH_CAB), P = ecomLerAba(ABA_ECOM_PED, ECOM_PED_CAB), E = ecomLerAba(ABA_ECOM_EXP, ECOM_EXP_CAB);
+  const fech = [];
+  F.rows.forEach(function (l) {
+    if (l[0] < ini) return;
+    let campos = {}; try { campos = JSON.parse(l[2] || '{}'); } catch (e) {}
+    fech.push({ data: l[0], origem: l[1], campos: campos, em: l[3], por: l[4] });
+  });
+  const ped = P.rows.filter(function (l) { return !l[8] || l[2] >= ini; }).map(ecomPedObj);
+  const exp = E.rows.filter(function (l) { return l[1] >= ini; }).map(ecomExpObj);
+  return { ok: true, hoje: h, fechamentos: fech, pedidos: ped, expedicao: exp, transportadoras: ecomTransportadoras() };
+}
+
+function ecomFechSalvar(d, s) {
+  const data = ecomIso(d.data), origem = String(d.origem || '').toUpperCase();
+  if (!data) throw new Error('Informe a data do fechamento.');
+  if (data > hoje()) throw new Error('A data do fechamento não pode ser no futuro.');
+  if (origem !== 'STA' && origem !== 'SIA') throw new Error('Origem inválida (use STA ou SIA).');
+  const c = d.campos && typeof d.campos === 'object' ? d.campos : {};
+  const limpo = {};
+  Object.keys(c).forEach(function (k) {
+    const v = c[k];
+    if (v && typeof v === 'object') {          // transportadoras: { NOME: { pedidos, volumes } }
+      const sub = {};
+      Object.keys(v).forEach(function (n) {
+        const x = v[n] || {};
+        sub[ecomTxt(n, 60)] = { pedidos: ecomNum(x.pedidos), volumes: ecomNum(x.volumes) };
+      });
+      limpo[k] = sub;
+    } else limpo[k] = ecomNum(v);
+  });
+  const A = ecomLerAba(ABA_ECOM_FECH, ECOM_FECH_CAB);
+  let idx = -1;
+  for (let i = 0; i < A.rows.length; i++) if (A.rows[i][0] === data && A.rows[i][1] === origem) { idx = i; break; }
+  const json = JSON.stringify(limpo), linha = [data, origem, json, ecomNow(), s.matricula];
+  if (idx >= 0) {
+    ecomGravarLinha(A.sh, idx + 2, linha);
+    ecomLog(s, 'Fechamento ' + origem, data, 'Editado', A.rows[idx][2], json);
+  } else {
+    ecomAnexar(A.sh, [linha]);
+    ecomLog(s, 'Fechamento ' + origem, data, 'Criado', '', json);
+  }
+  return { ok: true, atualizado: idx >= 0, em: linha[3], por: s.matricula };
+}
+
+function ecomPedLinha(p, s, lista, antigo) {
+  const pedido = ecomTxt(p.pedido, 40), entrada = ecomIso(p.entrada);
+  if (!pedido) throw new Error('Informe o número do pedido.');
+  if (!entrada) throw new Error('Informe a data de entrada do pedido (' + pedido + ').');
+  if (entrada > hoje()) throw new Error('A data de entrada não pode ser no futuro (' + pedido + ').');
+  const nota = ecomTxt(p.nota, 30), notaAntes = antigo ? antigo[8] : '';
+  let dataNota = antigo ? antigo[9] : '';
+  if (!nota) dataNota = '';
+  else if (!notaAntes) dataNota = ecomIso(p.dataNota) || hoje();
+  const agora = ecomNow();
+  return [antigo ? antigo[0] : ecomId(), pedido, entrada, ecomTxt(p.cliente, 80), ecomNum(p.valor), ecomNum(p.volumes),
+    ecomGarantirTransp(p.transp, s, lista), p.bloq ? 'Sim' : '', nota, dataNota,
+    antigo ? antigo[10] : agora, antigo ? antigo[11] : s.matricula, agora, s.matricula];
+}
+function ecomPedSalvar(d, s) {
+  const A = ecomLerAba(ABA_ECOM_PED, ECOM_PED_CAB), lista = ecomTransportadoras();
+  const idx = d.id ? ecomAcharId(A, d.id) : -1;
+  if (d.id && idx < 0) throw new Error('Pedido não encontrado (pode ter sido excluído).');
+  const linha = ecomPedLinha(d, s, lista, idx >= 0 ? A.rows[idx] : null);
+  for (let i = 0; i < A.rows.length; i++) if (i !== idx && normalizar(A.rows[i][1]) === normalizar(linha[1])) throw new Error('O pedido ' + linha[1] + ' já está lançado.');
+  if (idx >= 0) { ecomGravarLinha(A.sh, idx + 2, linha); ecomLog(s, 'Pedido', linha[0], 'Editado', A.rows[idx].join(' | '), linha.join(' | ')); }
+  else { ecomAnexar(A.sh, [linha]); ecomLog(s, 'Pedido', linha[0], 'Criado', '', linha.join(' | ')); }
+  return { ok: true, pedido: ecomPedObj(linha), transportadoras: lista };
+}
+function ecomPedLote(d, s) {
+  const itens = Array.isArray(d.itens) ? d.itens : [];
+  if (!itens.length) throw new Error('Nenhum pedido para lançar.');
+  if (itens.length > 500) throw new Error('Envie no máximo 500 pedidos por vez.');
+  const A = ecomLerAba(ABA_ECOM_PED, ECOM_PED_CAB), lista = ecomTransportadoras(), tem = {};
+  A.rows.forEach(function (l) { tem[normalizar(l[1])] = true; });
+  const novas = [], repetidos = [], erros = [];
+  itens.forEach(function (p, i) {
+    try {
+      const l = ecomPedLinha(p, s, lista, null);
+      if (tem[normalizar(l[1])]) { repetidos.push(l[1]); return; }
+      tem[normalizar(l[1])] = true; novas.push(l);
+    } catch (e) { erros.push('Linha ' + (i + 1) + ': ' + e.message); }
+  });
+  ecomAnexar(A.sh, novas);
+  if (novas.length) ecomLog(s, 'Pedido', '-', 'Lote', '', novas.length + ' pedido(s) lançado(s)');
+  return { ok: true, gravados: novas.length, repetidos: repetidos, erros: erros, transportadoras: lista };
+}
+
+/** relax = importação do histórico (CONTROLE_SIA): aceita linhas antigas sem peso. */
+function ecomExpLinha(p, s, lista, antigo, relax) {
+  const data = ecomIso(p.data), nota = ecomTxt(p.nota, 30);
+  if (!data) throw new Error('Informe a data.');
+  if (data > hoje()) throw new Error('A data não pode ser no futuro (nota ' + nota + ').');
+  if (!nota) throw new Error('Informe o número da nota.');
+  const transp = ecomGarantirTransp(p.transp, s, lista);
+  if (!transp) throw new Error('Informe a transportadora (nota ' + nota + ').');
+  const volumes = ecomNum(p.volumes), peso = ecomNum(p.peso), valor = ecomNum(p.valor);
+  if (volumes === '' || volumes <= 0) throw new Error('Informe os volumes (nota ' + nota + ').');
+  if (!relax && (peso === '' || peso <= 0)) throw new Error('Informe o peso (nota ' + nota + ').');
+  if (valor === '') throw new Error('Informe o valor (nota ' + nota + ').');
+  const agora = ecomNow();
+  return [antigo ? antigo[0] : ecomId(), data, volumes, transp, ecomTxt(p.rca, 20), ecomTxt(p.carreg, 20), nota, valor, peso,
+    ecomTxt(p.uf, 2).toUpperCase(), antigo ? antigo[10] : agora, antigo ? antigo[11] : s.matricula, agora, s.matricula];
+}
+function ecomExpSalvar(d, s) {
+  const A = ecomLerAba(ABA_ECOM_EXP, ECOM_EXP_CAB), lista = ecomTransportadoras();
+  const idx = d.id ? ecomAcharId(A, d.id) : -1;
+  if (d.id && idx < 0) throw new Error('Nota não encontrada (pode ter sido excluída).');
+  const linha = ecomExpLinha(d, s, lista, idx >= 0 ? A.rows[idx] : null);
+  for (let i = 0; i < A.rows.length; i++) if (i !== idx && A.rows[i][6] === linha[6]) throw new Error('A nota ' + linha[6] + ' já foi lançada (' + A.rows[i][1] + ').');
+  if (idx >= 0) { ecomGravarLinha(A.sh, idx + 2, linha); ecomLog(s, 'Expedição SIA', linha[0], 'Editado', A.rows[idx].join(' | '), linha.join(' | ')); }
+  else { ecomAnexar(A.sh, [linha]); ecomLog(s, 'Expedição SIA', linha[0], 'Criado', '', linha.join(' | ')); }
+  return { ok: true, item: ecomExpObj(linha), transportadoras: lista };
+}
+function ecomExpLote(d, s) {
+  const itens = Array.isArray(d.itens) ? d.itens : [];
+  if (!itens.length) throw new Error('Nenhuma nota para lançar.');
+  if (itens.length > 400) throw new Error('Envie no máximo 400 notas por vez.');
+  const A = ecomLerAba(ABA_ECOM_EXP, ECOM_EXP_CAB), lista = ecomTransportadoras(), tem = {};
+  A.rows.forEach(function (l) { tem[l[6]] = true; });
+  const novas = [], repetidos = [], erros = [];
+  itens.forEach(function (p, i) {
+    try {
+      const l = ecomExpLinha(p, s, lista, null, !!d.importacao);
+      if (tem[l[6]]) { repetidos.push(l[6]); return; }
+      tem[l[6]] = true; novas.push(l);
+    } catch (e) { erros.push('Linha ' + (i + 1) + ': ' + e.message); }
+  });
+  ecomAnexar(A.sh, novas);
+  if (novas.length) ecomLog(s, 'Expedição SIA', '-', d.importacao ? 'Importação' : 'Lote', '', novas.length + ' nota(s)');
+  return { ok: true, gravados: novas.length, repetidos: repetidos, erros: erros, transportadoras: lista };
+}
+
+function ecomExcluir(aba, cab, rotulo, d, s) {
+  const A = ecomLerAba(aba, cab), idx = ecomAcharId(A, d.id);
+  if (idx < 0) throw new Error('Registro não encontrado (já foi excluído?).');
+  const antes = A.rows[idx].join(' | ');
+  A.sh.deleteRow(idx + 2);
+  ecomLog(s, rotulo, d.id, 'Excluído', antes, '');
   return { ok: true };
 }

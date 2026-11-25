@@ -4,9 +4,18 @@
    Regra: funcionalidade nova = sobe o 2º número (2.7.0 → 2.8.0); correção ou ajuste = sobe o 3º (2.7.0 → 2.7.1);
    mudança grande de estrutura = sobe o 1º número.
    ========================================================================= */
-const APP_VERSAO = "2.29.1";
+const APP_VERSAO = "2.30.0";
 
 const NOTAS_VERSAO = [
+  { v:"2.30.0", data:"2026-11-24", titulo:"Novo: Indicadores > Ecommerce (STA + SIA)", itens:[
+    "Nova aba Ecommerce em Indicadores, só para quem tiver a sub aba \"Ecommerce\" liberada em Administração > Acessos. O total do Ecommerce é a soma de duas origens: STA (Santa Therezinha) e SIA (tele venda), sempre mostradas separadas e somadas.",
+    "Visão geral: seletor Geral · STA · SIA e período (último dia, mês atual, mês anterior, tudo). Cartões de faturamento, volumes, peso, pedidos, participação e volumes por hora, com diferença e % contra o período anterior, e gráficos de faturamento e volumes por dia (STA e SIA empilhados).",
+    "Fechamento do dia: o encarregado lança no sistema o que enviava por WhatsApp (STA, SIA, Operação E-commerce, transportadoras e horas). Faturamento geral, volumes totais, volumes por hora e o lead time a expedir são calculados sozinhos, e o botão \"Copiar para WhatsApp\" gera o texto no formato de sempre. Cada dia fica salvo no histórico e pode ser corrigido depois.",
+    "Pedidos pendentes (STA): o pedido nasce sem nota e envelhece um dia a cada dia; ao informar o número da nota ele sai da contagem. Tabela de lead time de 0 a 16+ dias, bloqueados, lançamento em lote por colagem, edição e exclusão.",
+    "Expedição SIA: lançamento das notas que hoje ficam na planilha CONTROLE_SIA (volumes, transportadora, RCA, carregamento, nota, valor, peso, data e UF), com validação de nota repetida, lista de transportadoras que aceita novas, colar do Excel e importação da planilha antiga.",
+    "Todo lançamento, edição ou exclusão fica registrado na aba ECOM_LOG (quem, quando, antes e depois).",
+    "Atenção: reimplantar o Apps Script (apps_script_nucleo.gs). As abas ECOM_* são criadas sozinhas. Depois, liberar \"Ecommerce\" (aba Indicadores) para o encarregado em Administração > Acessos."
+  ]},
   { v:"2.29.1", data:"2026-11-24", titulo:"Carga online mais resistente", itens:[
     "Ao buscar dados online, uma aba que falha por oscilação de conexão (\"Failed to fetch\", tempo esgotado, limite do Google) agora é tentada de novo até 4 vezes antes de dar erro. Isso evita a mensagem de aba obrigatória ausente no celular."
   ]},

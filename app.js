@@ -4127,7 +4127,8 @@ const UI = {
       { id:"relacoes", label:"Relações Rep" },
       { id:"capacidade", label:"Capacidade CD" },
       { id:"abastecimento", label:"Nível Abastecimento" },
-      { id:"cd3d", label:"NVL 3D" }
+      { id:"cd3d", label:"NVL 3D" },
+      { id:"ecommerce", label:"Ecommerce" }
     ],
     gestao: [
       { id:"feedbacks", label:"Feedbacks e Advertências", aliases:["Feedbacks"] },
@@ -4429,7 +4430,7 @@ const UI = {
 
   renderPane(pane){
     // avaria não depende do arquivo Núcleo Reposição — sempre pode renderizar
-    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','parametros','lfeedback','ladvertencia','lsuspensao','lcoletores','crefeitorio','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias','lcertificado'].includes(pane)){
+    if(!window.APP_STATE.ready && !['avaria','cd3d','bases','acessos','links','parametros','lfeedback','ladvertencia','lsuspensao','lcoletores','crefeitorio','ecommerce','lavaria','lchamada','lquadro','lmissoes','lcapacidade','lferias','lcertificado'].includes(pane)){
       const el = $("#pane-"+pane);
       if(el) el.innerHTML = `<div class="panel"><h3 class="adm-h2">Dados ainda não carregados</h3><p class="small-muted">O painel precisa dos dados do Google Sheets para mostrar esta área.</p><button type="button" class="btn btn-primary" onclick="UI.carregarOnline()">Buscar dados online</button></div>`;
       return;
@@ -4439,7 +4440,7 @@ const UI = {
       quadro: renderQuadro, chamada: renderChamada, auditoria: renderAuditoria, comissao: renderComissao,
       cronograma: renderCronograma, cd3d: renderCD3D, individual: renderIndividual, turnover: renderTurnover, ferias: renderFerias, organograma: renderOrganograma, avaria: renderAvaria, operadores: renderOperadores, relacoes: renderRelacoes, capacidade: renderCapacidadeCD, abastecimento: renderAbastecimentoPicking,
       bases: ()=>window.AdminUI && AdminUI.renderBases(), acessos: ()=>window.AdminUI && AdminUI.renderAcessos(), links: ()=>window.AdminUI && AdminUI.renderLinks(), versoes: ()=>window.AdminUI && AdminUI.renderVersoes(), alertas: ()=>window.Alertas && Alertas.renderPane(), tv: ()=>window.PainelTV && PainelTV.renderPane(), parametros: ()=>window.ParametrosUI && ParametrosUI.renderPane(),
-      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), crefeitorio: ()=>window.RefeitUI && RefeitUI.renderControle(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
+      lfeedback: ()=>window.LancUI && LancUI.renderFeedback(), ladvertencia: ()=>window.LancUI && LancUI.renderAdvertencia(), lsuspensao: ()=>window.LancUI && LancUI.renderSuspensao(), lcoletores: ()=>window.LancUI && LancUI.renderColetores(), crefeitorio: ()=>window.RefeitUI && RefeitUI.renderControle(), ecommerce: ()=>window.EcomUI && EcomUI.renderPane(), ldevolucao: ()=>window.LancUI && LancUI.renderDevolucao(), lferias: ()=>window.LancUI && LancUI.renderFerias(), lavaria: ()=>window.LancUI && LancUI.renderAvaria(), lchamada: ()=>window.LancUI && LancUI.renderChamada(),
       lcertificado: ()=>window.CertUI && CertUI.renderPane(), ruas: ()=>window.RuasUI && RuasUI.renderPane(),
       lquadro: ()=>window.LancUI && LancUI.renderQuadro(), lmissoes: ()=>window.LancUI && LancUI.renderMissoes(), lcapacidade: ()=>window.LancUI && LancUI.renderCapacidade()
     };

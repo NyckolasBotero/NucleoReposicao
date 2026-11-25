@@ -89,6 +89,16 @@ const DOC_FILTROS = {
       ["Faixas de nível (cards clicáveis)","alternar","próprio","filtram a tabela ao clicar"]
     ]},
     { id:"cd3d", menu:"indicadores", nome:"NVL 3D", filtros:[], obs:"Sem filtros. Visualização do CD — avaliar filtro por rua/faixa de nível." },
+    { id:"ecommerce", menu:"indicadores", nome:"Ecommerce", filtros:[
+      ["Origem (Geral · STA · SIA)","alternar","próprio","botões segmentados ec-seg"],
+      ["Período (Último dia, Mês atual, Mês anterior, Tudo)","atalho","próprio","botões segmentados ec-seg"],
+      ["Data do fechamento","data","filter-group","fx-data (aba Fechamento do dia)"],
+      ["Pedidos: Pendentes · Com nota · Todos","alternar","próprio","botões segmentados ec-seg"],
+      ["Pedidos: buscar pedido, cliente ou nota","busca","inline","pd-busca"],
+      ["Expedição SIA: De / Até","data","filter-group","exf-ini, exf-fim"],
+      ["Expedição SIA: Transportadora","lista","filter-group","exf-tr"],
+      ["Expedição SIA: buscar nota, RCA, carregamento ou UF","busca","filter-group","exf-busca"]
+    ], obs:"Acesso só para quem tem a sub aba Ecommerce em Administração > Acessos." },
 
     /* ------------------------------ GESTÃO ------------------------------ */
     { id:"feedbacks", menu:"gestao", nome:"Feedbacks e Advertências", filtros:[
